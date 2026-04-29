@@ -86,7 +86,15 @@ DIFY_BASE = "http://aibox-dify-nginx:80"
 
 
 def _dify_login(email: str, password: str) -> httpx.Client | None:
-    """Logge en tant qu'admin Dify et retourne un client httpx avec token Bearer."""
+    """Logge en tant qu'admin Dify et retourne un client httpx avec token Bearer.
+
+    Dify Console v1.10 :
+      - Body de réponse : {"result": "success"}  (pas de token)
+      - Token dans le cookie HTTPOnly `access_token`
+      - csrf_token aussi en cookie (à reposter en header X-CSRF-TOKEN si on
+        utilise les cookies). Plus simple : extraire access_token et
+        l'utiliser en Bearer (bypass le CSRF).
+    """
     try:
         c = httpx.Client(timeout=15)
         r = c.post(f"{DIFY_BASE}/console/api/login", json={
@@ -95,10 +103,25 @@ def _dify_login(email: str, password: str) -> httpx.Client | None:
         if r.status_code != 200:
             log.warning("Dify login failed: %s %s", r.status_code, r.text[:200])
             return None
-        token = r.json().get("data", {}).get("access_token") or r.json().get("data", {}).get("token")
+
+        # Tente d'abord d'extraire le token depuis le body (versions plus anciennes)
+        try:
+            body = r.json()
+            token = (body.get("data", {}) or {}).get("access_token") if isinstance(body, dict) else None
+        except Exception:
+            token = None
+
+        # Sinon : depuis les cookies (Dify >= 1.0)
         if not token:
-            # Certaines versions retournent juste {result: success} avec cookie
-            return c
+            token = r.cookies.get("access_token")
+
+        if not token:
+            log.warning("Dify login OK mais access_token introuvable")
+            return None
+
+        # On utilise le Bearer token et on ferme le cookie jar pour éviter
+        # tout conflit de CSRF.
+        c.cookies.clear()
         c.headers["Authorization"] = f"Bearer {token}"
         return c
     except Exception as e:
