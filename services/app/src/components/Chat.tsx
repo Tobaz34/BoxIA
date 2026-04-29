@@ -16,7 +16,7 @@
 
 import {
   Send, Square, Sparkles, RotateCcw, Copy, Check,
-  ThumbsUp, ThumbsDown, MessageSquare, X,
+  ThumbsUp, ThumbsDown, MessageSquare, X, Download,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -232,6 +232,26 @@ export function Chat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streaming, suggested]);
 
+  // ----- Raccourcis clavier globaux : Cmd/Ctrl+K nouvelle conv, Esc fermer drawers -----
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      // Ne pas intercepter si l'utilisateur est en train de taper dans
+      // un input/textarea/select
+      const target = e.target as HTMLElement;
+      const inField = target?.tagName?.match(/^(INPUT|TEXTAREA|SELECT)$/);
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        newConversation();
+      } else if (e.key === "Escape" && !inField) {
+        // Esc ferme les drawers mobile (gérés par le store global)
+        setUI({ mobileMenuOpen: false, convDrawerOpen: false });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // ----- Auto-resize textarea -----
   useEffect(() => {
     const ta = textareaRef.current;
@@ -386,6 +406,51 @@ export function Chat() {
     if (lastUser) send(lastUser.content, true);
   }
 
+  /** Export de la conversation courante en Markdown (téléchargement
+   *  immédiat). Indépendant du serveur — utilise le state local. */
+  function exportAsMarkdown() {
+    if (messages.length === 0) return;
+    const agentName = currentAgentMeta?.name || "Assistant";
+    const date = new Date().toLocaleDateString("fr-FR");
+    const userName = session?.user?.name || session?.user?.email || "Vous";
+    const conv = conversations.find((c) => c.id === conversationId);
+    const title = conv?.name && conv.name !== "New conversation"
+      ? conv.name : "Conversation";
+
+    const lines: string[] = [];
+    lines.push(`# ${title}`);
+    lines.push("");
+    lines.push(`> ${agentName} · ${date}`);
+    lines.push("");
+    for (const m of messages) {
+      const time = new Date(m.createdAt).toLocaleTimeString("fr-FR", {
+        hour: "2-digit", minute: "2-digit",
+      });
+      const author = m.role === "user" ? userName : agentName;
+      lines.push(`### ${author} — ${time}`);
+      lines.push("");
+      lines.push(m.content);
+      lines.push("");
+    }
+    lines.push("");
+    lines.push(`---`);
+    lines.push(`Exporté depuis AI Box le ${new Date().toLocaleString("fr-FR")}`);
+
+    const blob = new Blob([lines.join("\n")], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${
+      new Date().toISOString().slice(0, 10)
+    }.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   async function setFeedback(msg: Message, rating: "like" | "dislike" | null) {
     if (!msg.difyMessageId) return;
     setMessages((m) =>
@@ -448,6 +513,24 @@ export function Chat() {
       }
     >
       <>
+        {/* Top bar de la conversation (desktop) — visible si messages */}
+        {!empty && (
+          <div className="hidden lg:flex h-10 px-4 border-b border-border bg-card/40 items-center justify-between">
+            <span className="text-xs text-muted truncate">
+              {conversations.find((c) => c.id === conversationId)?.name ||
+                "Nouvelle conversation"}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={exportAsMarkdown}
+                title="Exporter en Markdown"
+                className="p-1.5 rounded text-muted hover:text-foreground hover:bg-muted/30 transition-default"
+              >
+                <Download size={14} />
+              </button>
+            </div>
+          </div>
+        )}
         <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-6">
           {empty ? (
             <div className="h-full flex items-center justify-center">
