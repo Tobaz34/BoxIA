@@ -6,7 +6,7 @@
 @import "highlight.js/styles/github-dark.css";
 
 /* Theme dark par défaut, brandable via variables CSS injectées par le serveur */
-:root {
+:root, html[data-theme="dark"] {
   --background: 222 16% 9%;        /* #0f1115 */
   --foreground: 210 14% 91%;       /* #e6e8eb */
   --card: 222 13% 12%;             /* #1a1d24 */
@@ -22,6 +22,32 @@
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --radius: 0.625rem;
+}
+
+/* Mode clair : palette fond blanc / texte noir */
+html[data-theme="light"] {
+  --background: 0 0% 99%;          /* #fcfcfc */
+  --foreground: 222 47% 11%;       /* #0f172a */
+  --card: 0 0% 100%;               /* #ffffff */
+  --card-foreground: 222 47% 11%;
+  --muted: 220 9% 46%;             /* #6b7280 */
+  --muted-foreground: 220 9% 46%;
+  --border: 220 13% 88%;           /* #dde0e6 */
+  --input: 220 13% 88%;
+  --primary: 217 91% 50%;          /* un poil + foncé pour contraste */
+  --primary-foreground: 0 0% 100%;
+  --accent: 160 84% 30%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 72% 50%;
+  --destructive-foreground: 0 0% 100%;
+}
+
+/* En mode clair, le code block garde son fond sombre (le wrapper a déjà
+   son propre background) → on force juste la couleur du texte hljs en
+   clair par défaut, le syntax highlighting reste lisible. */
+html[data-theme="light"] .prose-chat pre {
+  background: hsl(222 16% 12%);
+  color: hsl(210 14% 91%);
 }
 
 * {

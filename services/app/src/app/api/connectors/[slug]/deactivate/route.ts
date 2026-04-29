@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { deactivateConnector } from "@/lib/connectors-state";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const session = await getServerSession(authOptions);
@@ -19,5 +20,6 @@ export async function POST(
   }
   const { slug } = await params;
   await deactivateConnector(slug);
+  await logAction("connector.deactivate", slug, undefined, ipFromHeaders(req));
   return NextResponse.json({ ok: true });
 }

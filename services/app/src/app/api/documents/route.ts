@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireKbContext, kbFetch, DIFY_BASE_URL, DIFY_KB_API_KEY,
          DIFY_DEFAULT_DATASET_ID } from "@/lib/dify-kb";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,8 @@ export async function POST(req: NextRequest) {
       { status: 502 },
     );
   }
+  await logAction("document.upload", file.name, { size: file.size },
+    ipFromHeaders(req));
   return NextResponse.json(await r.json());
 }
 

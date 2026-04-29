@@ -3,11 +3,12 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireKbContext, kbFetch } from "@/lib/dify-kb";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -25,5 +26,6 @@ export async function DELETE(
       { status: 502 },
     );
   }
+  await logAction("document.delete", id, undefined, ipFromHeaders(req));
   return NextResponse.json({ ok: true });
 }

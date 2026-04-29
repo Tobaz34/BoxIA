@@ -9,11 +9,12 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, akFetch } from "@/lib/authentik";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const ctx = await requireAdmin();
@@ -26,6 +27,8 @@ export async function POST(
     if (r.ok) {
       const j = await r.json();
       if (j.link) {
+        await logAction("user.recovery_link", id, { type: "link" },
+          ipFromHeaders(req));
         return NextResponse.json({ link: j.link, temp_password: null });
       }
     }
@@ -44,6 +47,8 @@ export async function POST(
       { status: 502 },
     );
   }
+  await logAction("user.recovery_link", id, { type: "temp_password" },
+    ipFromHeaders(req));
   return NextResponse.json({ link: null, temp_password: tempPassword });
 }
 

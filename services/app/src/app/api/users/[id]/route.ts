@@ -8,6 +8,7 @@ import {
   requireAdmin, akFetch, ADMIN_GROUP_NAME, MANAGER_GROUP_NAME,
   EMPLOYEE_GROUP_NAME, type AkGroup, type AkUser,
 } from "@/lib/authentik";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
@@ -95,11 +96,19 @@ export async function PATCH(
       { status: 502 },
     );
   }
+  if (typeof body.role === "string") {
+    await logAction("user.role_change", id, { new_role: body.role },
+      ipFromHeaders(req));
+  }
+  if (typeof body.is_active === "boolean") {
+    await logAction("user.toggle_active", id, { active: body.is_active },
+      ipFromHeaders(req));
+  }
   return NextResponse.json({ ok: true, updated: true });
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   // Soft-delete : désactive plutôt que supprimer (préserve l'historique
@@ -119,6 +128,8 @@ export async function DELETE(
       { status: 502 },
     );
   }
+  await logAction("user.toggle_active", id, { active: false },
+    ipFromHeaders(req));
   return NextResponse.json({ ok: true });
 }
 

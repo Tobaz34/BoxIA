@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { setHidden } from "@/lib/connectors-state";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,13 @@ export async function POST(
   } catch {
     body = { hidden: true };
   }
-  await setHidden(slug, body.hidden !== false);
+  const hidden = body.hidden !== false;
+  await setHidden(slug, hidden);
+  await logAction(
+    hidden ? "connector.hide" : "connector.unhide",
+    slug,
+    undefined,
+    ipFromHeaders(req),
+  );
   return NextResponse.json({ ok: true });
 }

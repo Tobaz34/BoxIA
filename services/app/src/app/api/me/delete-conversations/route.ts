@@ -9,10 +9,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { listAvailableAgents, getAgentKey } from "@/lib/agents";
 import { difyFetch } from "@/lib/dify";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -55,6 +56,14 @@ export async function POST() {
     }
     report[meta.slug] = { count, deleted, errors };
   }
+
+  // Calcule le total supprimé pour le log
+  const totalDeleted = Object.values(report).reduce(
+    (a, r) => a + r.deleted, 0,
+  );
+  await logAction("rgpd.delete_conversations", email, {
+    total_deleted: totalDeleted,
+  }, ipFromHeaders(req));
 
   return NextResponse.json({ ok: true, report });
 }

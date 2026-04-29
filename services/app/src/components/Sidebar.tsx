@@ -14,8 +14,10 @@ import {
   HelpCircle,
   ShieldCheck,
   Plug,
+  X,
 } from "lucide-react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
+import { useUI, setUI } from "@/lib/ui-store";
 
 const items = [
   { href: "/",          label: "Discuter",         icon: MessageSquare, primary: true },
@@ -40,9 +42,28 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
+  const { state } = useUI();
+  const open = state.mobileMenuOpen;
 
   return (
-    <aside className="w-64 shrink-0 border-r border-border bg-card flex flex-col">
+    <>
+      {/* Overlay sur mobile uniquement */}
+      {open && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/60 z-30"
+          onClick={() => setUI({ mobileMenuOpen: false })}
+        />
+      )}
+      <aside
+        className={
+          "shrink-0 border-r border-border bg-card flex flex-col transition-transform " +
+          // desktop : visible, statique, w-64
+          "lg:w-64 lg:relative lg:translate-x-0 " +
+          // mobile : absolute drawer, w-72, glisse depuis la gauche
+          "fixed inset-y-0 left-0 z-40 w-72 " +
+          (open ? "translate-x-0" : "-translate-x-full lg:translate-x-0")
+        }
+      >
       <div className="flex-1 overflow-y-auto py-4">
         {/* Section utilisateur */}
         <nav className="px-3 space-y-1">
@@ -53,6 +74,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={() => setUI({ mobileMenuOpen: false })}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-default ${
                   active
                     ? "bg-primary/15 text-primary font-medium"
@@ -115,7 +137,16 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
           <HelpCircle size={16} />
           <span>Aide</span>
         </Link>
+        {/* Bouton fermer sur mobile uniquement */}
+        <button
+          onClick={() => setUI({ mobileMenuOpen: false })}
+          className="lg:hidden w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted hover:bg-muted/30 transition-default"
+        >
+          <X size={16} />
+          <span>Fermer</span>
+        </button>
       </div>
     </aside>
+    </>
   );
 }

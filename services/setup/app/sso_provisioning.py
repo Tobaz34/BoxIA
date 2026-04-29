@@ -194,42 +194,69 @@ def _gen_secret(n: int) -> str:
     return "".join(_s.choice(string.ascii_letters + string.digits) for _ in range(n))
 
 
+def _dns_resolves(hostname: str) -> bool:
+    """Teste si le hostname résout en IP routable (best-effort, sync)."""
+    import socket
+    try:
+        socket.setdefaulttimeout(2)
+        socket.gethostbyname(hostname)
+        return True
+    except Exception:
+        return False
+
+
 def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
-    """Crée le provider OIDC pour l'app principale Next.js (services/app)."""
+    """Crée le provider OIDC pour l'app principale Next.js (services/app).
+
+    IMPORTANT : on enregistre TOUJOURS DEUX redirect URIs dans Authentik :
+      - L'URL de prod (https://app.<DOMAIN>/...) si DOMAIN est valide ET résolvable
+      - L'URL LAN (http://<host_ip>:3100/...)
+    Cela permet au login de fonctionner aussi bien depuis le LAN
+    (testing) que depuis Internet (prod) sans avoir à reprovisionner.
+
+    Pour NEXTAUTH_URL et AUTHENTIK_APP_ISSUER (uniques), on sélectionne :
+      - prod si DOMAIN résout
+      - LAN sinon (fallback safe — ne casse pas si DNS pas configuré)
+    """
     token = _ak_admin_token(env)
     if not token:
         return {"ok": False, "reason": "Authentik admin token unavailable"}
 
     domain = env.get("DOMAIN", "")
-    if domain and domain != "xefia.local" and "." in domain:
-        app_url = f"https://app.{domain}"
+    has_real_domain = bool(domain and domain != "xefia.local" and "." in domain)
+    prod_url = f"https://app.{domain}" if has_real_domain else None
+    lan_url = f"http://{host}:3100"
+    prod_resolves = bool(prod_url) and _dns_resolves(f"app.{domain}")
+
+    redirect_uris: list[str] = [f"{lan_url}/api/auth/callback/authentik"]
+    if prod_url:
+        redirect_uris.append(f"{prod_url}/api/auth/callback/authentik")
+
+    # URL utilisée par le navigateur pour les redirects login
+    if prod_resolves and prod_url:
+        active_app_url = prod_url
+        ak_url_browser = f"https://auth.{domain}"
     else:
-        app_url = f"http://{host}:3100"
+        active_app_url = lan_url
+        ak_url_browser = f"http://{host}:9000"
 
     creds = _ak_upsert_oidc_app(
         token,
         app_name="AI Box App",
         app_slug="aibox-app",
         client_id="aibox-app",
-        redirect_uris=[f"{app_url}/api/auth/callback/authentik"],
+        redirect_uris=redirect_uris,
         description="Application principale AI Box (chat, agents, workflows)",
     )
 
     env_path = Path("/srv/ai-stack/.env")
     if env_path.exists():
         existing_secret = env.get("APP_NEXTAUTH_SECRET", "") or _gen_secret(48)
-        # IMPORTANT : AUTHENTIK_APP_ISSUER doit être l'URL utilisée par le NAVIGATEUR
-        # (NextAuth fait redirect côté browser). Le hostname Docker interne
-        # `aibox-authentik-server` n'est pas résolvable par le browser → ERR_NAME_NOT_RESOLVED.
-        if app_url.startswith("https://"):
-            ak_url_browser = f"https://auth.{domain}"
-        else:
-            ak_url_browser = f"http://{host}:9000"
         keys = {
             "AUTHENTIK_APP_CLIENT_ID":     f"AUTHENTIK_APP_CLIENT_ID={creds['client_id']}",
             "AUTHENTIK_APP_CLIENT_SECRET": f"AUTHENTIK_APP_CLIENT_SECRET={creds['client_secret']}",
             "AUTHENTIK_APP_ISSUER":        f"AUTHENTIK_APP_ISSUER={ak_url_browser}/application/o/aibox-app/",
-            "NEXTAUTH_URL":                f"NEXTAUTH_URL={app_url}",
+            "NEXTAUTH_URL":                f"NEXTAUTH_URL={active_app_url}",
             "APP_NEXTAUTH_SECRET":         f"APP_NEXTAUTH_SECRET={existing_secret}",
         }
         lines = env_path.read_text().splitlines()
@@ -247,7 +274,13 @@ def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
                 new.append(v)
         env_path.write_text("\n".join(new) + "\n")
 
-    return {"ok": True, "client_id": creds["client_id"], "app_url": app_url}
+    return {
+        "ok": True,
+        "client_id": creds["client_id"],
+        "active_app_url": active_app_url,
+        "redirect_uris": redirect_uris,
+        "prod_resolves": prod_resolves,
+    }
 
 
 # ---------------------------------------------------------------------------

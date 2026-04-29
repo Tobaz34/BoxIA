@@ -9,6 +9,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { activateConnector } from "@/lib/connectors-state";
 import { getConnector } from "@/lib/connectors";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,10 @@ export async function POST(
 
   try {
     const next = await activateConnector(slug, body.config || {});
+    await logAction("connector.activate", slug, {
+      config_keys: Object.keys(body.config || {}),
+      impl_status: spec.implStatus,
+    }, ipFromHeaders(req));
     return NextResponse.json({
       ok: true,
       slug: next.slug,

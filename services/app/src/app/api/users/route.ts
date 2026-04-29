@@ -9,6 +9,7 @@ import {
   requireAdmin, akFetch, ADMIN_GROUP_NAME, MANAGER_GROUP_NAME,
   EMPLOYEE_GROUP_NAME, toPublicUser, type AkUser, type AkGroup,
 } from "@/lib/authentik";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
@@ -158,6 +159,12 @@ export async function POST(req: NextRequest) {
       tempPassword = null;
     }
   }
+
+  await logAction("user.invite", email, {
+    role,
+    has_temp_password: !!tempPassword,
+    has_recovery_link: !!recoveryLink,
+  }, ipFromHeaders(req));
 
   return NextResponse.json({
     user: toPublicUser({

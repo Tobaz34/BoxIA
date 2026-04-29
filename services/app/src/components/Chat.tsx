@@ -16,7 +16,7 @@
 
 import {
   Send, Square, Sparkles, RotateCcw, Copy, Check,
-  ThumbsUp, ThumbsDown,
+  ThumbsUp, ThumbsDown, MessageSquare, X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -24,6 +24,7 @@ import { ConversationsList, type Conversation } from "./ConversationsList";
 import { AgentPicker, type AgentMeta } from "./AgentPicker";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageSources, type RetrieverResource } from "./MessageSources";
+import { useUI, setUI } from "@/lib/ui-store";
 
 type Role = "user" | "assistant";
 interface Message {
@@ -424,30 +425,29 @@ export function Chat() {
   }
 
   return (
-    <div className="flex h-full">
-      <div className="flex flex-col w-72 shrink-0 border-r border-border bg-card h-full">
-        {/* Agent picker */}
-        <div className="p-3 border-b border-border">
-          <AgentPicker
-            agents={agents}
-            currentSlug={currentAgent}
-            onChange={switchAgent}
+    <ChatLayout
+      panel={
+        <>
+          <div className="p-3 border-b border-border">
+            <AgentPicker
+              agents={agents}
+              currentSlug={currentAgent}
+              onChange={(s) => { switchAgent(s); setUI({ convDrawerOpen: false }); }}
+            />
+          </div>
+          <ConversationsList
+            conversations={conversations}
+            currentId={conversationId}
+            loading={conversationsLoading}
+            onSelect={(id) => { loadConversation(id); setUI({ convDrawerOpen: false }); }}
+            onNew={() => { newConversation(); setUI({ convDrawerOpen: false }); }}
+            onDelete={deleteConversation}
+            onRename={renameConversation}
           />
-        </div>
-
-        {/* Conversations list (sans le wrapper aside qui contient déjà l'agent picker au-dessus) */}
-        <ConversationsList
-          conversations={conversations}
-          currentId={conversationId}
-          loading={conversationsLoading}
-          onSelect={loadConversation}
-          onNew={newConversation}
-          onDelete={deleteConversation}
-          onRename={renameConversation}
-        />
-      </div>
-
-      <div className="flex-1 flex flex-col h-full min-w-0">
+        </>
+      }
+    >
+      <>
         <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-6">
           {empty ? (
             <div className="h-full flex items-center justify-center">
@@ -642,6 +642,65 @@ export function Chat() {
             pour saut de ligne · Toutes les conversations restent sur ce serveur.
           </p>
         </div>
+      </>
+    </ChatLayout>
+  );
+}
+
+/** Layout responsive : desktop = panel statique à gauche, chat à droite.
+ *  Mobile = panel en drawer (slide-out) qui couvre la chat.
+ *  Le bouton "Conversations" en haut du chat ouvre le drawer mobile. */
+function ChatLayout({
+  panel, children,
+}: {
+  panel: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const { state } = useUI();
+  const open = state.convDrawerOpen;
+  return (
+    <div className="flex h-full relative">
+      {/* Overlay mobile */}
+      {open && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/60 z-30"
+          onClick={() => setUI({ convDrawerOpen: false })}
+        />
+      )}
+
+      {/* Panneau conversations + agent picker */}
+      <div
+        className={
+          "shrink-0 border-r border-border bg-card flex flex-col h-full transition-transform " +
+          "lg:relative lg:w-72 lg:translate-x-0 " +
+          "fixed inset-y-0 left-0 w-80 z-40 " +
+          (open ? "translate-x-0" : "-translate-x-full lg:translate-x-0")
+        }
+      >
+        {/* Header drawer mobile */}
+        <div className="lg:hidden flex items-center justify-between px-3 h-12 border-b border-border">
+          <span className="text-sm font-medium">Conversations</span>
+          <button
+            onClick={() => setUI({ convDrawerOpen: false })}
+            className="p-1.5 rounded hover:bg-muted/30"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        {panel}
+      </div>
+
+      {/* Bouton "Conversations" mobile uniquement (top-bar mince au-dessus du chat) */}
+      <div className="flex-1 flex flex-col h-full min-w-0">
+        <div className="lg:hidden h-10 px-3 border-b border-border flex items-center bg-card">
+          <button
+            onClick={() => setUI({ convDrawerOpen: true })}
+            className="text-xs inline-flex items-center gap-1.5 text-muted hover:text-foreground"
+          >
+            <MessageSquare size={14} /> Conversations
+          </button>
+        </div>
+        {children}
       </div>
     </div>
   );

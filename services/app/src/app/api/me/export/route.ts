@@ -14,10 +14,11 @@ import { authOptions } from "@/lib/auth";
 import { listAvailableAgents, AGENTS, getAgentKey } from "@/lib/agents";
 import { difyFetch } from "@/lib/dify";
 import { akFetch } from "@/lib/authentik";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -100,6 +101,11 @@ export async function GET() {
 
   const filename = `aibox-export-${email.replace(/[^a-zA-Z0-9.-]/g, "_")}-` +
     new Date().toISOString().slice(0, 10) + ".json";
+
+  await logAction("rgpd.export", email, {
+    agents: Object.keys(agentsExport).length,
+  }, ipFromHeaders(req));
+
   return new NextResponse(JSON.stringify(payload, null, 2), {
     status: 200,
     headers: {
