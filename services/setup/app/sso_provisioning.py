@@ -487,6 +487,136 @@ def _ensure_ollama_plugin(c: httpx.Client, base: str) -> dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
+def _add_ollama_embedding(c: httpx.Client, base: str, model_name: str,
+                          ollama_url: str = "http://ollama:11434") -> dict[str, Any]:
+    """Ajoute un modèle d'embedding Ollama (text-embedding) au workspace.
+
+    Pré-requis pour les datasets Dify (chunking + indexation Qdrant).
+    Idempotent.
+    """
+    provider = "langgenius/ollama/ollama"
+    try:
+        r = c.get(
+            f"{base}/console/api/workspaces/current/model-providers/{provider}/models",
+        )
+        if r.status_code == 200:
+            for m in r.json().get("data", []):
+                if m.get("model") == model_name and \
+                   m.get("model_type") in ("text-embedding", "embeddings"):
+                    return {"ok": True, "added": False, "already": True}
+
+        # Note : pas de "mode" ni "max_tokens" pour text-embedding
+        r = c.post(
+            f"{base}/console/api/workspaces/current/model-providers/{provider}/models/credentials",
+            json={
+                "model": model_name,
+                "model_type": "text-embedding",
+                "credentials": {
+                    "model": model_name,
+                    "context_size": "8192",
+                    "base_url": ollama_url,
+                },
+            },
+            timeout=90,
+        )
+        if r.status_code not in (200, 201):
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+        return {"ok": True, "added": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _set_default_embedding(c: httpx.Client, base: str, model_name: str) -> dict[str, Any]:
+    """Définit le modèle d'embedding par défaut du workspace.
+    Sans ça, /datasets refuse de créer une knowledge base.
+    """
+    try:
+        r = c.post(
+            f"{base}/console/api/workspaces/current/default-model",
+            json={
+                "model_settings": [{
+                    "model_type": "text-embedding",
+                    "provider": "langgenius/ollama/ollama",
+                    "model": model_name,
+                }],
+            },
+            timeout=30,
+        )
+        if r.status_code not in (200, 201):
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _ensure_default_dataset(c: httpx.Client, base: str,
+                            name: str = "Base de connaissances",
+                            description: str = "Documents partagés AI Box",
+                            ) -> dict[str, Any]:
+    """Crée (ou retrouve) un dataset Dify partagé par tous les agents.
+    Renvoie {ok, dataset_id}.
+    """
+    try:
+        r = c.get(f"{base}/console/api/datasets",
+                  params={"page": 1, "limit": 50})
+        if r.status_code == 200:
+            for ds in r.json().get("data", []):
+                if ds.get("name") == name:
+                    return {"ok": True, "dataset_id": ds.get("id"),
+                            "already": True}
+
+        # Créer le dataset (mode "high_quality" = embedding-based, le défaut
+        # pour les Knowledge Base modernes Dify)
+        r = c.post(
+            f"{base}/console/api/datasets",
+            json={
+                "name": name,
+                "description": description,
+                "indexing_technique": "high_quality",
+                "permission": "all_team_members",
+                "provider": "vendor",
+            },
+            timeout=20,
+        )
+        if r.status_code not in (200, 201):
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+        ds_id = r.json().get("id")
+        if not ds_id:
+            return {"ok": False, "error": "no dataset id returned"}
+        return {"ok": True, "dataset_id": ds_id, "already": False}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _ensure_dataset_api_key(c: httpx.Client, base: str,
+                            dataset_id: str) -> dict[str, Any]:
+    """Génère (ou retrouve) une clé API du dataset (Bearer dataset-...)
+    pour permettre à l'app aibox-app d'uploader/lister des docs en
+    utilisant le Service API Dify (séparé du Console API).
+    """
+    try:
+        # Liste les clés existantes : si une est en clair (non masquée), on
+        # la réutilise.
+        r = c.get(f"{base}/console/api/datasets/api-keys")
+        if r.status_code == 200:
+            for k in r.json().get("data", []):
+                tok = k.get("token", "")
+                if tok.startswith("dataset-") and "*" not in tok:
+                    return {"ok": True, "api_key": tok, "already": True}
+
+        # Sinon, en créer une nouvelle (le token complet n'est renvoyé
+        # qu'à la création — pas de re-fetch possible après).
+        r = c.post(f"{base}/console/api/datasets/api-keys", json={})
+        if r.status_code not in (200, 201):
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+        tok = r.json().get("token", "")
+        if not tok:
+            return {"ok": False, "error": "no token returned"}
+        return {"ok": True, "api_key": tok, "already": False}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
                       ollama_url: str = "http://ollama:11434") -> dict[str, Any]:
     """Ajoute un modèle Ollama (LLM) dans Dify pour le workspace courant.
@@ -535,7 +665,8 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
 def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
                            model_name: str,
                            pre_prompt: str | None = None,
-                           opening_statement: str | None = None) -> dict[str, Any]:
+                           opening_statement: str | None = None,
+                           dataset_ids: list[str] | None = None) -> dict[str, Any]:
     """Configure le modèle par défaut sur une app Dify (mode chat).
 
     Le endpoint /console/api/apps/{id}/model-config attend toute la
@@ -577,7 +708,12 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
         },
         "dataset_configs": {
             "retrieval_model": "multiple",
-            "datasets": {"datasets": []},
+            "datasets": {
+                "datasets": [
+                    {"dataset": {"enabled": True, "id": did}}
+                    for did in (dataset_ids or [])
+                ],
+            },
             "top_k": 4,
             "score_threshold": 0.5,
             "score_threshold_enabled": False,
@@ -708,7 +844,8 @@ def _persist_env_var(name: str, value: str) -> None:
 
 
 def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
-                          model_name: str) -> dict[str, Any]:
+                          model_name: str,
+                          dataset_ids: list[str] | None = None) -> dict[str, Any]:
     """Provisionne (ou retrouve) un agent Dify selon sa spec, et écrit sa
     clé API dans .env. Idempotent.
     """
@@ -743,11 +880,12 @@ def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
             if not app_id:
                 return {"ok": False, "error": "no app id returned"}
 
-        # 3. Configure le modèle + pre_prompt + opening_statement
+        # 3. Configure le modèle + pre_prompt + opening_statement + datasets
         cfg = _set_app_default_model(
             c, base, app_id, model_name,
             pre_prompt=agent["pre_prompt"],
             opening_statement=agent["opening_statement"],
+            dataset_ids=dataset_ids,
         )
         # On continue même si la config échoue (l'app reste utilisable
         # mais avec le pre_prompt précédent)
@@ -801,6 +939,7 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         return {"ok": False, "error": "ADMIN_EMAIL / ADMIN_PASSWORD requis"}
 
     model_name = env.get("LLM_MAIN", "qwen2.5:7b")
+    embed_name = env.get("LLM_EMBED", "bge-m3:latest")
 
     c = _dify_console_client(base, email, pwd)
     if not c:
@@ -816,19 +955,43 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         if not report["ollama_model"].get("ok"):
             return {"ok": False, "step": "ollama_model", **report}
 
+        # ---- Embedding + dataset (Phase C : RAG) ----
+        # Best-effort : si une étape échoue, on continue sans datasets pour
+        # ne pas bloquer le provisioning des agents.
+        report["ollama_embedding"] = _add_ollama_embedding(c, base, embed_name)
+        report["default_embedding"] = _set_default_embedding(c, base, embed_name)
+
+        dataset_ids: list[str] = []
+        ds_res = _ensure_default_dataset(c, base)
+        report["default_dataset"] = ds_res
+        if ds_res.get("ok") and ds_res.get("dataset_id"):
+            dataset_ids.append(ds_res["dataset_id"])
+            _persist_env_var("DIFY_DEFAULT_DATASET_ID", ds_res["dataset_id"])
+
+            # Clé API du Service Dataset API (différente des clés app/agent !)
+            kb_key = _ensure_dataset_api_key(c, base, ds_res["dataset_id"])
+            report["dataset_api_key"] = {
+                "ok": kb_key.get("ok", False),
+                "already": kb_key.get("already", False),
+            }
+            if kb_key.get("ok") and kb_key.get("api_key"):
+                _persist_env_var("DIFY_KB_API_KEY", kb_key["api_key"])
+
         agents_report: dict[str, Any] = {}
         any_ok = False
         for spec in DEFAULT_AGENTS:
-            res = _setup_one_dify_agent(c, base, spec, model_name)
+            res = _setup_one_dify_agent(c, base, spec, model_name,
+                                        dataset_ids=dataset_ids)
             agents_report[spec["slug"]] = res
             if res.get("ok"):
                 any_ok = True
 
-        # On considère le provisioning OK si au moins l'agent par défaut a réussi
         default_ok = agents_report.get("general", {}).get("ok", False)
         return {
             "ok": default_ok or any_ok,
             "model": model_name,
+            "embed_model": embed_name,
+            "datasets_attached": dataset_ids,
             "agents": agents_report,
             **report,
         }
