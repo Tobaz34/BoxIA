@@ -266,15 +266,19 @@ async def create_admin_user():
     if not password:
         raise HTTPException(500, "ADMIN_PASSWORD vide dans .env")
 
-    # Attends qu'Authentik soit prêt (healthcheck) avant de tenter create
+    # Attends qu'Authentik soit VRAIMENT prêt : ak check + DB migrations terminées
+    # (l'`ak check` peut répondre OK avant que les models soient disponibles).
     import time as _t
-    for _ in range(60):  # max 60s
+    for attempt in range(60):  # max 120s
         try:
             check = subprocess.run(
-                ["docker", "exec", "aibox-authentik-server", "ak", "check"],
-                capture_output=True, text=True, timeout=8,
+                ["docker", "exec", "aibox-authentik-server", "ak", "shell", "-c",
+                 "from authentik.core.models import User, Group; "
+                 "g = Group.objects.filter(name='authentik Admins').exists(); "
+                 "print('READY' if g else 'NOT_READY')"],
+                capture_output=True, text=True, timeout=10,
             )
-            if check.returncode == 0:
+            if "READY" in check.stdout:
                 break
         except Exception:
             pass
@@ -298,22 +302,38 @@ async def create_admin_user():
         "'check=', u.check_password(os.environ['AK_PASSWORD']))\n"
     )
 
-    try:
-        out = subprocess.run(
-            ["docker", "exec",
-             "-e", f"AK_USERNAME={username}",
-             "-e", f"AK_FULLNAME={fullname}",
-             "-e", f"AK_EMAIL={email}",
-             "-e", f"AK_PASSWORD={password}",
-             "aibox-authentik-server", "ak", "shell", "-c", script],
-            capture_output=True, text=True, timeout=30,
-        )
-        ok = "USER_OK" in out.stdout or "USER_UPDATED" in out.stdout
-        return {"created": ok,
-                "stdout": out.stdout[-500:],
-                "stderr": out.stderr[-500:]}
-    except subprocess.TimeoutExpired:
-        raise HTTPException(504, "Timeout création utilisateur Authentik")
+    # Retry avec backoff (3 tentatives, 5s entre chaque) — la 1ère échoue
+    # parfois sur "ProgrammingError: relation 'authentik_core_user' does not exist".
+    last_stdout = ""
+    last_stderr = ""
+    for attempt in range(3):
+        try:
+            out = subprocess.run(
+                ["docker", "exec",
+                 "-e", f"AK_USERNAME={username}",
+                 "-e", f"AK_FULLNAME={fullname}",
+                 "-e", f"AK_EMAIL={email}",
+                 "-e", f"AK_PASSWORD={password}",
+                 "aibox-authentik-server", "ak", "shell", "-c", script],
+                capture_output=True, text=True, timeout=30,
+            )
+            last_stdout = out.stdout
+            last_stderr = out.stderr
+            if "USER_OK" in out.stdout or "USER_UPDATED" in out.stdout:
+                return {"created": True,
+                        "attempt": attempt + 1,
+                        "stdout": out.stdout[-300:]}
+        except subprocess.TimeoutExpired:
+            last_stderr = "timeout"
+        if attempt < 2:
+            _t.sleep(5)  # backoff avant retry
+
+    # 3 retries échoués → erreur HTTP claire (au lieu de retourner created:false)
+    raise HTTPException(
+        500,
+        f"Création user Authentik échouée après 3 tentatives. "
+        f"stdout={last_stdout[-200:]} stderr={last_stderr[-200:]}",
+    )
 
 
 @app.post("/api/deploy/provision-sso")

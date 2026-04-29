@@ -73,6 +73,15 @@ deploy_stack() {
   c_blue "  → Démarrage Edge Caddy..."
   ( cd services/edge && docker compose --env-file "$env_file" up -d ) || \
       c_yellow "    (Caddy non démarré — souvent un conflit de ports avec NPM, à régler après)"
+
+  # Démarre la stack héritée (n8n, Portainer, Uptime Kuma, NPM, Duplicati, Dashy)
+  # si elle existe sur l'hôte. Important pour que le provisioning des comptes
+  # n8n/Portainer fonctionne après reset.
+  if [[ -f /srv/anythingllm/docker-compose.yml ]]; then
+    c_blue "  → Démarrage stack héritée (n8n, Portainer, Uptime Kuma...)"
+    ( cd /srv/anythingllm && docker compose -p stack_xefia up -d 2>&1 | tail -5 ) || \
+      c_yellow "    (stack héritée partiellement démarrée)"
+  fi
 }
 
 # ---- Mode non-interactif (utilisé par le wizard web ou CI) -----------------
