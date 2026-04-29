@@ -492,6 +492,9 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
     """Ajoute un modèle Ollama (LLM) dans Dify pour le workspace courant.
 
     Idempotent : si le modèle existe déjà, ne re-crée pas.
+    Note : l'endpoint qui PERSISTE est /models/credentials (pas /models qui
+    renvoie 200 mais ne stocke rien). La validation des creds se fait côté
+    plugin (timeout possible si Ollama lent à répondre).
     """
     provider = "langgenius/ollama/ollama"
     try:
@@ -504,9 +507,11 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
                 if m.get("model") == model_name:
                     return {"ok": True, "added": False, "already": True}
 
-        # Sinon, ajoute le modèle
+        # Endpoint qui persiste : .../models/credentials (POST). Timeout long
+        # car validation = appel HTTP réel au backend Ollama (peut être lent
+        # au cold start si le modèle n'est pas en mémoire).
         r = c.post(
-            f"{base}/console/api/workspaces/current/model-providers/{provider}/models",
+            f"{base}/console/api/workspaces/current/model-providers/{provider}/models/credentials",
             json={
                 "model": model_name,
                 "model_type": "llm",
@@ -518,6 +523,7 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
                     "base_url": ollama_url,
                 },
             },
+            timeout=90,
         )
         if r.status_code not in (200, 201):
             return {"ok": False, "status": r.status_code, "body": r.text[:300]}
