@@ -822,6 +822,71 @@ DEFAULT_AGENTS: list[dict[str, str]] = [
 ]
 
 
+def setup_authentik_management(env: dict[str, str]) -> dict[str, Any]:
+    """Provisionne les éléments Authentik nécessaires à la gestion users
+    depuis l'app aibox-app :
+      1. Service token long-lived → écrit dans .env (AUTHENTIK_API_TOKEN)
+      2. Groupes par défaut : aibox-manager, aibox-employee
+         (le groupe admin est "authentik Admins", déjà présent)
+      3. S'assure que le user wizard est bien dans "authentik Admins"
+    """
+    token = _ak_admin_token(env)
+    if not token:
+        return {"ok": False, "error": "akadmin token unavailable"}
+
+    # Persiste le token : aibox-app l'utilise pour les CRUD users.
+    _persist_env_var("AUTHENTIK_API_TOKEN", token)
+
+    H = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    base = f"{AUTHENTIK_INTERNAL}/api/v3"
+    groups_created: dict[str, str] = {}
+
+    try:
+        with httpx.Client(headers=H, timeout=20) as c:
+            for slug, name in [
+                ("aibox-manager",  "AI Box — Managers"),
+                ("aibox-employee", "AI Box — Employés"),
+            ]:
+                # Cherche par nom (Authentik n'a pas de slug pour les groups)
+                r = c.get(f"{base}/core/groups/", params={"name": name})
+                if r.status_code == 200 and r.json().get("results"):
+                    groups_created[slug] = r.json()["results"][0]["pk"]
+                    continue
+                r = c.post(f"{base}/core/groups/", json={
+                    "name": name,
+                    "is_superuser": False,
+                    "attributes": {"aibox_role": slug.replace("aibox-", "")},
+                })
+                if r.status_code in (200, 201):
+                    groups_created[slug] = r.json()["pk"]
+
+            # S'assure que le user wizard est dans "authentik Admins"
+            admin_username = env.get("ADMIN_USERNAME", "")
+            if admin_username:
+                r = c.get(f"{base}/core/users/", params={"username": admin_username})
+                if r.status_code == 200 and r.json().get("results"):
+                    u = r.json()["results"][0]
+                    user_pk = u["pk"]
+                    user_groups = [g.get("pk") if isinstance(g, dict) else g
+                                   for g in u.get("groups", [])]
+                    # Get "authentik Admins" group
+                    rg = c.get(f"{base}/core/groups/", params={"name": "authentik Admins"})
+                    if rg.status_code == 200 and rg.json().get("results"):
+                        admin_group_pk = rg.json()["results"][0]["pk"]
+                        if admin_group_pk not in user_groups:
+                            new_groups = list(user_groups) + [admin_group_pk]
+                            c.patch(f"{base}/core/users/{user_pk}/",
+                                    json={"groups": new_groups})
+
+        return {
+            "ok": True,
+            "token_persisted": True,
+            "groups": groups_created,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def _persist_env_var(name: str, value: str) -> None:
     """Écrit (ou met à jour) une ligne KEY=VALUE dans /srv/ai-stack/.env.
     Idempotent : remplace la ligne existante si présente, sinon append.
@@ -1119,6 +1184,8 @@ def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
         "open_webui":  setup_owui_oidc(env, host),
         "dify":        dify_admin,
         "dify_agent":  dify_agent,
+        # Phase D : token + groupes pour la gestion users depuis aibox-app
+        "ak_management": setup_authentik_management(env),
         "n8n":         setup_n8n_owner(env, host),
         "portainer":   setup_portainer_admin(env, host),
         "uptime_kuma": setup_uptime_kuma_admin(env, host),
