@@ -1,7 +1,8 @@
 /**
- * GET /api/conversations — liste les conversations de l'utilisateur courant.
+ * GET /api/conversations?agent=<slug>&limit=&last_id=
  *
- * Proxy vers Dify /v1/conversations?user=<email>&limit=N.
+ * Liste les conversations de l'utilisateur courant pour l'agent demandé.
+ * Chaque agent (= app Dify) a son propre historique.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, difyFetch } from "@/lib/dify";
@@ -9,10 +10,12 @@ import { requireDifyContext, difyFetch } from "@/lib/dify";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const ctx = await requireDifyContext();
+  const { searchParams } = new URL(req.url);
+  const agent = searchParams.get("agent") || undefined;
+
+  const ctx = await requireDifyContext(agent);
   if (ctx instanceof NextResponse) return ctx;
 
-  const { searchParams } = new URL(req.url);
   const limit = searchParams.get("limit") || "50";
   const lastId = searchParams.get("last_id") || "";
 

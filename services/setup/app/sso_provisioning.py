@@ -533,23 +533,31 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
 
 
 def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
-                           model_name: str) -> dict[str, Any]:
+                           model_name: str,
+                           pre_prompt: str | None = None,
+                           opening_statement: str | None = None) -> dict[str, Any]:
     """Configure le modèle par défaut sur une app Dify (mode chat).
 
     Le endpoint /console/api/apps/{id}/model-config attend toute la
     model_config (model + completion params + opening_statement, etc.).
+    pre_prompt et opening_statement sont surchargeables pour permettre
+    différents agents spécialisés (comptable, RH, support, ...).
     """
     payload = {
-        "pre_prompt": "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
-                      "de façon concise et précise.",
+        "pre_prompt": pre_prompt or (
+            "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
+            "de façon concise et précise."
+        ),
         "prompt_type": "simple",
         "chat_prompt_config": {},
         "completion_prompt_config": {},
         "user_input_form": [],
         "dataset_query_variable": "",
         "more_like_this": {"enabled": False},
-        "opening_statement": "Bonjour ! Je suis votre assistant IA local. "
-                             "Que puis-je faire pour vous aujourd'hui ?",
+        "opening_statement": opening_statement or (
+            "Bonjour ! Je suis votre assistant IA local. "
+            "Que puis-je faire pour vous aujourd'hui ?"
+        ),
         "suggested_questions": [],
         "suggested_questions_after_answer": {"enabled": True},
         "speech_to_text": {"enabled": False},
@@ -585,17 +593,206 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
         return {"ok": False, "error": str(e)}
 
 
+# ---------------------------------------------------------------------------
+# Catalogue des agents AI Box.
+# Chaque entrée est provisionnée comme une App Dify distincte avec son propre
+# pre_prompt → ton et expertise différents. La clé API est écrite dans .env
+# sous le nom env_var (consommée par services/app/docker-compose.yml).
+# ---------------------------------------------------------------------------
+DEFAULT_AGENTS: list[dict[str, str]] = [
+    {
+        "slug": "general",
+        "name": "Assistant général",
+        "icon": "🤖",
+        "icon_bg": "#FFEAD5",
+        "description": "Assistant polyvalent, par défaut de l'AI Box.",
+        "pre_prompt": (
+            "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
+            "de façon concise et précise. Quand on te demande de générer du code, "
+            "fournis des blocs ```lang``` correctement formatés."
+        ),
+        "opening_statement": (
+            "Bonjour ! Je suis votre assistant IA local. "
+            "Que puis-je faire pour vous aujourd'hui ?"
+        ),
+        "env_var": "DIFY_DEFAULT_APP_API_KEY",
+    },
+    {
+        "slug": "accountant",
+        "name": "Assistant comptable",
+        "icon": "📊",
+        "icon_bg": "#D4F4DD",
+        "description": "Spécialiste comptabilité, factures, TVA, devis.",
+        "pre_prompt": (
+            "Tu es l'assistant comptable de l'AI Box, expert pour les TPE/PME "
+            "françaises. Tu maîtrises : la TVA (taux normal 20 %, intermédiaire 10 %, "
+            "réduit 5,5 %), les régimes (réel, micro-BNC, micro-BIC), la "
+            "facturation, les écritures comptables, les déclarations courantes "
+            "(CFE, DAS2, IS, IR). Réponds en français de façon claire et "
+            "structurée. Cite toujours les obligations légales pertinentes. "
+            "Pour les calculs, montre les étapes. Tu n'es pas un expert-comptable "
+            "agréé : rappelle-le pour les questions complexes."
+        ),
+        "opening_statement": (
+            "Bonjour ! Je suis votre assistant comptable. Je peux vous aider sur "
+            "les devis, factures, TVA, écritures, déclarations… Que souhaitez-vous ?"
+        ),
+        "env_var": "DIFY_AGENT_ACCOUNTANT_API_KEY",
+    },
+    {
+        "slug": "hr",
+        "name": "Assistant RH",
+        "icon": "👥",
+        "icon_bg": "#E0E7FF",
+        "description": "Spécialiste droit du travail, paie, contrats, congés.",
+        "pre_prompt": (
+            "Tu es l'assistant RH de l'AI Box, spécialisé pour les TPE/PME "
+            "françaises. Tu connais le Code du travail, les conventions "
+            "collectives courantes, la paie (charges sociales, fiches de paie), "
+            "les contrats (CDI, CDD, alternance), les congés (payés, RTT, "
+            "maladie, maternité), les ruptures (démission, licenciement, "
+            "rupture conventionnelle). Réponds en français, de façon claire, "
+            "et cite les articles de loi pertinents. Tu n'es pas avocat : "
+            "recommande la consultation d'un juriste pour les cas complexes."
+        ),
+        "opening_statement": (
+            "Bonjour ! Je suis votre assistant RH. Posez-moi vos questions "
+            "sur les contrats, la paie, les congés, le droit du travail…"
+        ),
+        "env_var": "DIFY_AGENT_HR_API_KEY",
+    },
+    {
+        "slug": "support",
+        "name": "Support clients",
+        "icon": "🎧",
+        "icon_bg": "#FFE0E9",
+        "description": "Rédige des réponses commerciales pour vos clients.",
+        "pre_prompt": (
+            "Tu es l'assistant de relation client de l'AI Box. Tu rédiges des "
+            "réponses professionnelles, courtoises et orientées solution pour "
+            "des clients de TPE/PME françaises. Ton ton : empathique, rassurant, "
+            "concret. Tu sais : remercier, accuser réception, présenter des "
+            "excuses, proposer un geste commercial proportionné, escalader. "
+            "Tu signes par défaut « Cordialement, [Votre prénom] ». Tu adaptes "
+            "le formalisme au contexte (B2B vs B2C). Si tu as besoin d'infos "
+            "(nom client, n° commande), demande-les."
+        ),
+        "opening_statement": (
+            "Bonjour ! Je rédige avec vous vos réponses clients. "
+            "Décrivez la situation et je vous propose un message."
+        ),
+        "env_var": "DIFY_AGENT_SUPPORT_API_KEY",
+    },
+]
+
+
+def _persist_env_var(name: str, value: str) -> None:
+    """Écrit (ou met à jour) une ligne KEY=VALUE dans /srv/ai-stack/.env.
+    Idempotent : remplace la ligne existante si présente, sinon append.
+    """
+    env_path = Path("/srv/ai-stack/.env")
+    if not env_path.exists():
+        return
+    lines = env_path.read_text().splitlines()
+    found = False
+    out = []
+    for line in lines:
+        if line.startswith(f"{name}="):
+            out.append(f"{name}={value}")
+            found = True
+        else:
+            out.append(line)
+    if not found:
+        out.append(f"{name}={value}")
+    env_path.write_text("\n".join(out) + "\n")
+
+
+def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
+                          model_name: str) -> dict[str, Any]:
+    """Provisionne (ou retrouve) un agent Dify selon sa spec, et écrit sa
+    clé API dans .env. Idempotent.
+    """
+    name = agent["name"]
+    try:
+        # 1. Cherche l'app par nom
+        app_id: str | None = None
+        r = c.get(f"{base}/console/api/apps", params={"page": 1, "limit": 50})
+        if r.status_code == 200:
+            for app in r.json().get("data", []):
+                if app.get("name") == name:
+                    app_id = app.get("id")
+                    break
+
+        # 2. Sinon, crée l'app
+        if not app_id:
+            r = c.post(
+                f"{base}/console/api/apps",
+                json={
+                    "name": name,
+                    "mode": "chat",
+                    "icon_type": "emoji",
+                    "icon": agent["icon"],
+                    "icon_background": agent["icon_bg"],
+                    "description": agent["description"],
+                },
+            )
+            if r.status_code not in (200, 201):
+                return {"ok": False, "step": "create_app",
+                        "status": r.status_code, "body": r.text[:300]}
+            app_id = r.json().get("id")
+            if not app_id:
+                return {"ok": False, "error": "no app id returned"}
+
+        # 3. Configure le modèle + pre_prompt + opening_statement
+        cfg = _set_app_default_model(
+            c, base, app_id, model_name,
+            pre_prompt=agent["pre_prompt"],
+            opening_statement=agent["opening_statement"],
+        )
+        # On continue même si la config échoue (l'app reste utilisable
+        # mais avec le pre_prompt précédent)
+
+        # 4. Clé API : récupère existante (token en clair) ou en crée une
+        api_key: str | None = None
+        r = c.get(f"{base}/console/api/apps/{app_id}/api-keys")
+        if r.status_code == 200:
+            for k in r.json().get("data", []):
+                tok = k.get("token", "")
+                if tok.startswith("app-") and "*" not in tok:
+                    api_key = tok
+                    break
+        if not api_key:
+            r = c.post(f"{base}/console/api/apps/{app_id}/api-keys", json={})
+            if r.status_code not in (200, 201):
+                return {"ok": False, "step": "create_key",
+                        "status": r.status_code, "body": r.text[:300]}
+            api_key = r.json().get("token")
+            if not api_key:
+                return {"ok": False, "error": "no token returned"}
+
+        # 5. Persistence dans .env
+        _persist_env_var(agent["env_var"], api_key)
+
+        return {
+            "ok": True,
+            "slug": agent["slug"],
+            "app_id": app_id,
+            "api_key_prefix": api_key[:10] + "…",
+            "model_config_ok": cfg.get("ok", False),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
-    """Provisionne (ou retrouve) un agent Dify "par défaut" et renvoie sa clé API.
+    """Provisionne TOUS les agents par défaut (général + spécialisés).
 
     Étapes :
-      1. Login console avec ADMIN_EMAIL / ADMIN_PASSWORD (cookies + Bearer)
-      2. Installe le plugin Ollama si absent (Dify 1.x)
-      3. Ajoute le modèle ${LLM_MAIN} (Ollama) au workspace si absent
-      4. Cherche l'app "Assistant général" ; sinon la crée (mode=chat)
-      5. Configure le modèle par défaut sur l'app
-      6. POST /console/api/apps/{id}/api-keys → récupère la clé "app-..."
-      7. Écrit DIFY_DEFAULT_APP_API_KEY=... dans /srv/ai-stack/.env
+      1. Login console
+      2. Plugin Ollama (idempotent)
+      3. Modèle Ollama (idempotent)
+      4. Pour chaque agent du catalogue : crée/retrouve l'app, configure
+         son pre_prompt, génère sa clé API, écrit dans .env
     """
     base = "http://aibox-dify-nginx:80"
     email = env.get("ADMIN_EMAIL", "")
@@ -609,97 +806,32 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     if not c:
         return {"ok": False, "error": "login Dify impossible (admin pas encore créé ?)"}
 
-    APP_NAME = "Assistant général"
     report: dict[str, Any] = {}
-
     try:
-        # Étape 2 : plugin Ollama
         report["ollama_plugin"] = _ensure_ollama_plugin(c, base)
         if not report["ollama_plugin"].get("ok"):
             return {"ok": False, "step": "ollama_plugin", **report}
 
-        # Étape 3 : modèle Ollama
         report["ollama_model"] = _add_ollama_model(c, base, model_name)
         if not report["ollama_model"].get("ok"):
             return {"ok": False, "step": "ollama_model", **report}
 
-        # Étape 4 : app par défaut
-        app_id: str | None = None
-        r = c.get(f"{base}/console/api/apps", params={"page": 1, "limit": 50})
-        if r.status_code == 200:
-            for app in r.json().get("data", []):
-                if app.get("name") == APP_NAME:
-                    app_id = app.get("id")
-                    break
+        agents_report: dict[str, Any] = {}
+        any_ok = False
+        for spec in DEFAULT_AGENTS:
+            res = _setup_one_dify_agent(c, base, spec, model_name)
+            agents_report[spec["slug"]] = res
+            if res.get("ok"):
+                any_ok = True
 
-        if not app_id:
-            r = c.post(
-                f"{base}/console/api/apps",
-                json={
-                    "name": APP_NAME,
-                    "mode": "chat",
-                    "icon_type": "emoji",
-                    "icon": "🤖",
-                    "icon_background": "#FFEAD5",
-                    "description": "Assistant par défaut de la AI Box (créé automatiquement).",
-                },
-            )
-            if r.status_code not in (200, 201):
-                return {"ok": False, "step": "create_app",
-                        "status": r.status_code, "body": r.text[:300], **report}
-            app_id = r.json().get("id")
-            if not app_id:
-                return {"ok": False, "error": "no app id returned", **report}
-
-        # Étape 5 : modèle par défaut sur l'app
-        report["app_model"] = _set_app_default_model(c, base, app_id, model_name)
-        # On continue même si ça échoue (l'app peut quand même fonctionner)
-
-        # Étape 6 : clé API
-        api_key: str | None = None
-        r = c.get(f"{base}/console/api/apps/{app_id}/api-keys")
-        if r.status_code == 200:
-            keys = r.json().get("data", [])
-            for k in keys:
-                tok = k.get("token", "")
-                if tok.startswith("app-") and "*" not in tok:
-                    api_key = tok
-                    break
-
-        if not api_key:
-            r = c.post(f"{base}/console/api/apps/{app_id}/api-keys", json={})
-            if r.status_code not in (200, 201):
-                return {"ok": False, "step": "create_key",
-                        "status": r.status_code, "body": r.text[:300], **report}
-            api_key = r.json().get("token")
-            if not api_key:
-                return {"ok": False, "error": "no token returned", **report}
-
-        # Étape 7 : écrit la clé dans /srv/ai-stack/.env
-        env_path = Path("/srv/ai-stack/.env")
-        if env_path.exists():
-            txt = env_path.read_text()
-            if "DIFY_DEFAULT_APP_API_KEY=" in txt:
-                lines = []
-                for line in txt.splitlines():
-                    if line.startswith("DIFY_DEFAULT_APP_API_KEY="):
-                        lines.append(f"DIFY_DEFAULT_APP_API_KEY={api_key}")
-                    else:
-                        lines.append(line)
-                env_path.write_text("\n".join(lines) + "\n")
-            else:
-                with env_path.open("a") as f:
-                    f.write(f"\nDIFY_DEFAULT_APP_API_KEY={api_key}\n")
-
+        # On considère le provisioning OK si au moins l'agent par défaut a réussi
+        default_ok = agents_report.get("general", {}).get("ok", False)
         return {
-            "ok": True,
-            "app_id": app_id,
-            "api_key_prefix": api_key[:10] + "…",
+            "ok": default_ok or any_ok,
             "model": model_name,
+            "agents": agents_report,
             **report,
         }
-    except Exception as e:
-        return {"ok": False, "error": str(e), **report}
     finally:
         c.close()
 

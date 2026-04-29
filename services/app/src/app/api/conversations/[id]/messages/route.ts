@@ -1,8 +1,7 @@
 /**
- * GET /api/conversations/[id]/messages — historique des messages.
- *
- * Dify renvoie chaque "message" comme une paire (query, answer). Côté client
- * on les éclate en 2 messages UI distincts.
+ * GET /api/conversations/[id]/messages?agent=<slug>
+ * Historique des messages. Dify renvoie chaque "message" comme paire
+ * (query, answer) → on l'éclate en 2 bulles UI côté client.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, difyFetch } from "@/lib/dify";
@@ -14,10 +13,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const ctx = await requireDifyContext();
+  const { searchParams } = new URL(req.url);
+  const ctx = await requireDifyContext(searchParams.get("agent") || undefined);
   if (ctx instanceof NextResponse) return ctx;
 
-  const { searchParams } = new URL(req.url);
   const limit = searchParams.get("limit") || "50";
   const firstId = searchParams.get("first_id") || "";
 

@@ -1,36 +1,37 @@
 "use client";
 
 /**
- * Chat principal — toutes fonctionnalités Phase A :
- *   - Liste des conversations (sidebar) + bouton "Nouvelle conversation"
- *   - Persistence côté Dify (chargement de l'historique)
- *   - Markdown + code blocks + copier (via MessageMarkdown)
- *   - Streaming SSE temps réel
- *   - Auto-resize textarea
- *   - Avatars + dates relatives
- *   - Boutons par message : Copier, Régénérer, Like/Dislike
- *   - Questions suggérées après chaque réponse
- *   - Bouton Stop pendant streaming
- *   - Erreurs lisibles
+ * Chat principal — Phase A + Phase B.
+ *
+ * Phase B :
+ *   - Sélecteur d'agent (AgentPicker) au-dessus de la liste de conversations
+ *   - Conversations + messages scopés par agent (chaque agent a son propre
+ *     historique côté Dify)
+ *   - Custom Instructions (localStorage) injectées au 1er message d'une
+ *     nouvelle conversation
+ *
+ * Le slug d'agent courant est mémorisé dans localStorage pour persister
+ * entre les visites.
  */
 
 import {
   Send, Square, Sparkles, RotateCcw, Copy, Check,
-  ThumbsUp, ThumbsDown, User as UserIcon,
+  ThumbsUp, ThumbsDown,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { ConversationsList, type Conversation } from "./ConversationsList";
+import { AgentPicker, type AgentMeta } from "./AgentPicker";
 import { MessageMarkdown } from "./MessageMarkdown";
 
 type Role = "user" | "assistant";
 interface Message {
-  id: string;             // local UI id
+  id: string;
   role: Role;
   content: string;
-  difyMessageId?: string; // pour feedback / suggestions (assistant only)
+  difyMessageId?: string;
   feedback?: "like" | "dislike" | null;
-  createdAt: number;      // ms
+  createdAt: number;
 }
 
 const SUGGESTIONS_INITIAL = [
@@ -40,13 +41,20 @@ const SUGGESTIONS_INITIAL = [
   "Combien de tickets ouverts cette semaine ?",
 ];
 
+const LS_AGENT_KEY = "aibox.currentAgent";
+const LS_CUSTOM_INSTRUCTIONS = "aibox.customInstructions";
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
-
 function timeShort(ms: number): string {
   const d = new Date(ms);
   return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function readCustomInstructions(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(LS_CUSTOM_INSTRUCTIONS) || "";
 }
 
 export function Chat() {
@@ -59,7 +67,11 @@ export function Chat() {
       .map((s) => s[0]!.toUpperCase())
       .join("") || "?";
 
-  // ----- State -----
+  // ----- Agents -----
+  const [agents, setAgents] = useState<AgentMeta[]>([]);
+  const [currentAgent, setCurrentAgent] = useState<string>("");
+
+  // ----- Conversations / messages -----
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [conversationId, setConversationId] = useState<string>("");
@@ -74,21 +86,62 @@ export function Chat() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // ----- Conversations CRUD -----
+  // ----- Charger la liste d'agents -----
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/agents", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        const list: AgentMeta[] = j.agents || [];
+        setAgents(list);
+        // Restaure l'agent stocké, sinon le default
+        const stored =
+          (typeof window !== "undefined" && localStorage.getItem(LS_AGENT_KEY)) || "";
+        const valid = list.find((a) => a.slug === stored);
+        const initial =
+          valid?.slug || list.find((a) => a.isDefault)?.slug || list[0]?.slug || "";
+        setCurrentAgent(initial);
+      } catch { /* noop */ }
+    })();
+  }, []);
+
+  // ----- Conversations CRUD (scopées par agent) -----
   const refreshConversations = useCallback(async () => {
+    if (!currentAgent) return;
     try {
-      const r = await fetch("/api/conversations?limit=50", { cache: "no-store" });
-      if (!r.ok) return;
+      const r = await fetch(
+        `/api/conversations?agent=${encodeURIComponent(currentAgent)}&limit=50`,
+        { cache: "no-store" },
+      );
+      if (!r.ok) {
+        setConversations([]);
+        return;
+      }
       const j = await r.json();
       setConversations(j.data || []);
     } finally {
       setConversationsLoading(false);
     }
-  }, []);
+  }, [currentAgent]);
 
   useEffect(() => {
+    if (!currentAgent) return;
+    setConversationsLoading(true);
+    setConversationId("");
+    setMessages([]);
+    setSuggested([]);
+    setError(null);
     refreshConversations();
-  }, [refreshConversations]);
+  }, [currentAgent, refreshConversations]);
+
+  function switchAgent(slug: string) {
+    if (slug === currentAgent) return;
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LS_AGENT_KEY, slug);
+    }
+    setCurrentAgent(slug);
+  }
 
   const loadConversation = useCallback(async (id: string) => {
     setConversationId(id);
@@ -96,7 +149,7 @@ export function Chat() {
     setSuggested([]);
     try {
       const r = await fetch(
-        `/api/conversations/${id}/messages?limit=50`,
+        `/api/conversations/${id}/messages?agent=${encodeURIComponent(currentAgent)}&limit=50`,
         { cache: "no-store" },
       );
       if (!r.ok) throw new Error("load failed");
@@ -104,12 +157,7 @@ export function Chat() {
       const msgs: Message[] = [];
       for (const m of j.data || []) {
         const t = (m.created_at || 0) * 1000;
-        msgs.push({
-          id: uid(),
-          role: "user",
-          content: m.query || "",
-          createdAt: t,
-        });
+        msgs.push({ id: uid(), role: "user", content: m.query || "", createdAt: t });
         msgs.push({
           id: uid(),
           role: "assistant",
@@ -120,7 +168,6 @@ export function Chat() {
         });
       }
       setMessages(msgs);
-      // Pre-fetch suggestions for the last assistant msg
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.difyMessageId) {
         fetchSuggested(last.difyMessageId);
@@ -128,7 +175,8 @@ export function Chat() {
     } catch {
       setError("Impossible de charger la conversation");
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAgent]);
 
   function newConversation() {
     setConversationId("");
@@ -140,25 +188,32 @@ export function Chat() {
   }
 
   async function deleteConversation(id: string) {
-    await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+    await fetch(
+      `/api/conversations/${id}?agent=${encodeURIComponent(currentAgent)}`,
+      { method: "DELETE" },
+    );
     if (id === conversationId) newConversation();
     refreshConversations();
   }
 
   async function renameConversation(id: string) {
-    await fetch(`/api/conversations/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ auto_generate: true }),
-    });
+    await fetch(
+      `/api/conversations/${id}?agent=${encodeURIComponent(currentAgent)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_generate: true }),
+      },
+    );
     refreshConversations();
   }
 
   async function fetchSuggested(messageId: string) {
     try {
-      const r = await fetch(`/api/messages/${messageId}/suggested`, {
-        cache: "no-store",
-      });
+      const r = await fetch(
+        `/api/messages/${messageId}/suggested?agent=${encodeURIComponent(currentAgent)}`,
+        { cache: "no-store" },
+      );
       if (!r.ok) return;
       const j = await r.json();
       setSuggested(Array.isArray(j.data) ? j.data : []);
@@ -182,11 +237,20 @@ export function Chat() {
   // ----- Send a message -----
   async function send(query: string, replaceLastAssistant = false) {
     const q = query.trim();
-    if (!q || streaming) return;
+    if (!q || streaming || !currentAgent) return;
 
     setError(null);
     setSuggested([]);
     setInput("");
+
+    // Custom Instructions : injectées uniquement au 1er message d'une
+    // nouvelle conversation (Dify garde le contexte ensuite).
+    const ci = readCustomInstructions().trim();
+    const isNewConversation = !conversationId;
+    const queryForDify =
+      ci && isNewConversation
+        ? `[Contexte utilisateur, à garder en tête pour toutes les réponses :\n${ci}]\n\n${q}`
+        : q;
 
     const userMsg: Message = {
       id: uid(), role: "user", content: q, createdAt: Date.now(),
@@ -196,13 +260,9 @@ export function Chat() {
     };
 
     setMessages((m) => {
-      // Régénération : remplace la dernière paire user+assistant si elle existe
       if (replaceLastAssistant && m.length >= 2) {
         const next = [...m];
-        // Remove last assistant message; keep last user message; append new asst
-        if (next[next.length - 1]?.role === "assistant") {
-          next.pop();
-        }
+        if (next[next.length - 1]?.role === "assistant") next.pop();
         return [...next, asstMsg];
       }
       return [...m, userMsg, asstMsg];
@@ -219,7 +279,11 @@ export function Chat() {
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q, conversation_id: conversationId }),
+        body: JSON.stringify({
+          agent: currentAgent,
+          query: queryForDify,
+          conversation_id: conversationId,
+        }),
         signal: ctrl.signal,
       });
 
@@ -238,7 +302,6 @@ export function Chat() {
       const reader = r.body!.getReader();
       const decoder = new TextDecoder();
       let buf = "";
-
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -270,12 +333,11 @@ export function Chat() {
               } else if (data.event === "error") {
                 setError(data.message || "Erreur Dify");
               }
-            } catch { /* ignore non-JSON */ }
+            } catch { /* ignore */ }
           }
         }
       }
 
-      // Stamp message_id on the assistant bubble for feedback/suggestions
       if (collectedMessageId) {
         setMessages((m) =>
           m.map((x) =>
@@ -287,36 +349,23 @@ export function Chat() {
         fetchSuggested(collectedMessageId);
       }
 
-      // First message of a new conversation → refresh list to show it
       if (!conversationId && collectedConvId) {
         refreshConversations();
       }
     } catch (e: unknown) {
       const err = e as { name?: string };
-      if (err?.name !== "AbortError") {
-        setError("Connexion interrompue");
-      }
+      if (err?.name !== "AbortError") setError("Connexion interrompue");
     } finally {
       setStreaming(false);
       abortRef.current = null;
     }
   }
 
-  function stop() {
-    abortRef.current?.abort();
-  }
+  function stop() { abortRef.current?.abort(); }
 
   function regenerate() {
-    // Find last user message and resend (replacing last assistant)
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (lastUser) send(lastUser.content, true);
-  }
-
-  // ----- Per-message actions -----
-  async function copyMessage(content: string) {
-    try {
-      await navigator.clipboard.writeText(content);
-    } catch { /* noop */ }
   }
 
   async function setFeedback(msg: Message, rating: "like" | "dislike" | null) {
@@ -325,40 +374,76 @@ export function Chat() {
       m.map((x) => (x.id === msg.id ? { ...x, feedback: rating } : x)),
     );
     try {
-      await fetch(`/api/messages/${msg.difyMessageId}/feedback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating }),
-      });
+      await fetch(
+        `/api/messages/${msg.difyMessageId}/feedback?agent=${encodeURIComponent(currentAgent)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating }),
+        },
+      );
     } catch { /* noop */ }
   }
 
-  // ----- Render -----
   const empty = messages.length === 0 && !streaming;
+  const currentAgentMeta = agents.find((a) => a.slug === currentAgent);
+
+  // ----- No agents available -----
+  if (agents.length === 0 && !conversationsLoading) {
+    return (
+      <div className="h-full flex items-center justify-center px-6">
+        <div className="max-w-md text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-muted/30 text-muted mb-4">
+            <Sparkles size={32} />
+          </div>
+          <h1 className="text-xl font-semibold mb-2">Aucun assistant configuré</h1>
+          <p className="text-sm text-muted">
+            La AI Box n'a pas encore d'assistant prêt. Demandez à
+            l'administrateur de relancer le provisioning des agents.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full">
-      <ConversationsList
-        conversations={conversations}
-        currentId={conversationId}
-        loading={conversationsLoading}
-        onSelect={loadConversation}
-        onNew={newConversation}
-        onDelete={deleteConversation}
-        onRename={renameConversation}
-      />
+      <div className="flex flex-col w-72 shrink-0 border-r border-border bg-card h-full">
+        {/* Agent picker */}
+        <div className="p-3 border-b border-border">
+          <AgentPicker
+            agents={agents}
+            currentSlug={currentAgent}
+            onChange={switchAgent}
+          />
+        </div>
+
+        {/* Conversations list (sans le wrapper aside qui contient déjà l'agent picker au-dessus) */}
+        <ConversationsList
+          conversations={conversations}
+          currentId={conversationId}
+          loading={conversationsLoading}
+          onSelect={loadConversation}
+          onNew={newConversation}
+          onDelete={deleteConversation}
+          onRename={renameConversation}
+        />
+      </div>
 
       <div className="flex-1 flex flex-col h-full min-w-0">
         <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-6">
           {empty ? (
             <div className="h-full flex items-center justify-center">
               <div className="max-w-2xl w-full text-center">
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/15 text-primary mb-4">
-                  <Sparkles size={32} />
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/15 text-primary mb-4 text-3xl">
+                  {currentAgentMeta?.icon || "🤖"}
                 </div>
-                <h1 className="text-3xl font-semibold mb-2">Bonjour 👋</h1>
+                <h1 className="text-3xl font-semibold mb-2">
+                  {currentAgentMeta?.name || "Assistant"}
+                </h1>
                 <p className="text-muted text-lg">
-                  Je suis votre assistant IA local. Posez-moi une question.
+                  {currentAgentMeta?.description ||
+                    "Posez-moi une question."}
                 </p>
                 <div className="grid sm:grid-cols-2 gap-2 mt-8">
                   {SUGGESTIONS_INITIAL.map((s) => (
@@ -395,7 +480,7 @@ export function Chat() {
                         <span className="text-xs font-medium">
                           {m.role === "user"
                             ? session?.user?.name || "Vous"
-                            : "Assistant"}
+                            : currentAgentMeta?.name || "Assistant"}
                         </span>
                         <span className="text-[10px] text-muted">
                           {timeShort(m.createdAt)}
@@ -419,7 +504,6 @@ export function Chat() {
                         )}
                       </div>
 
-                      {/* Per-message actions (assistant, after stream) */}
                       {m.role === "assistant" && m.content && !(streaming && isLast) && (
                         <div className="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-default">
                           <CopyButton content={m.content} />
@@ -463,7 +547,6 @@ export function Chat() {
                 );
               })}
 
-              {/* Suggested questions after last assistant reply */}
               {!streaming && suggested.length > 0 && (
                 <div className="ml-11 flex flex-wrap gap-2 pt-2">
                   {suggested.map((s) => (
@@ -496,9 +579,13 @@ export function Chat() {
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Écrivez votre message…"
+                placeholder={
+                  currentAgentMeta
+                    ? `Message à ${currentAgentMeta.name}…`
+                    : "Écrivez votre message…"
+                }
                 rows={1}
-                disabled={streaming}
+                disabled={streaming || !currentAgent}
                 className="w-full resize-none bg-background border border-border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:border-primary transition-default disabled:opacity-60 max-h-[200px]"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -520,7 +607,7 @@ export function Chat() {
               <button
                 onClick={() => send(input)}
                 className="p-2.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-default disabled:opacity-40 shrink-0"
-                disabled={!input.trim()}
+                disabled={!input.trim() || !currentAgent}
                 title="Envoyer (Entrée)"
               >
                 <Send size={18} />

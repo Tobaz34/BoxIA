@@ -58,7 +58,7 @@ export function ConversationsList({
   const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   return (
-    <aside className="w-72 shrink-0 border-r border-border bg-card flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       <div className="p-3 border-b border-border">
         <button
           onClick={onNew}
@@ -146,6 +146,6 @@ export function ConversationsList({
           );
         })}
       </div>
-    </aside>
+    </div>
   );
 }

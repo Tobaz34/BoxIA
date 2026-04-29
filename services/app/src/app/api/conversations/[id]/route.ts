@@ -1,6 +1,6 @@
 /**
- * DELETE /api/conversations/[id]   — supprime une conversation
- * PATCH  /api/conversations/[id]   — renomme (body: { name } ou { auto_generate: true })
+ * DELETE /api/conversations/[id]?agent=<slug>
+ * PATCH  /api/conversations/[id]?agent=<slug> body: { name } | { auto_generate: true }
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, difyFetch } from "@/lib/dify";
@@ -8,11 +8,12 @@ import { requireDifyContext, difyFetch } from "@/lib/dify";
 export const dynamic = "force-dynamic";
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const ctx = await requireDifyContext();
+  const { searchParams } = new URL(req.url);
+  const ctx = await requireDifyContext(searchParams.get("agent") || undefined);
   if (ctx instanceof NextResponse) return ctx;
 
   const r = await difyFetch(`/v1/conversations/${id}`, {
@@ -35,7 +36,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const ctx = await requireDifyContext();
+  const { searchParams } = new URL(req.url);
+  const ctx = await requireDifyContext(searchParams.get("agent") || undefined);
   if (ctx instanceof NextResponse) return ctx;
 
   let body: { name?: string; auto_generate?: boolean };

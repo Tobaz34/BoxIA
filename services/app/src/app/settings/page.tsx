@@ -1,15 +1,18 @@
-import { Settings } from "lucide-react";
+import { Settings as SettingsIcon } from "lucide-react";
 import { PagePlaceholder } from "@/components/PagePlaceholder";
+import { CustomInstructionsCard } from "@/components/CustomInstructionsCard";
 import { branding } from "@/lib/branding";
 
 export default function SettingsPage() {
   return (
     <PagePlaceholder
-      icon={Settings}
+      icon={SettingsIcon}
       title="Paramètres"
-      description="Branding, intégrations, sauvegardes."
+      description="Personnalisation des assistants, branding, intégrations."
     >
       <div className="space-y-4">
+        <CustomInstructionsCard />
+
         <div className="bg-card border border-border rounded-lg p-4">
           <h2 className="font-semibold mb-2">Branding</h2>
           <dl className="text-sm space-y-1 text-muted">

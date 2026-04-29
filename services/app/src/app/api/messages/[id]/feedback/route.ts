@@ -1,8 +1,4 @@
-/**
- * POST /api/messages/[id]/feedback — thumbs up / down sur une réponse.
- *
- * Body: { rating: "like" | "dislike" | null, content?: string }
- */
+/** POST /api/messages/[id]/feedback?agent=<slug> body: { rating, content? } */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, difyFetch } from "@/lib/dify";
 
@@ -13,7 +9,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const ctx = await requireDifyContext();
+  const { searchParams } = new URL(req.url);
+  const ctx = await requireDifyContext(searchParams.get("agent") || undefined);
   if (ctx instanceof NextResponse) return ctx;
 
   let body: { rating?: "like" | "dislike" | null; content?: string };

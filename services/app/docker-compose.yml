@@ -45,10 +45,13 @@ services:
       AUTHENTIK_API_URL: http://localhost:9000
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
 
-      # Clé API d'un agent Dify "par défaut" (créé au wizard).
-      # Si vide, /api/chat répondra 503 et le front affichera un message
-      # invitant à créer un assistant.
-      DIFY_DEFAULT_APP_API_KEY: ${DIFY_DEFAULT_APP_API_KEY:-}
+      # Clés API Dify des agents (créés au wizard).
+      # DIFY_DEFAULT_APP_API_KEY = agent "Assistant général" (toujours présent).
+      # Les autres sont optionnels — si vide, l'agent est masqué dans le picker.
+      DIFY_DEFAULT_APP_API_KEY:        ${DIFY_DEFAULT_APP_API_KEY:-}
+      DIFY_AGENT_ACCOUNTANT_API_KEY:   ${DIFY_AGENT_ACCOUNTANT_API_KEY:-}
+      DIFY_AGENT_HR_API_KEY:           ${DIFY_AGENT_HR_API_KEY:-}
+      DIFY_AGENT_SUPPORT_API_KEY:      ${DIFY_AGENT_SUPPORT_API_KEY:-}
 
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}

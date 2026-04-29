@@ -1,38 +1,54 @@
 /**
  * Helpers serveur pour l'API Dify v1 (App API).
  *
- * Toutes les requêtes utilisent la clé de l'agent par défaut
- * (DIFY_DEFAULT_APP_API_KEY). L'identité utilisateur Dify =
- * email NextAuth (scope l'historique par user).
+ * Toutes les requêtes utilisent la clé d'un agent (résolu par slug via
+ * src/lib/agents.ts). L'identité utilisateur Dify = email NextAuth.
  */
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { NextResponse } from "next/server";
+import { getAgentKey, defaultAgentSlug, AGENTS } from "@/lib/agents";
 
 export const DIFY_BASE_URL =
   process.env.DIFY_BASE_URL || "http://localhost:8081";
-export const DIFY_API_KEY =
-  process.env.DIFY_DEFAULT_APP_API_KEY || "";
 
 /**
- * Récupère l'utilisateur et la clé. Retourne {user, key} ou une NextResponse
- * d'erreur prête à être renvoyée au client.
+ * Récupère l'utilisateur + clé Dify pour le slug d'agent demandé.
+ * Si le slug n'est pas fourni, prend l'agent par défaut.
+ * Retourne {user, key, agent} ou une NextResponse d'erreur.
  */
-export async function requireDifyContext(): Promise<
-  { user: string; key: string } | NextResponse
-> {
+export async function requireDifyContext(
+  agentSlug?: string | null,
+): Promise<{ user: string; key: string; agent: string } | NextResponse> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  if (!DIFY_API_KEY) {
+
+  const slug = agentSlug || defaultAgentSlug();
+  if (!slug) {
     return NextResponse.json(
-      { error: "no_default_agent",
-        message: "Aucun assistant par défaut n'est configuré." },
+      { error: "no_agent",
+        message: "Aucun agent n'est configuré sur cette AI Box." },
       { status: 503 },
     );
   }
-  return { user: session.user.email, key: DIFY_API_KEY };
+  if (!AGENTS[slug]) {
+    return NextResponse.json(
+      { error: "unknown_agent", agent: slug },
+      { status: 400 },
+    );
+  }
+  const key = getAgentKey(slug);
+  if (!key) {
+    return NextResponse.json(
+      { error: "agent_unavailable",
+        message: `L'agent « ${AGENTS[slug].name} » n'est pas configuré.`,
+        agent: slug },
+      { status: 503 },
+    );
+  }
+  return { user: session.user.email, key, agent: slug };
 }
 
 /** Wrapper minimaliste pour appeler Dify avec le bon header Bearer. */
