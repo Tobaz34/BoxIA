@@ -22,6 +22,9 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - dify_db_data:/var/lib/postgresql/data
+      # Crée automatiquement la DB `dify_plugin` au 1er démarrage de Postgres
+      # (le plugin-daemon en a besoin, séparée de la DB Dify principale).
+      - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d dify"]
       interval: 30s
@@ -117,6 +120,12 @@ services:
       # ---- SSRF ----------------------------------------------------------
       SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
       SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
+      # ---- Plugin daemon (Dify 1.x : providers/tools/embedded models) ----
+      PLUGIN_DAEMON_URL: http://dify-plugin-daemon:5002
+      PLUGIN_DAEMON_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+      INNER_API_KEY_FOR_PLUGIN: ${DIFY_INNER_API_KEY}
+      MARKETPLACE_ENABLED: "true"
+      MARKETPLACE_API_URL: https://marketplace.dify.ai
     volumes:
       - dify_api_storage:/app/api/storage
     depends_on:
@@ -155,12 +164,58 @@ services:
       CODE_EXECUTION_API_KEY: ${DIFY_SECRET_KEY}
       SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
       SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
+      # Plugin daemon (idem dify-api)
+      PLUGIN_DAEMON_URL: http://dify-plugin-daemon:5002
+      PLUGIN_DAEMON_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+      INNER_API_KEY_FOR_PLUGIN: ${DIFY_INNER_API_KEY}
+      MARKETPLACE_ENABLED: "true"
+      MARKETPLACE_API_URL: https://marketplace.dify.ai
     volumes:
       - dify_api_storage:/app/api/storage
     depends_on:
       dify-db:
         condition: service_healthy
       dify-redis:
+        condition: service_healthy
+    networks:
+      - aibox_net
+
+  # ---- PLUGIN DAEMON (Dify 1.x : runtime des plugins providers/tools) ----
+  # Sans ce service, /console/api/workspaces/current/model-providers retourne
+  # une 400 "Failed to request plugin daemon" et aucun modèle ne peut être
+  # configuré. Communique avec dify-api par INNER_API + clé partagée.
+  dify-plugin-daemon:
+    image: langgenius/dify-plugin-daemon:0.1.4-local
+    container_name: aibox-dify-plugin-daemon
+    restart: unless-stopped
+    environment:
+      DB_HOST: dify-db
+      DB_PORT: 5432
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${PG_DIFY_PASSWORD}
+      DB_DATABASE: dify_plugin
+      SERVER_PORT: 5002
+      SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+      MAX_PLUGIN_PACKAGE_SIZE: 52428800
+      PPROF_ENABLED: "false"
+      DIFY_INNER_API_URL: http://dify-api:5001
+      DIFY_INNER_API_KEY: ${DIFY_INNER_API_KEY}
+      PLUGIN_REMOTE_INSTALLING_HOST: 0.0.0.0
+      PLUGIN_REMOTE_INSTALLING_PORT: 5003
+      PLUGIN_WORKING_PATH: /app/storage/cwd
+      PLUGIN_INSTALLED_PATH: plugin
+      PLUGIN_PACKAGE_CACHE_PATH: plugin_packages
+      PLUGIN_MEDIA_CACHE_PATH: assets
+      FORCE_VERIFYING_SIGNATURE: "false"
+      PYTHON_ENV_INIT_TIMEOUT: 120
+      PLUGIN_MAX_EXECUTION_TIMEOUT: 600
+      PIP_MIRROR_URL: ""
+      MARKETPLACE_ENABLED: "true"
+      MARKETPLACE_API_URL: https://marketplace.dify.ai
+    volumes:
+      - dify_plugin_daemon:/app/storage
+    depends_on:
+      dify-db:
         condition: service_healthy
     networks:
       - aibox_net
@@ -198,6 +253,7 @@ volumes:
   dify_redis_data:
   dify_sandbox_deps:
   dify_api_storage:
+  dify_plugin_daemon:
 
 networks:
   aibox_net:

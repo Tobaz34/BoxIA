@@ -177,6 +177,9 @@ async def configure(payload: WizardSubmit):
     ak_secret = gen_secret(60)
     dify_secret = gen_secret(50)
     qdrant_key = gen_secret(32)
+    # Dify 1.x : plugin daemon a besoin de 2 secrets partagés avec dify-api
+    dify_plugin_key = gen_secret(50)
+    dify_inner_key = gen_secret(50)
 
     # Échappe les caractères spéciaux pour bash (.env est sourcé par scripts shell)
     def shell_escape(s: str) -> str:
@@ -198,6 +201,8 @@ async def configure(payload: WizardSubmit):
         f"PG_AUTHENTIK_PASSWORD={pg_ak}",
         f"AUTHENTIK_SECRET_KEY={ak_secret}",
         f"DIFY_SECRET_KEY={dify_secret}",
+        f"DIFY_PLUGIN_DAEMON_KEY={dify_plugin_key}",
+        f"DIFY_INNER_API_KEY={dify_inner_key}",
         f"QDRANT_API_KEY={qdrant_key}",
         "QDRANT_VERSION=v1.13.4",
         "DIFY_VERSION=1.10.1",

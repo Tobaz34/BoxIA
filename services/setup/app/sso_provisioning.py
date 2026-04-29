@@ -421,15 +421,149 @@ def _dify_console_client(base: str, email: str, password: str) -> httpx.Client |
         return None
 
 
+def _ensure_ollama_plugin(c: httpx.Client, base: str) -> dict[str, Any]:
+    """S'assure que le plugin Ollama est installé dans Dify (idempotent).
+
+    Dify 1.x n'a plus les providers en built-in : ils sont packagés en plugins
+    (langgenius/ollama). On vérifie d'abord la liste des plugins installés ;
+    si Ollama est absent, on l'installe depuis le marketplace officiel.
+    """
+    try:
+        r = c.get(f"{base}/console/api/workspaces/current/plugin/list",
+                  params={"page": 1, "page_size": 50})
+        if r.status_code == 200:
+            for p in r.json().get("data", {}).get("list", []):
+                # plugin_id format: "langgenius/ollama/ollama"
+                if "ollama" in str(p.get("plugin_id", "")).lower():
+                    return {"ok": True, "installed": True, "already": True}
+
+        # Pas trouvé → installe depuis marketplace
+        r = c.post(
+            f"{base}/console/api/workspaces/current/plugin/install/marketplace",
+            json={"plugin_unique_identifiers": ["langgenius/ollama/ollama:latest"]},
+        )
+        if r.status_code not in (200, 201):
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+        # L'install est asynchrone : on poll jusqu'à 60s pour vérifier
+        task_id = r.json().get("task_id")
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            time.sleep(2)
+            r = c.get(f"{base}/console/api/workspaces/current/plugin/list",
+                      params={"page": 1, "page_size": 50})
+            if r.status_code == 200:
+                for p in r.json().get("data", {}).get("list", []):
+                    if "ollama" in str(p.get("plugin_id", "")).lower():
+                        return {"ok": True, "installed": True, "task_id": task_id}
+        return {"ok": False, "error": "timeout waiting for ollama plugin install",
+                "task_id": task_id}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
+                      ollama_url: str = "http://ollama:11434") -> dict[str, Any]:
+    """Ajoute un modèle Ollama (LLM) dans Dify pour le workspace courant.
+
+    Idempotent : si le modèle existe déjà, ne re-crée pas.
+    """
+    provider = "langgenius/ollama/ollama"
+    try:
+        # Liste des modèles déjà configurés pour ce provider
+        r = c.get(
+            f"{base}/console/api/workspaces/current/model-providers/{provider}/models",
+        )
+        if r.status_code == 200:
+            for m in r.json().get("data", []):
+                if m.get("model") == model_name:
+                    return {"ok": True, "added": False, "already": True}
+
+        # Sinon, ajoute le modèle
+        r = c.post(
+            f"{base}/console/api/workspaces/current/model-providers/{provider}/models",
+            json={
+                "model": model_name,
+                "model_type": "llm",
+                "credentials": {
+                    "mode": "chat",
+                    "model": model_name,
+                    "context_size": "4096",
+                    "max_tokens": "4096",
+                    "base_url": ollama_url,
+                },
+            },
+        )
+        if r.status_code not in (200, 201):
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+        return {"ok": True, "added": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
+                           model_name: str) -> dict[str, Any]:
+    """Configure le modèle par défaut sur une app Dify (mode chat).
+
+    Le endpoint /console/api/apps/{id}/model-config attend toute la
+    model_config (model + completion params + opening_statement, etc.).
+    """
+    payload = {
+        "pre_prompt": "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
+                      "de façon concise et précise.",
+        "prompt_type": "simple",
+        "chat_prompt_config": {},
+        "completion_prompt_config": {},
+        "user_input_form": [],
+        "dataset_query_variable": "",
+        "more_like_this": {"enabled": False},
+        "opening_statement": "Bonjour ! Je suis votre assistant IA local. "
+                             "Que puis-je faire pour vous aujourd'hui ?",
+        "suggested_questions": [],
+        "suggested_questions_after_answer": {"enabled": True},
+        "speech_to_text": {"enabled": False},
+        "text_to_speech": {"enabled": False, "voice": "", "language": "fr"},
+        "retriever_resource": {"enabled": True},
+        "sensitive_word_avoidance": {"enabled": False, "type": "", "configs": []},
+        "agent_mode": {"enabled": False, "tools": []},
+        "model": {
+            "provider": "langgenius/ollama/ollama",
+            "name": model_name,
+            "mode": "chat",
+            "completion_params": {
+                "temperature": 0.7,
+                "top_p": 1,
+                "max_tokens": 1024,
+            },
+        },
+        "dataset_configs": {
+            "retrieval_model": "multiple",
+            "datasets": {"datasets": []},
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "score_threshold_enabled": False,
+        },
+        "file_upload": {"enabled": False, "image": {"enabled": False}},
+    }
+    try:
+        r = c.post(f"{base}/console/api/apps/{app_id}/model-config", json=payload)
+        if r.status_code not in (200, 201):
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     """Provisionne (ou retrouve) un agent Dify "par défaut" et renvoie sa clé API.
 
     Étapes :
       1. Login console avec ADMIN_EMAIL / ADMIN_PASSWORD (cookies + Bearer)
-      2. Liste des apps existantes ; si "Assistant général" existe → réutilise
-         son ID. Sinon → POST /console/api/apps pour le créer (mode=chat)
-      3. POST /console/api/apps/{id}/api-keys → récupère la clé "app-..."
-      4. Écrit DIFY_DEFAULT_APP_API_KEY=... dans /srv/ai-stack/.env (idempotent)
+      2. Installe le plugin Ollama si absent (Dify 1.x)
+      3. Ajoute le modèle ${LLM_MAIN} (Ollama) au workspace si absent
+      4. Cherche l'app "Assistant général" ; sinon la crée (mode=chat)
+      5. Configure le modèle par défaut sur l'app
+      6. POST /console/api/apps/{id}/api-keys → récupère la clé "app-..."
+      7. Écrit DIFY_DEFAULT_APP_API_KEY=... dans /srv/ai-stack/.env
     """
     base = "http://aibox-dify-nginx:80"
     email = env.get("ADMIN_EMAIL", "")
@@ -437,14 +571,27 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     if not email or not pwd:
         return {"ok": False, "error": "ADMIN_EMAIL / ADMIN_PASSWORD requis"}
 
+    model_name = env.get("LLM_MAIN", "qwen2.5:7b")
+
     c = _dify_console_client(base, email, pwd)
     if not c:
         return {"ok": False, "error": "login Dify impossible (admin pas encore créé ?)"}
 
     APP_NAME = "Assistant général"
+    report: dict[str, Any] = {}
 
     try:
-        # 1. Cherche l'app par nom
+        # Étape 2 : plugin Ollama
+        report["ollama_plugin"] = _ensure_ollama_plugin(c, base)
+        if not report["ollama_plugin"].get("ok"):
+            return {"ok": False, "step": "ollama_plugin", **report}
+
+        # Étape 3 : modèle Ollama
+        report["ollama_model"] = _add_ollama_model(c, base, model_name)
+        if not report["ollama_model"].get("ok"):
+            return {"ok": False, "step": "ollama_model", **report}
+
+        # Étape 4 : app par défaut
         app_id: str | None = None
         r = c.get(f"{base}/console/api/apps", params={"page": 1, "limit": 50})
         if r.status_code == 200:
@@ -453,7 +600,6 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
                     app_id = app.get("id")
                     break
 
-        # 2. Sinon, crée l'app (mode chat = chatbot simple)
         if not app_id:
             r = c.post(
                 f"{base}/console/api/apps",
@@ -468,20 +614,22 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
             )
             if r.status_code not in (200, 201):
                 return {"ok": False, "step": "create_app",
-                        "status": r.status_code, "body": r.text[:300]}
+                        "status": r.status_code, "body": r.text[:300], **report}
             app_id = r.json().get("id")
             if not app_id:
-                return {"ok": False, "error": "no app id returned"}
+                return {"ok": False, "error": "no app id returned", **report}
 
-        # 3. Liste des clés API existantes ; sinon en crée une
+        # Étape 5 : modèle par défaut sur l'app
+        report["app_model"] = _set_app_default_model(c, base, app_id, model_name)
+        # On continue même si ça échoue (l'app peut quand même fonctionner)
+
+        # Étape 6 : clé API
         api_key: str | None = None
         r = c.get(f"{base}/console/api/apps/{app_id}/api-keys")
         if r.status_code == 200:
             keys = r.json().get("data", [])
             for k in keys:
                 tok = k.get("token", "")
-                # Dify renvoie parfois la clé tronquée ("****abcd") : on
-                # ne garde que les clés affichables en clair.
                 if tok.startswith("app-") and "*" not in tok:
                     api_key = tok
                     break
@@ -490,12 +638,12 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
             r = c.post(f"{base}/console/api/apps/{app_id}/api-keys", json={})
             if r.status_code not in (200, 201):
                 return {"ok": False, "step": "create_key",
-                        "status": r.status_code, "body": r.text[:300]}
+                        "status": r.status_code, "body": r.text[:300], **report}
             api_key = r.json().get("token")
             if not api_key:
-                return {"ok": False, "error": "no token returned"}
+                return {"ok": False, "error": "no token returned", **report}
 
-        # 4. Écrit la clé dans /srv/ai-stack/.env (montage host)
+        # Étape 7 : écrit la clé dans /srv/ai-stack/.env
         env_path = Path("/srv/ai-stack/.env")
         if env_path.exists():
             txt = env_path.read_text()
@@ -511,9 +659,15 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
                 with env_path.open("a") as f:
                     f.write(f"\nDIFY_DEFAULT_APP_API_KEY={api_key}\n")
 
-        return {"ok": True, "app_id": app_id, "api_key_prefix": api_key[:10] + "…"}
+        return {
+            "ok": True,
+            "app_id": app_id,
+            "api_key_prefix": api_key[:10] + "…",
+            "model": model_name,
+            **report,
+        }
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), **report}
     finally:
         c.close()
 
