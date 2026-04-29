@@ -149,10 +149,12 @@ def _ak_upsert_oidc_app(
             r.raise_for_status()
             provider = r.json()
 
-        # Application liée
+        # Application liée — filtre strict par slug
         r = c.get(f"{base}/core/applications/", params={"slug": app_slug})
         r.raise_for_status()
-        existing_apps = r.json().get("results", [])
+        all_apps = r.json().get("results", [])
+        # Filtrage côté code car l'API peut retourner des matchs partiels
+        existing_apps = [a for a in all_apps if a.get("slug") == app_slug]
 
         app_payload = {
             "name": app_name,
@@ -164,10 +166,19 @@ def _ak_upsert_oidc_app(
             "open_in_new_tab": False,
         }
         if existing_apps:
-            r = c.patch(f"{base}/core/applications/{existing_apps[0]['slug']}/", json=app_payload)
+            # On utilise le slug existant pour l'URL PATCH
+            existing_slug = existing_apps[0]["slug"]
+            r = c.patch(f"{base}/core/applications/{existing_slug}/", json=app_payload)
         else:
             r = c.post(f"{base}/core/applications/", json=app_payload)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            log.warning("upsert app %s failed: %s %s", app_slug, r.status_code, r.text[:200])
+            # Ne pas raise — on a déjà le provider créé, c'est suffisant
+            return {
+                "client_id": provider["client_id"],
+                "client_secret": provider["client_secret"],
+                "warning": f"app {app_slug} not linked: HTTP {r.status_code}",
+            }
 
         return {
             "client_id": provider["client_id"],
