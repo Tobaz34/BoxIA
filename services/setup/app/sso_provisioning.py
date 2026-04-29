@@ -385,26 +385,39 @@ def setup_dify_admin(env: dict[str, str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Dify : agent par défaut + clé API (pour brancher l'app aibox sur Dify)
 # ---------------------------------------------------------------------------
-def _dify_login(base: str, email: str, password: str) -> tuple[str, str] | None:
-    """Login console Dify → renvoie (access_token, refresh_token) ou None."""
+def _dify_console_client(base: str, email: str, password: str) -> httpx.Client | None:
+    """Authentifie un httpx.Client sur la console Dify.
+
+    Dify 1.10 utilise des cookies pour propager l'auth (access_token httpOnly,
+    csrf_token, refresh_token). Le body de /login renvoie juste {"result":"success"}.
+    Pour les endpoints protégés, on doit aussi envoyer Authorization: Bearer <token>
+    + X-CSRF-TOKEN. On extrait les valeurs des cookies après login.
+    Retourne un Client prêt à appeler /console/api/* ou None si login échoue.
+    """
+    c = httpx.Client(timeout=15)
     try:
-        with httpx.Client(timeout=10) as c:
-            r = c.post(
-                f"{base}/console/api/login",
-                json={"email": email, "password": password, "language": "fr-FR",
-                      "remember_me": True},
-            )
-            if r.status_code != 200:
-                log.warning("Dify login HTTP %s : %s", r.status_code, r.text[:200])
-                return None
-            data = r.json().get("data", {}) or r.json()
-            tok = data.get("access_token")
-            rtok = data.get("refresh_token", "")
-            if not tok:
-                return None
-            return (tok, rtok)
+        r = c.post(
+            f"{base}/console/api/login",
+            json={"email": email, "password": password, "language": "fr-FR",
+                  "remember_me": True},
+        )
+        if r.status_code != 200:
+            log.warning("Dify login HTTP %s : %s", r.status_code, r.text[:200])
+            c.close()
+            return None
+        access_tok = c.cookies.get("access_token")
+        csrf = c.cookies.get("csrf_token", "")
+        if not access_tok:
+            log.warning("Dify login: pas de cookie access_token")
+            c.close()
+            return None
+        c.headers["Authorization"] = f"Bearer {access_tok}"
+        if csrf:
+            c.headers["X-CSRF-TOKEN"] = csrf
+        return c
     except Exception as e:
         log.warning("Dify login error: %s", e)
+        c.close()
         return None
 
 
@@ -412,13 +425,11 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     """Provisionne (ou retrouve) un agent Dify "par défaut" et renvoie sa clé API.
 
     Étapes :
-      1. Login console avec ADMIN_EMAIL / ADMIN_PASSWORD
+      1. Login console avec ADMIN_EMAIL / ADMIN_PASSWORD (cookies + Bearer)
       2. Liste des apps existantes ; si "Assistant général" existe → réutilise
          son ID. Sinon → POST /console/api/apps pour le créer (mode=chat)
       3. POST /console/api/apps/{id}/api-keys → récupère la clé "app-..."
       4. Écrit DIFY_DEFAULT_APP_API_KEY=... dans /srv/ai-stack/.env (idempotent)
-
-    Idempotent : si l'app existe déjà avec une clé valide, ne recrée rien.
     """
     base = "http://aibox-dify-nginx:80"
     email = env.get("ADMIN_EMAIL", "")
@@ -426,74 +437,69 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     if not email or not pwd:
         return {"ok": False, "error": "ADMIN_EMAIL / ADMIN_PASSWORD requis"}
 
-    login = _dify_login(base, email, pwd)
-    if not login:
+    c = _dify_console_client(base, email, pwd)
+    if not c:
         return {"ok": False, "error": "login Dify impossible (admin pas encore créé ?)"}
-    access_tok, _refresh = login
-    auth_headers = {"Authorization": f"Bearer {access_tok}"}
 
     APP_NAME = "Assistant général"
 
     try:
-        with httpx.Client(timeout=15, headers=auth_headers) as c:
-            # 1. Cherche l'app par nom
-            app_id: str | None = None
-            r = c.get(f"{base}/console/api/apps", params={"page": 1, "limit": 50})
-            if r.status_code == 200:
-                for app in r.json().get("data", []):
-                    if app.get("name") == APP_NAME:
-                        app_id = app.get("id")
-                        break
+        # 1. Cherche l'app par nom
+        app_id: str | None = None
+        r = c.get(f"{base}/console/api/apps", params={"page": 1, "limit": 50})
+        if r.status_code == 200:
+            for app in r.json().get("data", []):
+                if app.get("name") == APP_NAME:
+                    app_id = app.get("id")
+                    break
 
-            # 2. Sinon, crée l'app (mode chat = chatbot simple)
+        # 2. Sinon, crée l'app (mode chat = chatbot simple)
+        if not app_id:
+            r = c.post(
+                f"{base}/console/api/apps",
+                json={
+                    "name": APP_NAME,
+                    "mode": "chat",
+                    "icon_type": "emoji",
+                    "icon": "🤖",
+                    "icon_background": "#FFEAD5",
+                    "description": "Assistant par défaut de la AI Box (créé automatiquement).",
+                },
+            )
+            if r.status_code not in (200, 201):
+                return {"ok": False, "step": "create_app",
+                        "status": r.status_code, "body": r.text[:300]}
+            app_id = r.json().get("id")
             if not app_id:
-                r = c.post(
-                    f"{base}/console/api/apps",
-                    json={
-                        "name": APP_NAME,
-                        "mode": "chat",
-                        "icon_type": "emoji",
-                        "icon": "🤖",
-                        "icon_background": "#FFEAD5",
-                        "description": "Assistant par défaut de la AI Box (créé automatiquement).",
-                    },
-                )
-                if r.status_code not in (200, 201):
-                    return {"ok": False, "step": "create_app",
-                            "status": r.status_code, "body": r.text[:300]}
-                app_id = r.json().get("id")
-                if not app_id:
-                    return {"ok": False, "error": "no app id returned"}
+                return {"ok": False, "error": "no app id returned"}
 
-            # 3. Liste des clés API existantes ; sinon en crée une
-            api_key: str | None = None
-            r = c.get(f"{base}/console/api/apps/{app_id}/api-keys")
-            if r.status_code == 200:
-                keys = r.json().get("data", [])
-                if keys:
-                    # On a une clé mais Dify ne renvoie le token complet qu'à la création.
-                    # Si la clé existe déjà, on doit en créer une nouvelle pour avoir le token.
-                    api_key = keys[0].get("token")  # peut être tronqué (****abcd)
-                    if api_key and api_key.startswith("app-") and "*" not in api_key:
-                        pass  # on a la vraie clé
-                    else:
-                        api_key = None  # force creation
+        # 3. Liste des clés API existantes ; sinon en crée une
+        api_key: str | None = None
+        r = c.get(f"{base}/console/api/apps/{app_id}/api-keys")
+        if r.status_code == 200:
+            keys = r.json().get("data", [])
+            for k in keys:
+                tok = k.get("token", "")
+                # Dify renvoie parfois la clé tronquée ("****abcd") : on
+                # ne garde que les clés affichables en clair.
+                if tok.startswith("app-") and "*" not in tok:
+                    api_key = tok
+                    break
 
+        if not api_key:
+            r = c.post(f"{base}/console/api/apps/{app_id}/api-keys", json={})
+            if r.status_code not in (200, 201):
+                return {"ok": False, "step": "create_key",
+                        "status": r.status_code, "body": r.text[:300]}
+            api_key = r.json().get("token")
             if not api_key:
-                r = c.post(f"{base}/console/api/apps/{app_id}/api-keys", json={})
-                if r.status_code not in (200, 201):
-                    return {"ok": False, "step": "create_key",
-                            "status": r.status_code, "body": r.text[:300]}
-                api_key = r.json().get("token")
-                if not api_key:
-                    return {"ok": False, "error": "no token returned"}
+                return {"ok": False, "error": "no token returned"}
 
         # 4. Écrit la clé dans /srv/ai-stack/.env (montage host)
         env_path = Path("/srv/ai-stack/.env")
         if env_path.exists():
             txt = env_path.read_text()
             if "DIFY_DEFAULT_APP_API_KEY=" in txt:
-                # Remplace ligne existante
                 lines = []
                 for line in txt.splitlines():
                     if line.startswith("DIFY_DEFAULT_APP_API_KEY="):
@@ -508,6 +514,8 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         return {"ok": True, "app_id": app_id, "api_key_prefix": api_key[:10] + "…"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+    finally:
+        c.close()
 
 
 # ---------------------------------------------------------------------------

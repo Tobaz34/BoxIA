@@ -358,19 +358,24 @@ async def provision_sso(request: Request):
     host = (request.headers.get("host") or "localhost").split(":")[0]
     report = sso_provisioning.provision_all(env, host)
 
-    # Restart les containers qui dépendent du .env mis à jour par provisioning
-    for ok_key, container in [
-        ("open_webui", "open-webui"),
-        ("aibox_app", "aibox-app"),
-    ]:
+    # Recrée les containers qui dépendent du .env mis à jour par provisioning.
+    # IMPORTANT : `docker restart` ne relit PAS les variables du .env (elles
+    # sont figées au create). Il faut `docker compose up -d` pour propager
+    # AUTHENTIK_APP_CLIENT_SECRET, DIFY_DEFAULT_APP_API_KEY, etc.
+    compose_dirs = [
+        ("open_webui", "/srv/ai-stack/services/inference"),
+        ("aibox_app",  "/srv/ai-stack/services/app"),
+    ]
+    for ok_key, compose_dir in compose_dirs:
         if report.get(ok_key, {}).get("ok"):
             try:
                 subprocess.run(
-                    ["docker", "restart", container],
-                    capture_output=True, timeout=15,
+                    ["docker", "compose", "up", "-d"],
+                    cwd=compose_dir,
+                    capture_output=True, timeout=60,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[provision-sso] compose up failed for {ok_key}: {e}", flush=True)
 
     return report
 
