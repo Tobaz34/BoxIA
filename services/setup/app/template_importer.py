@@ -119,10 +119,12 @@ def _dify_login(email: str, password: str) -> httpx.Client | None:
             log.warning("Dify login OK mais access_token introuvable")
             return None
 
-        # On utilise le Bearer token et on ferme le cookie jar pour éviter
-        # tout conflit de CSRF.
-        c.cookies.clear()
+        # CSRF Dify : header X-CSRF-TOKEN doit matcher le cookie csrf_token.
+        # On garde les cookies dans le jar et on duplique le csrf en header.
+        csrf = r.cookies.get("csrf_token")
         c.headers["Authorization"] = f"Bearer {token}"
+        if csrf:
+            c.headers["X-CSRF-TOKEN"] = csrf
         return c
     except Exception as e:
         log.warning("Dify login exception: %s", e)
