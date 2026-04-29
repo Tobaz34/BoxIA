@@ -63,6 +63,8 @@ export function UsersManager() {
   const [inviteRole, setInviteRole] = useState<Role>("employee");
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [recoveryLink, setRecoveryLink] = useState<string | null>(null);
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [recoveryOpenForUser, setRecoveryOpenForUser] = useState<PublicUser | null>(null);
   const [copied, setCopied] = useState(false);
 
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -105,6 +107,7 @@ export function UsersManager() {
     if (!inviteName.trim() || !inviteEmail.trim()) return;
     setInviteSubmitting(true);
     setRecoveryLink(null);
+    setTempPassword(null);
     try {
       const r = await fetch("/api/users", {
         method: "POST",
@@ -121,6 +124,7 @@ export function UsersManager() {
         return;
       }
       setRecoveryLink(j.recovery_link || null);
+      setTempPassword(j.temp_password || null);
       setInviteName("");
       setInviteEmail("");
       setInviteRole("employee");
@@ -159,15 +163,17 @@ export function UsersManager() {
 
   async function regenerateRecovery(u: PublicUser) {
     setOpenMenu(null);
+    setRecoveryLink(null);
+    setTempPassword(null);
     const r = await fetch(`/api/users/${u.pk}/recovery`, { method: "POST" });
     if (!r.ok) {
       setError("Génération du lien impossible");
       return;
     }
     const j = await r.json();
-    if (j.link) {
-      setRecoveryLink(j.link);
-    }
+    setRecoveryLink(j.link || null);
+    setTempPassword(j.temp_password || null);
+    setRecoveryOpenForUser(u);
   }
 
   async function copyLink(link: string) {
@@ -350,11 +356,59 @@ export function UsersManager() {
         )}
       </div>
 
+      {/* Modal regénération identifiants (depuis le menu d'un user) */}
+      {recoveryOpenForUser && (recoveryLink || tempPassword) && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => {
+            setRecoveryOpenForUser(null);
+            setRecoveryLink(null);
+            setTempPassword(null);
+          }}
+        >
+          <div
+            className="bg-card border border-border rounded-lg w-full max-w-md p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">
+                Identifiants — {recoveryOpenForUser.name}
+              </h2>
+              <button
+                onClick={() => {
+                  setRecoveryOpenForUser(null);
+                  setRecoveryLink(null);
+                  setTempPassword(null);
+                }}
+                className="p-1 rounded hover:bg-muted/30"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <CredentialsBlock
+              link={recoveryLink}
+              tempPassword={tempPassword}
+              copied={copied}
+              onCopy={copyLink}
+              onClose={() => {
+                setRecoveryOpenForUser(null);
+                setRecoveryLink(null);
+                setTempPassword(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Modal Invite */}
       {inviteOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-          onClick={() => { setInviteOpen(false); setRecoveryLink(null); }}
+          onClick={() => {
+            setInviteOpen(false);
+            setRecoveryLink(null);
+            setTempPassword(null);
+          }}
         >
           <div
             className="bg-card border border-border rounded-lg w-full max-w-md p-6 shadow-2xl"
@@ -363,14 +417,18 @@ export function UsersManager() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">Inviter un utilisateur</h2>
               <button
-                onClick={() => { setInviteOpen(false); setRecoveryLink(null); }}
+                onClick={() => {
+                  setInviteOpen(false);
+                  setRecoveryLink(null);
+                  setTempPassword(null);
+                }}
                 className="p-1 rounded hover:bg-muted/30"
               >
                 <X size={16} />
               </button>
             </div>
 
-            {!recoveryLink ? (
+            {!recoveryLink && !tempPassword ? (
               <div className="space-y-3">
                 <div>
                   <label className="text-xs font-medium block mb-1">Nom complet</label>
@@ -425,41 +483,81 @@ export function UsersManager() {
                 </button>
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="rounded-md bg-accent/10 border border-accent/30 text-accent text-sm px-3 py-2">
-                  Utilisateur créé. Transmettez ce lien pour qu'il définisse
-                  son mot de passe :
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    readOnly
-                    value={recoveryLink}
-                    className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-xs font-mono"
-                    onFocus={(e) => e.target.select()}
-                  />
-                  <button
-                    onClick={() => copyLink(recoveryLink)}
-                    className="p-2 rounded-md border border-border hover:border-primary"
-                    title="Copier"
-                  >
-                    {copied ? <Check size={14} /> : <Copy size={14} />}
-                  </button>
-                </div>
-                <p className="text-xs text-muted">
-                  Le lien expire après usage ou au bout de 24h. Vous pourrez en
-                  générer un nouveau depuis le menu de l'utilisateur.
-                </p>
-                <button
-                  onClick={() => { setInviteOpen(false); setRecoveryLink(null); }}
-                  className="w-full mt-2 px-4 py-2 rounded-md border border-border text-sm hover:bg-muted/20 transition-default"
-                >
-                  Fermer
-                </button>
-              </div>
+              <CredentialsBlock
+                link={recoveryLink}
+                tempPassword={tempPassword}
+                copied={copied}
+                onCopy={copyLink}
+                onClose={() => {
+                  setInviteOpen(false);
+                  setRecoveryLink(null);
+                  setTempPassword(null);
+                }}
+              />
             )}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+interface CredentialsBlockProps {
+  link: string | null;
+  tempPassword: string | null;
+  copied: boolean;
+  onCopy: (s: string) => void;
+  onClose: () => void;
+}
+
+/** Affiche soit le lien de recovery (si Authentik en a généré un),
+ *  soit le mot de passe temporaire (fallback si pas de recovery flow). */
+function CredentialsBlock({
+  link, tempPassword, copied, onCopy, onClose,
+}: CredentialsBlockProps) {
+  const value = link || tempPassword || "";
+  const isLink = !!link;
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md bg-accent/10 border border-accent/30 text-accent text-sm px-3 py-2">
+        {isLink
+          ? "Identifiants prêts. Transmettez ce lien pour que l'utilisateur définisse son mot de passe :"
+          : "Mot de passe temporaire généré. Transmettez-le à l'utilisateur (l'inviter à le changer après sa 1re connexion) :"}
+      </div>
+      <div>
+        <label className="text-[10px] uppercase tracking-wide text-muted block mb-1">
+          {isLink ? "Lien de définition de mot de passe" : "Mot de passe temporaire"}
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            readOnly
+            value={value}
+            className={
+              "flex-1 bg-background border border-border rounded-md px-3 py-2 text-xs " +
+              (isLink ? "font-mono" : "font-mono tracking-wider text-base")
+            }
+            onFocus={(e) => e.target.select()}
+          />
+          <button
+            onClick={() => onCopy(value)}
+            className="p-2 rounded-md border border-border hover:border-primary"
+            title="Copier"
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        {isLink
+          ? "Le lien expire après usage ou au bout de 24 h. Vous pourrez en générer un nouveau depuis le menu de l'utilisateur."
+          : "Ce mot de passe ne sera plus affiché. Notez-le maintenant si nécessaire ; vous pourrez en générer un nouveau depuis le menu « Lien de mdp »."}
+      </p>
+      <button
+        onClick={onClose}
+        className="w-full mt-2 px-4 py-2 rounded-md border border-border text-sm hover:bg-muted/20 transition-default"
+      >
+        Fermer
+      </button>
     </div>
   );
 }

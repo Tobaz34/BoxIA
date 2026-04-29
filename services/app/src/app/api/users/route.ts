@@ -127,9 +127,14 @@ export async function POST(req: NextRequest) {
   }
   const u = (await create.json()) as AkUser;
 
-  // Génère un lien de définition de mot de passe (recovery link).
-  // POST /core/users/{pk}/recovery/  → { link: "..." }
+  // Tente d'abord un recovery link Authentik (si un recovery flow est
+  // configuré dans le tenant). Si ça échoue (pas de flow, pas d'email
+  // server SMTP configuré, etc.), fallback sur un mot de passe temporaire
+  // généré localement et défini directement → l'admin transmet ce mdp à
+  // l'utilisateur par le canal de son choix.
   let recoveryLink: string | null = null;
+  let tempPassword: string | null = null;
+
   try {
     const rec = await akFetch(`/core/users/${u.pk}/recovery/`, {
       method: "POST",
@@ -140,11 +145,37 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* noop */ }
 
+  if (!recoveryLink) {
+    // Fallback : génère un mdp aléatoire 12 caractères (lettres + chiffres,
+    // pas de symboles pour faciliter la transmission orale), puis set_password
+    tempPassword = generateTempPassword();
+    try {
+      await akFetch(`/core/users/${u.pk}/set_password/`, {
+        method: "POST",
+        body: JSON.stringify({ password: tempPassword }),
+      });
+    } catch {
+      tempPassword = null;
+    }
+  }
+
   return NextResponse.json({
     user: toPublicUser({
       ...u,
       groups_obj: [{ pk: groupPk, name: targetGroup }],
     }),
     recovery_link: recoveryLink,
+    temp_password: tempPassword,
   });
+}
+
+function generateTempPassword(): string {
+  // alphabet sans caractères ambigus (0/O, 1/l/I) pour la transmission orale
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  let out = "";
+  const bytes = new Uint8Array(12);
+  // crypto.getRandomValues dispo dans Node 20+ et runtime Edge/Web
+  crypto.getRandomValues(bytes);
+  for (let i = 0; i < 12; i++) out += chars[bytes[i]! % chars.length];
+  return out;
 }
