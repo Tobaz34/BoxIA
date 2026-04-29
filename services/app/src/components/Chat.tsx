@@ -17,6 +17,7 @@
 import {
   Send, Square, Sparkles, RotateCcw, Copy, Check,
   ThumbsUp, ThumbsDown, MessageSquare, X, Download,
+  Image as ImageIcon, Paperclip,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -27,6 +28,14 @@ import { MessageSources, type RetrieverResource } from "./MessageSources";
 import { useUI, setUI } from "@/lib/ui-store";
 
 type Role = "user" | "assistant";
+
+interface AttachedImage {
+  upload_file_id: string;
+  name: string;
+  data_url: string;        // data: URL pour preview locale uniquement
+  size: number;
+}
+
 interface Message {
   id: string;
   role: Role;
@@ -35,6 +44,8 @@ interface Message {
   feedback?: "like" | "dislike" | null;
   sources?: RetrieverResource[];
   createdAt: number;
+  /** Images attachées au moment de l'envoi (user msg). */
+  images?: { url: string; name: string }[];
 }
 
 const SUGGESTIONS_INITIAL = [
@@ -88,6 +99,11 @@ export function Chat() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Images en cours d'attachement (avant envoi)
+  const [attached, setAttached] = useState<AttachedImage[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   // ----- Charger la liste d'agents -----
   useEffect(() => {
@@ -260,6 +276,57 @@ export function Chat() {
     ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
   }, [input]);
 
+  // ----- Upload d'image (paperclip) -----
+  async function pickImage() {
+    fileInputRef.current?.click();
+  }
+  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (e.target) e.target.value = "";
+    if (!f) return;
+    if (!f.type.startsWith("image/")) {
+      setError("Format non supporté (image uniquement).");
+      return;
+    }
+    if (f.size > 8 * 1024 * 1024) {
+      setError("Image trop grande (max 8 Mo).");
+      return;
+    }
+    setUploadingImage(true);
+    setError(null);
+    try {
+      // 1. Lit en data URL pour preview locale
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = reject;
+        r.readAsDataURL(f);
+      });
+      // 2. Upload vers Dify
+      const fd = new FormData();
+      fd.append("file", f);
+      if (currentAgent) fd.append("agent", currentAgent);
+      const r = await fetch("/api/files/upload", { method: "POST", body: fd });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setError(j.message || j.error || `Upload échoué (${r.status})`);
+        return;
+      }
+      const j = await r.json();
+      setAttached((cur) => [...cur, {
+        upload_file_id: j.id,
+        name: j.name || f.name,
+        size: j.size || f.size,
+        data_url: dataUrl,
+      }]);
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+  function removeAttached(id: string) {
+    setAttached((cur) => cur.filter((a) => a.upload_file_id !== id));
+  }
+
   // ----- Send a message -----
   async function send(query: string, replaceLastAssistant = false) {
     const q = query.trim();
@@ -278,8 +345,14 @@ export function Chat() {
         ? `[Contexte utilisateur, à garder en tête pour toutes les réponses :\n${ci}]\n\n${q}`
         : q;
 
+    // Capture les images attachées pour ce message
+    const imagesAtSend = attached.slice();
+
     const userMsg: Message = {
       id: uid(), role: "user", content: q, createdAt: Date.now(),
+      images: imagesAtSend.length > 0
+        ? imagesAtSend.map((a) => ({ url: a.data_url, name: a.name }))
+        : undefined,
     };
     const asstMsg: Message = {
       id: uid(), role: "assistant", content: "", createdAt: Date.now(),
@@ -309,9 +382,16 @@ export function Chat() {
           agent: currentAgent,
           query: queryForDify,
           conversation_id: conversationId,
+          files: imagesAtSend.map((a) => ({
+            type: "image" as const,
+            transfer_method: "local_file" as const,
+            upload_file_id: a.upload_file_id,
+          })),
         }),
         signal: ctrl.signal,
       });
+      // Reset les attachements après envoi (succès ou erreur)
+      setAttached([]);
 
       if (!r.ok) {
         let msg = `Erreur ${r.status}`;
@@ -600,7 +680,23 @@ export function Chat() {
                             </span>
                           )
                         ) : (
-                          <div className="whitespace-pre-wrap">{m.content}</div>
+                          <div>
+                            {m.images && m.images.length > 0 && (
+                              <div className="flex flex-wrap gap-2 mb-2">
+                                {m.images.map((img, i) => (
+                                  <img
+                                    key={i}
+                                    src={img.url}
+                                    alt={img.name}
+                                    className="max-h-48 max-w-xs rounded-md border border-border object-contain"
+                                  />
+                                ))}
+                              </div>
+                            )}
+                            {m.content && (
+                              <div className="whitespace-pre-wrap">{m.content}</div>
+                            )}
+                          </div>
                         )}
                       </div>
 
@@ -677,7 +773,53 @@ export function Chat() {
         )}
 
         <div className="border-t border-border bg-card p-4">
+          {/* Preview des images attachées (avant envoi) */}
+          {attached.length > 0 && (
+            <div className="max-w-3xl mx-auto mb-2 flex flex-wrap gap-2">
+              {attached.map((a) => (
+                <div
+                  key={a.upload_file_id}
+                  className="relative group rounded-md border border-border overflow-hidden"
+                >
+                  <img
+                    src={a.data_url}
+                    alt={a.name}
+                    className="h-16 w-16 object-cover"
+                  />
+                  <button
+                    onClick={() => removeAttached(a.upload_file_id)}
+                    className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-black/80 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-default"
+                    title="Retirer"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={onFilePicked}
+          />
+
           <div className="max-w-3xl mx-auto flex items-end gap-2">
+            {/* Bouton Joindre image */}
+            <button
+              onClick={pickImage}
+              disabled={streaming || uploadingImage || !currentAgent}
+              className="p-2.5 rounded-md text-muted hover:bg-muted/30 hover:text-foreground transition-default shrink-0 disabled:opacity-40"
+              title="Joindre une image"
+            >
+              {uploadingImage ? (
+                <ImageIcon size={18} className="animate-pulse text-primary" />
+              ) : (
+                <Paperclip size={18} />
+              )}
+            </button>
             <div className="flex-1">
               <textarea
                 ref={textareaRef}

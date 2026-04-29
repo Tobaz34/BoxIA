@@ -751,7 +751,17 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "score_threshold": 0.5,
             "score_threshold_enabled": False,
         },
-        "file_upload": {"enabled": False, "image": {"enabled": False}},
+        # Image upload activé : si le LLM courant n'est pas vision,
+        # Dify renverra une erreur lisible — sinon l'utilisateur peut
+        # joindre une image et l'agent la voit.
+        "file_upload": {
+            "enabled": True,
+            "image": {
+                "enabled": True,
+                "number_limits": 3,
+                "transfer_methods": ["local_file"],
+            },
+        },
     }
     try:
         r = c.post(f"{base}/console/api/apps/{app_id}/model-config", json=payload)

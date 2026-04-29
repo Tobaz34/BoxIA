@@ -9,8 +9,20 @@ import { requireDifyContext, difyFetch, DIFY_BASE_URL } from "@/lib/dify";
 
 export const dynamic = "force-dynamic";
 
+interface ChatRequestBody {
+  agent?: string;
+  query?: string;
+  conversation_id?: string;
+  files?: Array<{
+    type: "image" | "document";
+    transfer_method: "local_file" | "remote_url";
+    upload_file_id?: string;
+    url?: string;
+  }>;
+}
+
 export async function POST(req: NextRequest) {
-  let body: { agent?: string; query?: string; conversation_id?: string };
+  let body: ChatRequestBody;
   try {
     body = await req.json();
   } catch {
@@ -37,6 +49,8 @@ export async function POST(req: NextRequest) {
       response_mode: "streaming",
       conversation_id: body.conversation_id || "",
       user: ctx.user,
+      // Fichiers attachés (images uploadées via /api/files/upload)
+      files: Array.isArray(body.files) ? body.files : [],
     }),
     signal: req.signal,
   });
