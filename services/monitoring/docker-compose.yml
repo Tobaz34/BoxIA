@@ -10,6 +10,12 @@ services:
     image: prom/prometheus:v3.0.1
     container_name: aibox-prometheus
     restart: unless-stopped
+    # Le port 9090 est exposé sur l'hôte pour que l'app principale
+    # (en network_mode: host) puisse interroger Prometheus via
+    # http://localhost:9090. Bind sur 127.0.0.1 pour ne pas exposer
+    # Prometheus au LAN (sécurité : pas d'auth sur Prom).
+    ports:
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
