@@ -451,7 +451,7 @@ def _ensure_ollama_plugin(c: httpx.Client, base: str) -> dict[str, Any]:
         r = c.get(f"{base}/console/api/workspaces/current/plugin/list",
                   params={"page": 1, "page_size": 50})
         if r.status_code == 200:
-            for p in r.json().get("data", {}).get("list", []):
+            for p in r.json().get("plugins", []):
                 if "ollama" in str(p.get("plugin_id", "")).lower():
                     return {"ok": True, "installed": True, "already": True}
 
@@ -477,7 +477,7 @@ def _ensure_ollama_plugin(c: httpx.Client, base: str) -> dict[str, Any]:
             r = c.get(f"{base}/console/api/workspaces/current/plugin/list",
                       params={"page": 1, "page_size": 50})
             if r.status_code == 200:
-                for p in r.json().get("data", {}).get("list", []):
+                for p in r.json().get("plugins", []):
                     if "ollama" in str(p.get("plugin_id", "")).lower():
                         return {"ok": True, "installed": True,
                                 "task_id": task_id, "pkg_id": pkg_id}
