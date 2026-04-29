@@ -1,0 +1,34 @@
+name: aibox-conn-email-msgraph
+
+services:
+  email-msgraph:
+    build: .
+    container_name: aibox-conn-email-msgraph
+    restart: unless-stopped
+    environment:
+      MS_TENANT_ID: ${MS_TENANT_ID}
+      MS_CLIENT_ID: ${MS_CLIENT_ID}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET}
+      MS_USER_ID: ${MS_USER_ID}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      OLLAMA_URL: http://ollama:11434
+      LLM_MAIN: ${LLM_MAIN:-qwen2.5:7b}
+      SYNC_INTERVAL_MINUTES: ${EMAIL_SYNC_INTERVAL:-5}
+      DIGEST_TARGET_EMAIL: ${DIGEST_TARGET_EMAIL:-}
+    volumes:
+      - email_msgraph_state:/data
+    networks:
+      - aibox_net
+      - ollama_net
+
+volumes:
+  email_msgraph_state:
+    name: aibox_conn_email_msgraph_state
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

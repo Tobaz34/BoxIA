@@ -1,0 +1,35 @@
+name: aibox-conn-email-imap
+
+services:
+  email-imap:
+    build: .
+    container_name: aibox-conn-email-imap
+    restart: unless-stopped
+    environment:
+      IMAP_HOST: ${IMAP_HOST}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      IMAP_USER: ${IMAP_USER}
+      IMAP_PASSWORD: ${IMAP_PASSWORD}
+      IMAP_USE_TLS: ${IMAP_USE_TLS:-true}
+      IMAP_FOLDER: ${IMAP_FOLDER:-INBOX}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      OLLAMA_URL: http://ollama:11434
+      LLM_MAIN: ${LLM_MAIN:-qwen2.5:7b}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-10}
+    volumes:
+      - email_imap_state:/data
+    networks:
+      - aibox_net
+      - ollama_net
+
+volumes:
+  email_imap_state:
+    name: aibox_conn_email_imap_state
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

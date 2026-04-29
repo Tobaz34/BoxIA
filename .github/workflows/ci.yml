@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  shellcheck:
+    name: Lint shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # On lint nos scripts (pas ceux des dependences vendored)
+          find . -type f \( -name "*.sh" \) \
+            -not -path "./.git/*" \
+            -not -path "./portal/frontend/node_modules/*" \
+            -print -exec shellcheck -e SC1091,SC2086 {} +
+
+  yamllint:
+    name: Lint YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install yamllint
+      - run: yamllint -d "{extends: default, rules: {line-length: disable, comments-indentation: disable, document-start: disable, truthy: {check-keys: false}}}" .
+
+  compose-validate:
+    name: Validate Docker Compose files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up minimal .env for compose validation
+        run: |
+          cat > .env <<EOF
+          CLIENT_NAME=ci
+          DOMAIN=ci.local
+          ADMIN_EMAIL=ci@example.com
+          ADMIN_USERNAME=ci
+          ADMIN_PASSWORD=ciPasswordForValidation!1
+          ADMIN_FULLNAME="CI Bot"
+          HW_PROFILE=tpe
+          PG_DIFY_PASSWORD=ci
+          PG_AUTHENTIK_PASSWORD=ci
+          AUTHENTIK_SECRET_KEY=ci
+          DIFY_SECRET_KEY=ci
+          QDRANT_API_KEY=ci
+          NETWORK_NAME=aibox_net
+          QDRANT_VERSION=v1.13.4
+          DIFY_VERSION=1.10.1
+          AUTHENTIK_VERSION=2025.10.0
+          OPEN_WEBUI_VERSION=main
+          OLLAMA_VERSION=latest
+          N8N_VERSION=latest
+          EOF
+          # Le network aibox_net est external dans nos composes — on le simule en local
+          docker network create aibox_net || true
+          docker network create ollama_net || true
+      - name: Validate top-level compose
+        run: docker compose --env-file .env config --quiet
+      - name: Validate Authentik compose
+        run: cd services/authentik && docker compose --env-file ../../.env config --quiet
+      - name: Validate Dify compose
+        run: cd services/dify && docker compose --env-file ../../.env config --quiet
+      - name: Validate Inference compose
+        run: cd services/inference && docker compose --env-file ../../.env config --quiet
+      - name: Validate Edge compose
+        run: cd services/edge && docker compose --env-file ../../.env config --quiet
+      - name: Validate Setup compose
+        run: cd services/setup && docker compose --env-file ../../.env config --quiet
+      - name: Validate Monitoring compose
+        run: cd services/monitoring && docker compose --env-file ../../.env config --quiet

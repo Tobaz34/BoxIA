@@ -1,0 +1,44 @@
+# =============================================================================
+# AI Box - Compose top-level
+# =============================================================================
+# Ce fichier déclare le réseau partagé + les services "infra" (Qdrant).
+# Les autres services (Dify, Authentik) ont leurs propres composes dans services/
+# et se branchent sur le même réseau (en mode external).
+# =============================================================================
+
+name: aibox
+
+services:
+
+  # ---- VECTOR DATABASE ---------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:${QDRANT_VERSION:-v1.13.4}
+    container_name: aibox-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - qdrant_snapshots:/qdrant/snapshots
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT__LOG_LEVEL: INFO
+    ports:
+      # Bindé sur 0.0.0.0 pour accès LAN/VPN. Pour exposition WAN, retirer
+      # ces ports et passer par NPM avec TLS.
+      - "6333:6333"
+      - "6334:6334"
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  qdrant_data:
+  qdrant_snapshots:
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

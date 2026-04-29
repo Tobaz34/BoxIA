@@ -1,0 +1,64 @@
+{
+  "name": "AI Box — Digest emails quotidien",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * 1-5" }]
+        }
+      },
+      "id": "trigger-cron",
+      "name": "Tous les jours 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://aibox-conn-email-msgraph:8000/api/digests",
+        "options": { "queryParameters": { "parameters": [{ "name": "since", "value": "yesterday" }] } }
+      },
+      "id": "http-fetch-digests",
+      "name": "Récupère digests email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "body": {
+          "mode": "raw",
+          "rawBody": "={{ JSON.stringify({\"model\": \"qwen2.5:7b\", \"prompt\": \"Synthétise ces emails en un digest matinal pour la direction. Formate en markdown avec sections : URGENT, À TRAITER, INFORMATIF.\\n\\n\" + JSON.stringify($json), \"stream\": false}) }}"
+        },
+        "options": {}
+      },
+      "id": "llm-summarize",
+      "name": "Résume avec LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ai@={{$env.DOMAIN}}",
+        "toEmail": "={{$env.DIGEST_TARGET_EMAIL}}",
+        "subject": "📧 Digest emails — {{$now.format('YYYY-MM-DD')}}",
+        "html": "={{ $json.response }}"
+      },
+      "id": "send-email",
+      "name": "Envoyer le digest",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Tous les jours 8h":      { "main": [[{ "node": "Récupère digests email", "type": "main", "index": 0 }]] },
+    "Récupère digests email": { "main": [[{ "node": "Résume avec LLM",        "type": "main", "index": 0 }]] },
+    "Résume avec LLM":        { "main": [[{ "node": "Envoyer le digest",      "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ai-box" }, { "name": "email" }]
+}

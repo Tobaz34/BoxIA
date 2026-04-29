@@ -1,0 +1,22 @@
+name: aibox-security-llama-guard
+
+services:
+  llama-guard:
+    build: .
+    container_name: aibox-llama-guard
+    restart: unless-stopped
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      GUARD_MODEL: ${GUARD_MODEL:-llama-guard3:8b}
+      USE_HEURISTICS_FALLBACK: "true"
+    networks:
+      - aibox_net
+      - ollama_net
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

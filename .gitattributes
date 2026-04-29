@@ -1,0 +1,29 @@
+# Forcer LF (Unix) pour les fichiers exécutés sur Linux ou interprétés.
+# Évite les "bad interpreter: ^M" quand on clone le repo sur le serveur.
+
+*.sh           text eol=lf
+*.py           text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+Dockerfile     text eol=lf
+*.conf         text eol=lf
+*.service      text eol=lf
+*.cfg          text eol=lf
+.env.example   text eol=lf
+
+# Web : laisse Git gérer (pas de containment Linux strict)
+*.html         text
+*.css          text
+*.js           text
+*.ts           text
+*.tsx          text
+*.json         text
+*.md           text
+
+# Binaires
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.xlsx binary
+*.zip  binary
+*.gz   binary

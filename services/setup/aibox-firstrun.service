@@ -1,0 +1,23 @@
+[Unit]
+Description=AI Box - First-run setup wizard
+Documentation=https://github.com/votre-org/aibox
+After=docker.service network-online.target avahi-daemon.service
+Wants=docker.service network-online.target avahi-daemon.service
+ConditionPathExists=!/var/lib/aibox/.configured
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/ai-stack/services/setup
+# Crée le réseau Docker s'il n'existe pas (idempotent)
+ExecStartPre=/bin/bash -c "docker network create aibox_net 2>/dev/null || true"
+# Lance le wizard
+ExecStart=/usr/bin/docker compose up -d
+# Quand l'utilisateur a terminé le wizard, /var/lib/aibox/.configured est créé
+# par le container setup-api (volume aibox_setup_state monté).
+# On copie le marqueur sur le filesystem hôte pour que la condition
+# ConditionPathExists désactive le service au prochain boot.
+ExecStop=/bin/bash -c "[ -f /var/lib/docker/volumes/aibox_setup_state/_data/configured ] && mkdir -p /var/lib/aibox && touch /var/lib/aibox/.configured"
+
+[Install]
+WantedBy=multi-user.target

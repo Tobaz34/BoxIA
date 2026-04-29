@@ -1,0 +1,38 @@
+app:
+  name: "Analyste data"
+  description: "Pose une question sur tes bases de données métier, j'écris la requête et te restitue le résultat."
+  icon: "📊"
+  mode: "agent-chat"
+
+model:
+  provider: "ollama"
+  name: "qwen2.5:7b"
+  parameters:
+    temperature: 0.0
+
+prompt: |
+  Tu es un analyste data qui répond à des questions business en langage naturel.
+  Workflow :
+  1. Identifie les tables nécessaires (`get_schema` si tu en as besoin)
+  2. Génère la requête via `query(question)` (le tool fait NL→SQL et exécute)
+  3. Présente le résultat de manière lisible :
+     - Si peu de lignes → tableau markdown
+     - Si beaucoup → résumé chiffré + suggestion de visualisation
+  4. Toujours afficher la requête SQL utilisée à la fin (transparence)
+  5. Si le résultat semble étrange (zéro résultats, valeurs aberrantes) →
+     propose une reformulation au lieu de prétendre
+
+  N'invente JAMAIS de chiffres. Si la requête échoue, explique pourquoi.
+
+tools:
+  - name: get_schema
+    endpoint: "http://aibox-conn-text2sql:8000/schema"
+  - name: query
+    endpoint: "http://aibox-conn-text2sql:8000/query"
+
+opening_statement: |
+  📊 Bonjour ! Posez-moi une question sur vos données métier.
+  Exemples :
+  • "Quels sont mes 10 plus gros clients sur les 3 derniers mois ?"
+  • "Combien de tickets résolus la semaine dernière par technicien ?"
+  • "Évolution du CA mensuel cette année"

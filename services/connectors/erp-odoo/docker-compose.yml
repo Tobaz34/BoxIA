@@ -1,0 +1,21 @@
+name: aibox-conn-erp-odoo
+
+services:
+  erp-odoo:
+    build: .
+    container_name: aibox-conn-erp-odoo
+    restart: unless-stopped
+    environment:
+      ODOO_URL: ${ODOO_URL}
+      ODOO_DB: ${ODOO_DB}
+      ODOO_USERNAME: ${ODOO_USERNAME}
+      ODOO_API_KEY: ${ODOO_API_KEY}
+      ODOO_TOOL_API_KEY: ${ODOO_TOOL_API_KEY}
+      TENANT_ID: ${CLIENT_NAME:-default}
+    networks:
+      - aibox_net
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

@@ -1,0 +1,57 @@
+# =============================================================================
+# Template Dify — Agent Q&R sur documents internes (RAG)
+# =============================================================================
+# Format YAML lisible, à convertir en JSON Dify via le script
+# `templates/dify/import.py` qui le pousse via l'API Dify.
+# =============================================================================
+
+app:
+  name: "Assistant Q&R documents"
+  description: "Pose une question sur tes procédures internes, je cite les sources."
+  icon: "📚"
+  mode: "agent-chat"
+
+model:
+  provider: "ollama"
+  name: "qwen2.5:7b"
+  parameters:
+    temperature: 0.1
+    top_p: 0.9
+
+# Prompt système — strict, factuel, sources obligatoires
+prompt: |
+  Tu es l'assistant interne de l'entreprise. Tu réponds aux questions des employés
+  en t'appuyant UNIQUEMENT sur les documents internes indexés (résultats du tool
+  knowledge_search). Règles strictes :
+
+  1. Réponds en français, ton professionnel concis.
+  2. CITE TOUJOURS tes sources : indique le nom du document et l'URL/chemin.
+  3. Si tu n'as pas de source pertinente, dis : "Je n'ai pas trouvé d'information
+     sur ce sujet dans les documents internes."
+  4. N'invente JAMAIS de référence ou de chiffre.
+  5. Si la question est ambiguë, demande une précision avant de répondre.
+
+# Knowledge bases à brancher (collections Qdrant)
+knowledge:
+  - collection: "rag_msgraph_${TENANT_ID}"
+    name: "SharePoint / OneDrive"
+  - collection: "rag_smb_${TENANT_ID}"
+    name: "NAS / Dossiers réseau"
+  - collection: "rag_gdrive_${TENANT_ID}"
+    name: "Google Drive"
+
+# Filtre d'accès : restreindre par groupes AD du user authentifié
+acl:
+  enabled: true
+  payload_field: "acl_groups"
+  user_groups_from: "openid_groups"   # claim OIDC à utiliser
+
+variables:
+  TENANT_ID: "from_env"
+
+opening_statement: |
+  👋 Bonjour ! Je peux répondre à vos questions sur les procédures internes.
+  Quelques exemples :
+  • "Quelle est la procédure de demande de congés ?"
+  • "Quels sont nos tarifs entreprise pour le service X ?"
+  • "Où trouve-t-on le contrat type RGPD ?"

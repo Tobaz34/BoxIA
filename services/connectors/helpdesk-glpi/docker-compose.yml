@@ -1,0 +1,20 @@
+name: aibox-conn-helpdesk-glpi
+
+services:
+  helpdesk-glpi:
+    build: .
+    container_name: aibox-conn-helpdesk-glpi
+    restart: unless-stopped
+    environment:
+      GLPI_URL: ${GLPI_URL}
+      GLPI_APP_TOKEN: ${GLPI_APP_TOKEN}
+      GLPI_USER_TOKEN: ${GLPI_USER_TOKEN}
+      GLPI_TOOL_API_KEY: ${GLPI_TOOL_API_KEY}
+      TENANT_ID: ${CLIENT_NAME:-default}
+    networks:
+      - aibox_net
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

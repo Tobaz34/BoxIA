@@ -1,0 +1,6 @@
+httpx==0.28.1
+qdrant-client==1.12.1
+unstructured[pdf,docx,xlsx,pptx,md]==0.16.13
+python-magic==0.4.27
+tenacity==9.0.0
+msal==1.31.1

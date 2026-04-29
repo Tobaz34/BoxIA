@@ -1,0 +1,18 @@
+/* Composants utilitaires (importés via @layer dans globals.css normalement,
+   mais on les met dans ce fichier séparé pour clarté).
+   Tu peux les copier dans globals.css si tu préfères tout regrouper. */
+
+/* À ajouter dans globals.css :
+
+@layer components {
+  .input {
+    @apply w-full bg-panel2 border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary transition;
+  }
+  .btn {
+    @apply px-4 py-2 rounded border bg-panel2 hover:bg-border text-sm font-medium transition;
+  }
+  .btn-primary {
+    @apply px-4 py-2 rounded bg-primary text-white text-sm font-semibold hover:bg-blue-600 transition;
+  }
+}
+*/

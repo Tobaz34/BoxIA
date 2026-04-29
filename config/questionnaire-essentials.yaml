@@ -1,0 +1,104 @@
+# =============================================================================
+# Questionnaire essentiel — wizard de setup embarqué
+# =============================================================================
+# Ne contient QUE les questions qui activent concrètement un connecteur ou un
+# template dans la box. Le questionnaire complet (56 items, fiche d'audit
+# commerciale) est dans questionnaire.yaml et sera utilisé par le portail
+# externe lors d'un RDV avancé.
+#
+# Format : choix unique par question, avec valeur "activates" qui pointe sur
+# les capabilités à activer dans la box.
+# =============================================================================
+
+items:
+  - id: stockage_docs
+    icon: "📁"
+    label: "Où sont stockés vos documents internes ?"
+    hint: "L'IA pourra ensuite les indexer pour répondre à des questions dessus."
+    options:
+      - { value: "none",       label: "Pas de stockage centralisé / je verrai plus tard" }
+      - { value: "sharepoint", label: "Microsoft SharePoint / OneDrive", activates: ["rag_msgraph"] }
+      - { value: "gdrive",     label: "Google Drive", activates: ["rag_gdrive"] }
+      - { value: "nas_smb",    label: "NAS / partage de fichiers (Synology, QNAP, Windows)", activates: ["rag_smb"] }
+      - { value: "nextcloud",  label: "Nextcloud", activates: ["rag_nextcloud"] }
+
+  - id: messagerie
+    icon: "📧"
+    label: "Quelle messagerie professionnelle utilisez-vous ?"
+    hint: "L'IA peut classer, résumer et préparer des réponses depuis votre boîte mail."
+    options:
+      - { value: "none",            label: "Aucune / pas concerné" }
+      - { value: "m365",            label: "Microsoft 365 / Exchange Online", activates: ["email_msgraph"] }
+      - { value: "gmail",           label: "Google Workspace (Gmail)", activates: ["email_gmail"] }
+      - { value: "imap",            label: "Email IMAP (OVH, Ionos, Gandi, etc.)", activates: ["email_imap"] }
+      - { value: "exchange_onprem", label: "Exchange On-Premise", activates: ["email_exchange_onprem"] }
+
+  - id: erp_crm
+    icon: "💼"
+    label: "Avez-vous un ERP ou CRM principal ?"
+    hint: "Permet à l'IA de générer des devis, suivre des leads, ou analyser des ventes."
+    options:
+      - { value: "none",       label: "Non / Excel / autre" }
+      - { value: "odoo",       label: "Odoo (toutes versions)", activates: ["erp_odoo"] }
+      - { value: "salesforce", label: "Salesforce", activates: ["crm_salesforce"] }
+      - { value: "hubspot",    label: "HubSpot", activates: ["crm_hubspot"] }
+      - { value: "sage",       label: "Sage (50, 100, X3)", activates: ["erp_sage"] }
+      - { value: "pipedrive",  label: "Pipedrive", activates: ["crm_pipedrive"] }
+      - { value: "dynamics",   label: "Microsoft Dynamics 365 / Business Central", activates: ["erp_dynamics"] }
+      - { value: "other",      label: "Autre / mix" }
+
+  - id: identite
+    icon: "🔐"
+    label: "Comment vos employés se connectent-ils aux outils internes ?"
+    hint: "Permet le SSO unique : un seul login pour toutes les apps de l'AI Box."
+    options:
+      - { value: "none",     label: "Mot de passe local par outil" }
+      - { value: "azure_ad", label: "Microsoft Entra ID (ex-Azure AD)", activates: ["authentik_source_azure"] }
+      - { value: "google",   label: "Google Workspace SSO", activates: ["authentik_source_google"] }
+      - { value: "ad_local", label: "Active Directory local (LDAP)", activates: ["authentik_source_ldap"] }
+      - { value: "okta",     label: "Okta / Auth0 / autre IAM", activates: ["authentik_source_oidc"] }
+
+  - id: bi
+    icon: "📊"
+    label: "Avez-vous un outil de Business Intelligence / reporting ?"
+    hint: "L'IA peut traduire des questions en langage naturel en requêtes Power BI / SQL."
+    options:
+      - { value: "none",     label: "Non / Excel" }
+      - { value: "powerbi",  label: "Power BI", activates: ["bi_powerbi_agent"] }
+      - { value: "metabase", label: "Metabase", activates: ["bi_metabase_agent"] }
+      - { value: "tableau",  label: "Tableau" }
+      - { value: "looker",   label: "Looker Studio" }
+      - { value: "other",    label: "Autre" }
+
+  - id: bases_sql
+    icon: "🗄️"
+    label: "Avez-vous une base de données métier (SQL) interrogeable par l'IA ?"
+    hint: "Permet le 'text-to-SQL' : poser des questions en français, l'IA génère et exécute la requête."
+    options:
+      - { value: "none",     label: "Non / pas concerné" }
+      - { value: "postgres", label: "PostgreSQL", activates: ["text2sql_postgres"] }
+      - { value: "mysql",    label: "MySQL / MariaDB", activates: ["text2sql_mysql"] }
+      - { value: "mssql",    label: "Microsoft SQL Server", activates: ["text2sql_mssql"] }
+      - { value: "oracle",   label: "Oracle" }
+      - { value: "other",    label: "Autre" }
+
+  - id: telephonie
+    icon: "📞"
+    label: "Quelle solution de téléphonie utilisez-vous ?"
+    hint: "Pour transcrire et résumer automatiquement les appels (avec votre accord)."
+    options:
+      - { value: "none",     label: "Aucune / pas pertinent" }
+      - { value: "3cx",      label: "Centrex 3CX", activates: ["telephony_3cx"] }
+      - { value: "wildix",   label: "Centrex Wildix", activates: ["telephony_wildix"] }
+      - { value: "ringover", label: "Ringover / Aircall", activates: ["telephony_ringover"] }
+      - { value: "other",    label: "Autre" }
+
+  - id: helpdesk
+    icon: "🎫"
+    label: "Comment est géré le support utilisateurs en interne ?"
+    hint: "L'IA peut servir d'assistant niveau 1 sur les questions IT récurrentes."
+    options:
+      - { value: "external",      label: "Externalisé (infogérance)" }
+      - { value: "internal_email",label: "Interne, par email" }
+      - { value: "internal_tool", label: "Interne, avec GLPI / Zammad / Freshdesk / Zendesk", activates: ["helpdesk_agent"] }
+      - { value: "none",          label: "Pas concerné" }

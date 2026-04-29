@@ -1,0 +1,41 @@
+id: rag_msgraph
+name: "RAG SharePoint / OneDrive"
+category: rag
+description: "Indexe SharePoint Online et/ou OneDrive du client via MS Graph API"
+status: implemented
+
+required_env:
+  - MS_TENANT_ID
+  - MS_CLIENT_ID
+  - MS_CLIENT_SECRET
+optional_env:
+  - MS_DRIVE_ID
+  - MS_SITE_ID
+  - SYNC_INTERVAL_MINUTES
+  - INCLUDE_EXT
+  - MAX_FILE_MB
+
+qdrant_collection_template: "rag_msgraph_${TENANT_ID}"
+
+triggered_by_questionnaire:
+  question: stockage_docs
+  values: ["sharepoint"]
+
+prerequisites: |
+  Côté client (Azure Portal):
+  1. Entra ID → App registrations → New registration
+     - Name: AI Box - RAG MSGraph
+     - Supported account types: Single tenant
+  2. Certificates & secrets → New client secret (durée 24 mois)
+  3. API permissions → Add permission → Microsoft Graph → Application permissions:
+     - Files.Read.All
+     - Sites.Read.All  (si SharePoint)
+  4. Grant admin consent
+  5. Récupérer : Tenant ID, Application (client) ID, Client secret value
+
+  Côté AI Box (.env):
+   MS_TENANT_ID=xxxx-xxxx-xxxx
+   MS_CLIENT_ID=xxxx-xxxx-xxxx
+   MS_CLIENT_SECRET=xxxx
+   MS_DRIVE_ID=xxxx     # OneDrive d'un user, ou
+   MS_SITE_ID=xxxx      # SharePoint site

@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  background: #0f1115;
+  color: #e6e8eb;
+  min-height: 100vh;
+}
+
+* {
+  border-color: rgba(45, 51, 64, 1);
+}
+
+@layer components {
+  .input {
+    @apply w-full bg-panel2 border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary transition;
+  }
+  .btn {
+    @apply px-4 py-2 rounded border bg-panel2 hover:bg-border text-sm font-medium transition;
+  }
+  .btn-primary {
+    @apply px-4 py-2 rounded bg-primary text-white text-sm font-semibold hover:bg-blue-600 transition;
+  }
+}

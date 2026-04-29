@@ -1,0 +1,66 @@
+# =============================================================================
+# AI Box — Portail de setup embarqué (first-run wizard)
+# =============================================================================
+# S'exécute au premier démarrage de la box. Sert un wizard sur :80 jusqu'à
+# ce que /srv/ai-stack/.configured existe. Ensuite ce stack peut être stoppé
+# pour laisser la place à NPM (qui prendra :80 / 443 pour le dashboard final).
+# =============================================================================
+
+name: aibox-setup
+
+services:
+
+  # ---- API + Wizard (FastAPI + Jinja2) -----------------------------------
+  setup-api:
+    build:
+      context: ./app
+    container_name: aibox-setup-api
+    restart: unless-stopped
+    volumes:
+      # Accès au repo AI Box pour générer .env et lancer install.sh
+      - /srv/ai-stack:/srv/ai-stack
+      # Accès au socket Docker pour piloter les containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Marqueur "configuré"
+      - aibox_setup_state:/state
+    environment:
+      AIBOX_ROOT: /srv/ai-stack
+      STATE_FILE: /state/configured
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - aibox_net
+      - ollama_net   # pour atteindre n8n / open-webui hérités
+    extra_hosts:
+      # Permet d'atteindre les services exposés en host port (n8n :5678,
+      # services sur des networks legacy non joignables) via host.docker.internal.
+      - "host.docker.internal:host-gateway"
+
+  # ---- Caddy (reverse proxy + serveur statique) --------------------------
+  setup-caddy:
+    image: caddy:2-alpine
+    container_name: aibox-setup-caddy
+    restart: unless-stopped
+    ports:
+      - "${SETUP_PORT:-80}:80"      # 80 par défaut, surchargeable pour tests cohabitation NPM
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - aibox_setup_caddy_data:/data
+    depends_on:
+      - setup-api
+    networks:
+      - aibox_net
+      - ollama_net
+
+volumes:
+  aibox_setup_state:
+    name: aibox_setup_state
+  aibox_setup_caddy_data:
+    name: aibox_setup_caddy_data
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

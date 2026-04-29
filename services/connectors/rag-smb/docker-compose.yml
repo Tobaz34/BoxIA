@@ -1,0 +1,38 @@
+name: aibox-conn-rag-smb
+
+services:
+  rag-smb:
+    build: .
+    container_name: aibox-conn-rag-smb
+    restart: unless-stopped
+    environment:
+      # ---- SMB (à fournir au déploiement) ----
+      SMB_HOST: ${SMB_HOST}
+      SMB_SHARE: ${SMB_SHARE}
+      SMB_USER: ${SMB_USER}
+      SMB_PASSWORD: ${SMB_PASSWORD}
+      SMB_DOMAIN: ${SMB_DOMAIN:-}
+      SMB_SUBPATH: ${SMB_SUBPATH:-}
+      INCLUDE_EXT: ${INCLUDE_EXT:-.pdf,.docx,.xlsx,.pptx,.txt,.md,.html}
+      MAX_FILE_MB: ${MAX_FILE_MB:-50}
+      # ---- Comportement ----
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-60}
+      CHUNK_TOKENS: ${CHUNK_TOKENS:-800}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-100}
+      # ---- AI Box ----
+      TENANT_ID: ${CLIENT_NAME:-default}
+      OLLAMA_URL: http://ollama:11434
+      LLM_EMBED: ${LLM_EMBED:-bge-m3}
+      QDRANT_URL: http://aibox-qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+    networks:
+      - aibox_net
+      - ollama_net
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

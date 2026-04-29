@@ -1,0 +1,30 @@
+name: aibox-conn-text2sql
+
+services:
+  text2sql:
+    build: .
+    container_name: aibox-conn-text2sql
+    restart: unless-stopped
+    environment:
+      DB_TYPE: ${DB_TYPE}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      ALLOWED_TABLES: ${ALLOWED_TABLES:-}
+      TOOL_API_KEY: ${TEXT2SQL_TOOL_API_KEY}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      OLLAMA_URL: http://ollama:11434
+      LLM_MAIN: ${LLM_MAIN:-qwen2.5:7b}
+    networks:
+      - aibox_net
+      - ollama_net
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

@@ -1,0 +1,7 @@
+smbprotocol==1.14.0
+qdrant-client==1.12.1
+httpx==0.28.1
+pyyaml==6.0.2
+unstructured[pdf,docx,xlsx,pptx,md]==0.16.13
+python-magic==0.4.27
+tenacity==9.0.0

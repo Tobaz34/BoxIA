@@ -1,0 +1,78 @@
+{
+  "name": "AI Box — Relance factures impayées (Odoo)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1" }] }
+      },
+      "id": "trigger-monday",
+      "name": "Tous les lundis 9h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://aibox-conn-erp-odoo:8000/invoices",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": { "queryParameters": { "parameters": [
+          { "name": "state", "value": "posted" }
+        ]}}
+      },
+      "id": "fetch-invoices",
+      "name": "Liste factures impayées",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "code": "// Filtre les factures dont la date d'échéance est dépassée de 7 jours\nconst now = new Date();\nconst overdue = items.filter(i => {\n  if (!i.json.invoice_date_due) return false;\n  const due = new Date(i.json.invoice_date_due);\n  return (now - due) > 7 * 24 * 3600 * 1000 && i.json.payment_state !== 'paid';\n});\nreturn overdue;"
+      },
+      "id": "filter-overdue",
+      "name": "Filtre > 7 jours en retard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "body": {
+          "mode": "raw",
+          "rawBody": "={{ JSON.stringify({\"model\":\"qwen2.5:7b\",\"prompt\":\"Rédige un email de relance courtoise mais ferme pour la facture suivante:\\nN°: \" + $json.name + \"\\nClient: \" + $json.partner_id[1] + \"\\nMontant: \" + $json.amount_total + \"€\\nÉchéance: \" + $json.invoice_date_due + \"\\n\\nTon: poli mais ferme. Mentionne que sans paiement sous 5 jours nous serons contraints d'engager le recouvrement.\",\"stream\":false}) }}"
+        }
+      },
+      "id": "draft-email",
+      "name": "Génère relance IA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "compta@={{$env.DOMAIN}}",
+        "toEmail": "={{ $('Liste factures impayées').item.json.partner_id[1] }}",
+        "subject": "Rappel : facture {{ $('Liste factures impayées').item.json.name }} en attente de règlement",
+        "text": "={{ $json.response }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Envoyer relance",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1080, 300]
+    }
+  ],
+  "connections": {
+    "Tous les lundis 9h":      { "main": [[{ "node": "Liste factures impayées", "type": "main", "index": 0 }]] },
+    "Liste factures impayées": { "main": [[{ "node": "Filtre > 7 jours en retard", "type": "main", "index": 0 }]] },
+    "Filtre > 7 jours en retard": { "main": [[{ "node": "Génère relance IA", "type": "main", "index": 0 }]] },
+    "Génère relance IA":       { "main": [[{ "node": "Envoyer relance", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ai-box" }, { "name": "compta" }]
+}

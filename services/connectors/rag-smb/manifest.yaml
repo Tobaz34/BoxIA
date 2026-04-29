@@ -1,0 +1,23 @@
+id: rag_smb
+name: "RAG SMB / CIFS"
+category: rag
+description: "Indexe un ou plusieurs partages SMB/CIFS (Synology, QNAP, Windows) dans Qdrant"
+status: implemented
+
+required_env:
+  - SMB_HOST
+  - SMB_SHARE
+  - SMB_USER
+  - SMB_PASSWORD
+optional_env:
+  - SMB_DOMAIN
+  - SMB_SUBPATH
+  - SYNC_INTERVAL_MINUTES
+  - INCLUDE_EXT      # ex: ".pdf,.docx,.xlsx,.txt,.md"
+  - MAX_FILE_MB
+
+qdrant_collection_template: "rag_smb_${TENANT_ID}"
+
+triggered_by_questionnaire:
+  question: stockage_docs
+  values: ["nas_smb"]

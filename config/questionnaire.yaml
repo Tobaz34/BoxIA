@@ -1,0 +1,321 @@
+# =============================================================================
+# Questionnaire de qualification IA TPE/PME
+# =============================================================================
+# Source : Questionnaire_qualification_IA_TPE_PME.xlsx
+# Version : 1.0 (2026-04-28)
+# Usage   : exploité par le portail de provisioning et install.sh
+#
+# 11 chapitres / 56 éléments / 48 enrichissables IA (87 %).
+#
+# Pour chaque chapitre :
+#   - id : utilisé en clé interne
+#   - label : affiché à l'écran
+#   - items : liste des questions du chapitre
+#       - id : clé interne (utilisée comme env var CLIENT_HAS_*)
+#       - label : libellé question
+#       - ai_enrichable : la brique peut être augmentée par notre IA
+#       - apport_ia : description de la valeur IA
+#       - options : liste des choix possibles
+#       - activates : connecteurs / templates à pré-charger selon réponse
+# =============================================================================
+
+chapters:
+  - id: infra_materielle
+    label: "1. Infrastructure matérielle"
+    items:
+      - id: postes
+        label: "Postes de travail (fixes, portables, Mac)"
+        ai_enrichable: true
+        apport_ia: "Copilot+ PC, NPU, IA locale"
+        options: ["Aucun", "Tour fixe Windows", "Portable Windows", "Mac (iMac/MacBook)", "Mix Windows + Mac", "Thin client", "Chromebook", "Autre", "Inconnu"]
+      - id: serveurs
+        label: "Serveurs (physiques, virtualisés, hyperconvergés)"
+        ai_enrichable: false
+        options: ["Aucun (full cloud)", "Serveur physique unique", "Plusieurs serveurs physiques", "Virtualisé Hyper-V", "Virtualisé VMware", "Virtualisé Proxmox", "Hyperconvergé (Nutanix/vSAN)", "NAS faisant office de serveur", "Cloud uniquement (Azure/AWS/OVH)", "Mix", "Inconnu"]
+      - id: stockage
+        label: "Stockage : NAS, SAN, baies"
+        ai_enrichable: true
+        apport_ia: "Classification et reconnaissance auto"
+        options: ["Aucun stockage centralisé", "NAS Synology", "NAS QNAP", "NAS autre marque", "Serveur de fichiers Windows", "SAN dédié", "OneDrive / SharePoint", "Google Drive", "Mix local + cloud", "Inconnu"]
+        activates:
+          - "NAS Synology": [rag_smb_connector]
+          - "NAS QNAP": [rag_smb_connector]
+          - "Serveur de fichiers Windows": [rag_smb_connector]
+          - "OneDrive / SharePoint": [rag_msgraph_connector]
+          - "Google Drive": [rag_google_drive_connector]
+      - id: reseau
+        label: "Équipements réseau : switchs, Wi-Fi, routeurs"
+        ai_enrichable: true
+        apport_ia: "AIOps, optimisation Wi-Fi"
+      - id: firewall
+        label: "Pare-feu"
+        ai_enrichable: true
+        apport_ia: "Détection comportementale par IA"
+        options: ["Box opérateur seule", "Stormshield", "Fortinet (FortiGate)", "Sophos", "WatchGuard", "pfSense / OPNsense", "Cisco / Meraki", "Autre", "Inconnu"]
+      - id: onduleur
+        label: "Onduleurs"
+      - id: peripheriques
+        label: "Périphériques : MFP, scanners, TPE, douchettes"
+        ai_enrichable: true
+        apport_ia: "OCR, extraction intelligente"
+      - id: audiovisuel
+        label: "Audiovisuel : visio, écrans, affichage dynamique"
+        ai_enrichable: true
+        apport_ia: "Transcription, sous-titres, cadrage auto"
+
+  - id: connectivite
+    label: "2. Connectivité"
+    items:
+      - id: internet
+        label: "Accès Internet"
+      - id: lan_wifi
+        label: "Réseau LAN / Wi-Fi pro / VLAN"
+        ai_enrichable: true
+        apport_ia: "Supervision et auto-tuning IA"
+      - id: vpn_sdwan_ztna
+        label: "VPN / SD-WAN / ZTNA"
+        ai_enrichable: true
+        apport_ia: "Routage intelligent, scoring"
+      - id: telephonie
+        label: "Téléphonie IP / standard / mobiles"
+        ai_enrichable: true
+        apport_ia: "SVI conversationnel, voicebots, transcription"
+        activates:
+          - "Centrex 3CX": [telephonie_3cx_workflow]
+          - "Centrex Wildix": [telephonie_wildix_workflow]
+          - "Centrex Ringover / Aircall": [telephonie_ringover_workflow]
+
+  - id: logiciels_apps
+    label: "3. Logiciels & applications"
+    items:
+      - id: office
+        label: "Suite bureautique"
+        ai_enrichable: true
+        apport_ia: "Copilot M365, Gemini"
+        options: ["Aucune", "Microsoft 365 Business", "Microsoft Office perpétuel / OEM", "Google Workspace", "LibreOffice / OpenOffice", "Mix", "Inconnu"]
+        activates:
+          - "Microsoft 365 Business": [m365_connector]
+          - "Google Workspace": [google_workspace_connector]
+      - id: messagerie
+        label: "Messagerie pro + collaboration"
+        ai_enrichable: true
+        apport_ia: "Résumés, rédaction, recherche sémantique"
+        options: ["Aucune messagerie pro", "Email OVH (IMAP)", "Email Ionos / Gandi (IMAP)", "Exchange Online (Microsoft 365)", "Exchange On-Premise", "Google Workspace (Gmail)", "Zimbra", "Bluemind", "Mailbox grand public (Orange/Free/Gmail perso)", "Mix", "Inconnu"]
+        activates:
+          - "Exchange Online (Microsoft 365)": [email_msgraph_agent]
+          - "Google Workspace (Gmail)": [email_gmail_agent]
+          - "Email OVH (IMAP)": [email_imap_agent]
+          - "Email Ionos / Gandi (IMAP)": [email_imap_agent]
+      - id: erp_crm
+        label: "ERP / CRM / compta / paie / RH"
+        ai_enrichable: true
+        apport_ia: "Odoo AI, Sage Copilot, prévisions, scoring"
+        options: ["Aucun", "Odoo Online", "Odoo Enterprise self-hosted", "Odoo Community", "Sage 50 / 100", "Sage X3", "EBP", "Cegid", "Dynamics 365 / Business Central", "SAP Business One", "SAP S/4HANA", "Salesforce", "HubSpot", "Pipedrive", "Excel / manuel", "Mix de plusieurs outils", "Autre", "Inconnu"]
+        activates:
+          - "Odoo Online": [odoo_workflows]
+          - "Odoo Enterprise self-hosted": [odoo_workflows]
+          - "Odoo Community": [odoo_workflows]
+          - "Salesforce": [salesforce_workflows]
+          - "HubSpot": [hubspot_workflows]
+          - "Sage 50 / 100": [sage_workflows]
+      - id: metier
+        label: "Logiciels métiers verticaux"
+        ai_enrichable: true
+        apport_ia: "IA intégrée par les éditeurs"
+      - id: ged
+        label: "GED / signature électronique / coffre-fort"
+        ai_enrichable: true
+        apport_ia: "Classement, extraction, recherche IA"
+        options: ["Aucune", "SharePoint / OneDrive", "DocuWare", "Zeendoc", "M-Files", "Open Bee", "Yousign", "DocuSign", "Universign", "Adobe Sign", "Mix", "Inconnu"]
+
+  - id: cloud
+    label: "4. Cloud"
+    items:
+      - id: saas
+        label: "SaaS"
+        ai_enrichable: true
+        apport_ia: "IA native dans la plupart des suites"
+      - id: iaas
+        label: "IaaS / PaaS"
+        ai_enrichable: true
+        apport_ia: "Azure OpenAI, AWS Bedrock, services cognitifs"
+      - id: hebergement
+        label: "Hébergement web / messagerie"
+      - id: backup_cloud
+        label: "Sauvegarde cloud / réplication"
+        ai_enrichable: true
+        apport_ia: "Détection d'anomalies, anti-ransomware IA"
+
+  - id: cybersecurite
+    label: "5. Cybersécurité"
+    items:
+      - id: av_endpoint
+        label: "Antivirus / EDR / XDR / SOC"
+        ai_enrichable: true
+        apport_ia: "Détection comportementale, SOC augmenté"
+      - id: filtrage
+        label: "Pare-feu / filtrage web / anti-spam"
+        ai_enrichable: true
+        apport_ia: "Filtrage IA, anti-phishing"
+      - id: pra
+        label: "Sauvegardes / PRA / PCA"
+        ai_enrichable: true
+        apport_ia: "Détection ransomware par IA"
+      - id: mfa
+        label: "MFA / SSO / IAM"
+        ai_enrichable: true
+        apport_ia: "Analyse de risque adaptative"
+        options: ["Aucun MFA", "MFA partiel (admins)", "MFA généralisé", "SSO Entra ID (Azure AD)", "SSO Google Workspace", "IAM dédié (Okta/Auth0)", "Inconnu"]
+        activates:
+          - "SSO Entra ID (Azure AD)": [authentik_azure_ad_source]
+          - "SSO Google Workspace": [authentik_google_source]
+      - id: pwd
+        label: "Gestion des mots de passe"
+      - id: audit
+        label: "Audits / pentests"
+        ai_enrichable: true
+        apport_ia: "Outils IA d'analyse de vulnérabilités"
+      - id: sensibilisation
+        label: "Sensibilisation utilisateurs"
+        ai_enrichable: true
+        apport_ia: "Simulations phishing IA, formations adaptatives"
+      - id: conformite
+        label: "Conformité (RGPD, NIS 2, ISO 27001)"
+        ai_enrichable: true
+        apport_ia: "Assistants de conformité IA"
+
+  - id: donnees_conformite
+    label: "6. Données & conformité"
+    items:
+      - id: bi
+        label: "BI / reporting / data"
+        ai_enrichable: true
+        apport_ia: "Power BI Copilot, NL→SQL, prévisions"
+        options: ["Aucun (Excel basique)", "Excel avancé", "Power BI", "Tableau", "Qlik", "Looker Studio", "Metabase", "BI intégré à l'ERP", "Inconnu"]
+        activates:
+          - "Power BI": [bi_powerbi_agent]
+          - "Metabase": [bi_metabase_agent]
+      - id: rgpd
+        label: "RGPD (registre, DPO)"
+        ai_enrichable: true
+        apport_ia: "Assistants juridiques IA"
+      - id: archivage
+        label: "Archivage à valeur probante"
+        ai_enrichable: true
+        apport_ia: "Classification automatique"
+      - id: facture_electro
+        label: "Facturation électronique (réforme 2026)"
+        ai_enrichable: true
+        apport_ia: "Extraction et rapprochement IA"
+      - id: legal
+        label: "Mentions légales / CGU / CGV"
+        ai_enrichable: true
+        apport_ia: "Génération assistée IA"
+
+  - id: presence_marketing
+    label: "7. Présence en ligne & marketing"
+    items:
+      - id: domaine
+        label: "Nom de domaine"
+      - id: site
+        label: "Site web / e-commerce"
+        ai_enrichable: true
+        apport_ia: "Chatbots, recommandations, recherche IA"
+      - id: seo
+        label: "SEO / SEA / Google Business Profile"
+        ai_enrichable: true
+        apport_ia: "Rédaction, analyse, optimisation IA"
+      - id: rs
+        label: "Réseaux sociaux"
+        ai_enrichable: true
+        apport_ia: "Création de contenu et planification IA"
+      - id: emailing
+        label: "Emailing / marketing automation"
+        ai_enrichable: true
+        apport_ia: "Personnalisation, A/B testing IA"
+
+  - id: mobilite
+    label: "8. Mobilité & télétravail"
+    items:
+      - id: mobile
+        label: "Smartphones / tablettes pro"
+        ai_enrichable: true
+        apport_ia: "Apple Intelligence, Galaxy AI"
+      - id: mdm
+        label: "MDM / gestion de flotte"
+        ai_enrichable: true
+        apport_ia: "Détection d'usage anormal"
+      - id: remote
+        label: "Accès distant sécurisé"
+        ai_enrichable: true
+        apport_ia: "Scoring de risque IA"
+      - id: virtualposte
+        label: "Postes nomades / virtualisation"
+
+  - id: services_exploitation
+    label: "9. Services & exploitation"
+    items:
+      - id: infogerance
+        label: "Infogérance / supervision"
+        ai_enrichable: true
+        apport_ia: "AIOps, supervision prédictive"
+      - id: helpdesk
+        label: "Help desk / support utilisateurs"
+        ai_enrichable: true
+        apport_ia: "Agents IA niveau 1, copilotes techniciens"
+        activates:
+          - "Support interne": [helpdesk_agent_template]
+      - id: tma
+        label: "TMA"
+        ai_enrichable: true
+        apport_ia: "Assistants de dev, génération de code"
+      - id: patch
+        label: "Patch management / MCO"
+        ai_enrichable: true
+        apport_ia: "Priorisation IA des vulnérabilités"
+      - id: licences
+        label: "Gestion des licences / abonnements"
+        ai_enrichable: true
+        apport_ia: "Optimisation, FinOps IA"
+
+  - id: innovation
+    label: "10. Innovation & transformation"
+    items:
+      - id: iagen
+        label: "IA générative"
+        ai_enrichable: true
+        apport_ia: "Cœur de l'offre IA"
+        options: ["Aucune", "ChatGPT Free", "ChatGPT Plus / Team", "ChatGPT Enterprise", "Microsoft 365 Copilot", "Claude (Anthropic)", "Gemini", "Mistral / Le Chat", "Auto-hébergée (Ollama / OpenWebUI)", "Mix", "Inconnu"]
+      - id: auto
+        label: "Automatisation / RPA / workflows"
+        ai_enrichable: true
+        apport_ia: "Nœuds IA, agents autonomes"
+        options: ["Aucune", "Macros Excel / VBA", "Power Automate", "n8n", "Zapier / Make", "Workflows ERP (Odoo, etc.)", "Mix", "Inconnu"]
+        activates:
+          - "n8n": [n8n_already_installed]
+      - id: iot
+        label: "IoT / capteurs"
+        ai_enrichable: true
+        apport_ia: "Maintenance prédictive"
+      - id: demat
+        label: "Dématérialisation des process"
+        ai_enrichable: true
+        apport_ia: "Extraction et traitement IA"
+
+  - id: gouvernance
+    label: "11. Gouvernance & humain"
+    items:
+      - id: charte
+        label: "Charte informatique / politique sécurité"
+        ai_enrichable: true
+        apport_ia: "Charte IA, AI Act"
+      - id: sdsi
+        label: "Schéma directeur SI / budget IT"
+      - id: formation
+        label: "Formation / acculturation IA"
+        ai_enrichable: true
+        apport_ia: "Formations IA personnalisées"
+      - id: contrat
+        label: "Contrats SLA / RGPD / sous-traitance"
+        ai_enrichable: true
+        apport_ia: "Analyse contractuelle IA"

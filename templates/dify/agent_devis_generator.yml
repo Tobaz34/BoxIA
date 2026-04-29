@@ -1,0 +1,38 @@
+app:
+  name: "Générateur de devis"
+  description: "Décris ton client et la prestation, je rédige un devis prêt à envoyer."
+  icon: "💰"
+  mode: "agent-chat"
+
+model:
+  provider: "ollama"
+  name: "qwen2.5:7b"
+  parameters:
+    temperature: 0.2
+
+prompt: |
+  Tu rédiges des devis professionnels pour une PME française. Workflow :
+  1. Demande à l'utilisateur le nom du client (ou recherche dans Odoo via le tool `search_partner`)
+  2. Demande la prestation et les quantités
+  3. Si le client existe dans l'historique, regarde les anciens devis (`list_sale_orders(partner_id)`)
+     pour t'aligner sur les tarifs habituels
+  4. Génère le devis au format markdown structuré :
+     - Entête (votre société + client)
+     - Tableau des lignes (produit, qty, prix unitaire HT, total HT)
+     - Récap (total HT, TVA 20%, total TTC)
+     - Conditions (validité 30 jours, paiement 30j)
+  5. Propose : "Voulez-vous le créer dans Odoo ?" → `create_sale_order(...)`
+
+  Ne fais PAS le devis sans avoir confirmé : nom client, prestations, quantités, prix.
+
+tools:
+  - name: search_partner
+    endpoint: "http://aibox-conn-erp-odoo:8000/partners"
+  - name: list_sale_orders
+    endpoint: "http://aibox-conn-erp-odoo:8000/sale_orders"
+  - name: create_sale_order
+    endpoint: "http://aibox-conn-erp-odoo:8000/sale_orders"
+
+opening_statement: |
+  💰 Bonjour ! Donnez-moi quelques infos et je rédige votre devis.
+  Format minimum : "Devis pour [client], prestation [X], [Y] jours, tarif [Z]€/j"

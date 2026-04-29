@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Box — Configuration initiale</title>
+  <link rel="stylesheet" href="/static/wizard.css">
+</head>
+<body>
+  <div id="app">
+
+    <header>
+      <div class="logo">⬡ AI Box</div>
+      <div class="subtitle">Assistant de configuration initiale</div>
+      <div class="progress">
+        <div class="step" data-step="1">1. Entreprise</div>
+        <div class="step" data-step="2">2. Domaine</div>
+        <div class="step" data-step="3">3. Environnement IT</div>
+        <div class="step" data-step="4">4. Récap</div>
+        <div class="step" data-step="5">5. Déploiement</div>
+      </div>
+    </header>
+
+    <main>
+
+      <!-- STEP 1 -->
+      <section class="step-content" data-step="1">
+        <h1>👋 Bienvenue</h1>
+        <p>Cet assistant va configurer votre serveur IA local en quelques minutes.</p>
+
+        <label>Nom de votre entreprise
+          <input type="text" id="client_name" placeholder="Acme SARL" required>
+        </label>
+
+        <label>Secteur d'activité
+          <select id="client_sector">
+            <option value="services">Services</option>
+            <option value="btp">BTP</option>
+            <option value="juridique">Juridique</option>
+            <option value="sante">Santé</option>
+            <option value="immobilier">Immobilier</option>
+            <option value="comptabilite">Comptabilité</option>
+            <option value="autre">Autre</option>
+          </select>
+        </label>
+
+        <label>Nombre d'utilisateurs prévus
+          <input type="number" id="users_count" value="10" min="1" max="500">
+        </label>
+
+        <label>Profil matériel
+          <select id="hw_profile">
+            <option value="tpe">TPE (1-5 utilisateurs concurrents)</option>
+            <option value="pme">PME (5-20)</option>
+            <option value="pme-plus">PME+ (20-100)</option>
+          </select>
+        </label>
+
+        <div class="actions">
+          <span></span>
+          <button class="primary" onclick="next(1)">Suivant →</button>
+        </div>
+      </section>
+
+      <!-- STEP 2 -->
+      <section class="step-content" data-step="2" hidden>
+        <h1>🌐 Domaine et compte administrateur</h1>
+
+        <label>Domaine d'accès interne
+          <input type="text" id="domain" placeholder="ai.monentreprise.local">
+          <small>Sous-domaines auto : auth./agents./chat. (TLS Let's Encrypt si domaine public).</small>
+        </label>
+
+        <h2 style="margin-top:24px;font-size:16px;font-weight:600;">👤 Création du compte administrateur</h2>
+        <p style="margin-top:4px;margin-bottom:16px;font-size:13px;">Ce compte est le premier utilisateur. Il aura tous les droits et pourra ensuite créer les comptes des autres collaborateurs.</p>
+
+        <label>Nom complet
+          <input type="text" id="admin_fullname" placeholder="Jean Dupont">
+        </label>
+
+        <label>Identifiant de connexion
+          <input type="text" id="admin_username" placeholder="jdupont" autocomplete="username">
+          <small>Lettres minuscules, chiffres, underscore — pas d'espaces ni d'accents.</small>
+        </label>
+
+        <label>Email
+          <input type="email" id="admin_email" placeholder="jean.dupont@monentreprise.fr" autocomplete="email">
+        </label>
+
+        <label>Mot de passe
+          <input type="password" id="admin_password" autocomplete="new-password">
+          <small>12 caractères minimum, avec majuscule, chiffre et caractère spécial.</small>
+        </label>
+
+        <label>Confirmer le mot de passe
+          <input type="password" id="admin_password_confirm" autocomplete="new-password">
+        </label>
+
+        <div id="pwd-strength" style="margin-top:-8px;font-size:12px;color:var(--muted);"></div>
+
+        <div class="actions">
+          <button onclick="prev(2)">← Précédent</button>
+          <button class="primary" onclick="next(2)">Suivant →</button>
+        </div>
+      </section>
+
+      <!-- STEP 3 -->
+      <section class="step-content" data-step="3" hidden>
+        <h1>🧰 Votre environnement IT</h1>
+        <p>Indiquez ce que votre entreprise utilise. Nous activerons les connecteurs IA correspondants.</p>
+
+        <div id="questionnaire">
+          <p class="loading">Chargement du questionnaire...</p>
+        </div>
+
+        <div class="actions">
+          <button onclick="prev(3)">← Précédent</button>
+          <button class="primary" onclick="next(3)">Suivant →</button>
+        </div>
+      </section>
+
+      <!-- STEP 4 -->
+      <section class="step-content" data-step="4" hidden>
+        <h1>📋 Récapitulatif</h1>
+        <p>Vérifiez vos informations avant de lancer le déploiement.</p>
+        <pre id="recap"></pre>
+
+        <div class="actions">
+          <button onclick="prev(4)">← Précédent</button>
+          <button class="primary" onclick="deploy()">🚀 Lancer le déploiement</button>
+        </div>
+      </section>
+
+      <!-- STEP 5 -->
+      <section class="step-content" data-step="5" hidden>
+        <h1>⚙️ Déploiement en cours</h1>
+        <div id="logs">
+          <pre id="log-output">En attente du démarrage...</pre>
+        </div>
+        <div id="success" hidden>
+          <h2>✅ Configuration terminée !</h2>
+          <p>Identifiants administrateur :</p>
+          <div class="creds">
+            <code>Identifiant : <span id="creds-user"></span></code>
+            <code>Mot de passe : <span id="creds-pwd"></span></code>
+            <button onclick="navigator.clipboard.writeText(document.getElementById('creds-pwd').innerText)">📋 Copier mot de passe</button>
+          </div>
+          <p>⚠ Notez ces identifiants — ils ne seront plus affichés ensuite.</p>
+          <button class="primary big" onclick="goToDashboard()">Aller au tableau de bord</button>
+        </div>
+      </section>
+
+    </main>
+
+    <footer>
+      AI Box — Local AI Server
+    </footer>
+  </div>
+
+  <script src="/static/wizard.js"></script>
+</body>
+</html>

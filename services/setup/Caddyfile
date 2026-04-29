@@ -1,0 +1,18 @@
+{
+    auto_https off
+    admin off
+}
+
+:80 {
+    encode zstd gzip
+
+    # Healthcheck Caddy
+    handle /healthz {
+        respond "OK" 200
+    }
+
+    # Tout le reste → API FastAPI
+    reverse_proxy setup-api:8000 {
+        flush_interval -1
+    }
+}

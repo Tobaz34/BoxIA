@@ -1,0 +1,87 @@
+# =============================================================================
+# AI Box — Inférence (Ollama + Open WebUI)
+# =============================================================================
+# Sécurité volumes :
+#   - Tous les volumes data sont declarés `external: true` avec name explicite.
+#   - Pas de project_name préfixé : si on lance ce compose avec un project
+#     différent, les volumes sont quand même retrouvés par leur nom absolu.
+#   - Cela évite la création accidentelle de volumes vides comme on a vu lors
+#     de l'incident du 2026-04-28.
+#
+# Volumes data utilisés (pré-existants sur xefia, à conserver) :
+#   - anythingllm_ollama_data    → modèles Ollama
+#   - anythingllm_open-webui     → données Open WebUI (chats, RAG)
+# =============================================================================
+
+name: aibox-inference
+
+services:
+
+  # ---- OLLAMA (LLM local + embeddings) -----------------------------------
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - aibox_net
+      - ollama_net
+
+  # ---- OPEN WEBUI (chat type ChatGPT) ------------------------------------
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${OPEN_WEBUI_VERSION:-main}
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    ports:
+      - "3000:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    environment:
+      # ---- Connexion Ollama ----
+      OLLAMA_API_BASE_URL: http://ollama:11434
+      WEBUI_URL: ${OPEN_WEBUI_URL:-http://localhost:3000}
+      # ---- OIDC Authentik ------
+      ENABLE_OAUTH_SIGNUP: "${ENABLE_OAUTH_SIGNUP:-true}"
+      OAUTH_MERGE_ACCOUNTS_BY_EMAIL: "${OAUTH_MERGE_ACCOUNTS_BY_EMAIL:-true}"
+      OAUTH_CLIENT_ID: ${OWUI_OIDC_CLIENT_ID:-}
+      OAUTH_CLIENT_SECRET: ${OWUI_OIDC_CLIENT_SECRET:-}
+      OPENID_PROVIDER_URL: ${OWUI_OPENID_PROVIDER_URL:-}
+      OAUTH_PROVIDER_NAME: "${OAUTH_PROVIDER_NAME:-Authentik}"
+      OAUTH_SCOPES: "${OAUTH_SCOPES:-openid email profile}"
+      ENABLE_LOGIN_FORM: "${ENABLE_LOGIN_FORM:-true}"
+      DEFAULT_USER_ROLE: "${DEFAULT_USER_ROLE:-user}"
+    networks:
+      - aibox_net
+      - ollama_net
+
+# ----- Volumes nommés EXPLICITES (pas de prefix par project_name) ----------
+volumes:
+  ollama_models:
+    name: anythingllm_ollama_data    # ← volume existant, modèles ~14 GB
+    external: true                    # external car le reset le préserve toujours
+  open_webui_data:
+    name: anythingllm_open-webui     # ← données utilisateurs OWUI (chats, RAG)
+    # PAS external : si le reset a supprimé le volume, compose le recrée vide.
+    # OWUI fera son setup au premier accès. Pour préserver les chats au reset,
+    # utiliser `./reset-as-client.sh --keep-owui`.
+
+# ----- Réseaux -------------------------------------------------------------
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net                 # alias network pour compat existant
+    external: true

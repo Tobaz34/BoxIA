@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Box — Configurée</title>
+  <link rel="stylesheet" href="/static/wizard.css">
+  <style>
+    /* Force `hidden` à masquer même quand un style inline display:flex est défini */
+    [hidden] { display: none !important; }
+    .center { text-align: center; padding: 60px 20px; }
+    .center h1 { font-size: 28px; margin-bottom: 12px; }
+    .links { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 24px; max-width: 700px; margin-left: auto; margin-right: auto; }
+    .link-card { display: block; padding: 20px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); text-decoration: none; transition: all 0.15s; }
+    .link-card:hover { border-color: var(--primary); transform: translateY(-2px); }
+    .link-card .icon { font-size: 32px; margin-bottom: 8px; }
+    .link-card .name { font-weight: 600; margin-bottom: 4px; }
+    .link-card .desc { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="logo">⬡ AI Box</div>
+      <div class="subtitle">Cette box est configurée</div>
+    </header>
+
+    <main>
+      <div class="center">
+        <h1>✅ Configuration active</h1>
+        <p>Cette AI Box est opérationnelle. Connectez-vous via le SSO pour accéder à vos applications.</p>
+
+        <div class="links" id="apps-grid">
+          <p style="color:var(--muted); grid-column:1 / -1;">Chargement des applications…</p>
+        </div>
+        <div id="apps-mode" style="margin-top:8px; font-size:11px; color:var(--muted);"></div>
+
+        <hr style="margin:48px 0 24px 0; border:none; border-top:1px solid var(--border);">
+
+        <details style="text-align:left; max-width:700px; margin:0 auto; background:var(--panel-2); border:1px solid var(--danger); border-radius:8px; padding:16px;">
+          <summary style="cursor:pointer; color:var(--danger); font-weight:600;">⚠ Zone d'administration — Réinitialiser cette box</summary>
+          <p style="margin-top:12px; font-size:13px;">
+            La réinitialisation efface tous les comptes utilisateurs, agents Dify, conversations et données RAG.<br>
+            <strong>Préservés</strong> : modèles Ollama (10 GB) + backups historiques + code source.
+          </p>
+          <button id="btn-open-reset" class="primary" style="background:var(--danger); border-color:var(--danger); margin-top:12px;">
+            🔄 Réinitialiser la box (mode "premier démarrage client")
+          </button>
+        </details>
+      </div>
+    </main>
+
+    <footer>AI Box — Local AI Server</footer>
+  </div>
+
+  <!-- ===== Modal de confirmation reset ===== -->
+  <div id="reset-modal" hidden style="position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:50;">
+    <div style="background:var(--panel); border:1px solid var(--danger); border-radius:10px; padding:32px; max-width:520px; width:90%;">
+      <h2 style="color:var(--danger); margin-bottom:12px;">⚠ Réinitialiser la box</h2>
+      <p style="margin-bottom:16px; font-size:14px;">
+        Cette action est <strong>irréversible</strong> pour les comptes/données utilisateurs.
+        Pour confirmer :
+      </p>
+      <label style="display:block; margin-bottom:12px;">
+        Mot de passe administrateur (celui choisi au setup)
+        <input type="password" id="reset-pwd" style="width:100%; margin-top:6px; padding:8px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; color:var(--text);" autocomplete="off">
+      </label>
+      <label style="display:block; margin-bottom:16px;">
+        Tape <code>RESET</code> en majuscules
+        <input type="text" id="reset-confirm" style="width:100%; margin-top:6px; padding:8px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:monospace;" autocomplete="off" autocapitalize="characters">
+      </label>
+      <div id="reset-error" style="color:var(--danger); font-size:13px; margin-bottom:12px; min-height:20px;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button id="btn-cancel-reset">Annuler</button>
+        <button id="btn-confirm-reset" class="primary" style="background:var(--danger); border-color:var(--danger);">Réinitialiser</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Modal de progression ===== -->
+  <div id="progress-modal" hidden style="position:fixed; inset:0; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; z-index:60;">
+    <div style="background:var(--panel); border:1px solid var(--primary); border-radius:10px; padding:32px; max-width:680px; width:90%;">
+      <h2 style="margin-bottom:12px;">⚙️ Réinitialisation en cours…</h2>
+      <p style="font-size:13px; margin-bottom:8px;">
+        La box redémarre les services. Cela prend environ <strong>60 secondes</strong>.
+        Cette page se rechargera automatiquement quand le wizard sera de nouveau prêt.
+      </p>
+      <div id="countdown" style="text-align:center; font-size:48px; font-weight:600; color:var(--primary); margin:16px 0;">60</div>
+      <pre id="reset-log" style="background:#000; color:#0f0; padding:12px; border-radius:6px; font-family:monospace; font-size:11px; height:240px; overflow-y:auto; white-space:pre-wrap;">démarrage…</pre>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // ---- Charge les apps depuis le backend (URLs adaptées au contexte) ----
+    (async () => {
+      try {
+        const r = await fetch("/api/apps", { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        const grid = $("apps-grid");
+        grid.innerHTML = "";
+        for (const app of data.apps) {
+          const card = document.createElement("a");
+          card.className = "link-card";
+          card.href = app.url;
+          card.target = "_blank";
+          card.rel = "noopener";
+          card.innerHTML = `
+            <div class="icon">${app.icon}</div>
+            <div class="name">${app.name}</div>
+            <div class="desc">${app.desc}</div>
+            <div style="margin-top:6px; font-size:10px; color:var(--muted); word-break:break-all;">${app.url}</div>
+          `;
+          grid.appendChild(card);
+        }
+        $("apps-mode").textContent = data.mode === "subdomains"
+          ? "✓ Mode production : URLs avec sous-domaines + TLS"
+          : "ⓘ Mode direct (pas de reverse proxy DNS) : URLs IP:port";
+      } catch (e) {
+        $("apps-grid").innerHTML = `<p style="color:var(--danger);">Impossible de charger les apps : ${e}</p>`;
+      }
+    })();
+
+    $("btn-open-reset").onclick = () => {
+      $("reset-modal").hidden = false;
+      $("reset-pwd").focus();
+    };
+    $("btn-cancel-reset").onclick = () => {
+      $("reset-modal").hidden = true;
+      $("reset-pwd").value = "";
+      $("reset-confirm").value = "";
+      $("reset-error").textContent = "";
+    };
+
+    $("btn-confirm-reset").onclick = async () => {
+      const pwd = $("reset-pwd").value;
+      const confirm = $("reset-confirm").value.trim();
+      $("reset-error").textContent = "";
+
+      if (confirm !== "RESET") {
+        $("reset-error").textContent = "Tape exactement RESET en majuscules.";
+        return;
+      }
+      if (!pwd) {
+        $("reset-error").textContent = "Mot de passe requis.";
+        return;
+      }
+
+      try {
+        const r = await fetch("/api/admin/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ admin_password: pwd, confirm: confirm }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          $("reset-error").textContent = j.detail || `Erreur HTTP ${r.status}`;
+          return;
+        }
+        // Reset lancé : on bascule sur le modal de progression
+        $("reset-modal").hidden = true;
+        startProgressLoop();
+      } catch (e) {
+        $("reset-error").textContent = "Erreur réseau : " + e;
+      }
+    };
+
+    function startProgressLoop() {
+      $("progress-modal").hidden = false;
+      let secondsLeft = 90;          // un peu plus large pour absorber le pull initial docker:cli
+      const cd = $("countdown");
+      const out = $("reset-log");
+      out.textContent = "Initialisation du reset…\n";
+
+      let runnerSeen = false;
+
+      const tick = setInterval(async () => {
+        secondsLeft--;
+        cd.textContent = secondsLeft;
+        try {
+          const r = await fetch("/api/admin/reset/status", { cache: "no-store" });
+          if (r.ok) {
+            const j = await r.json();
+            if (j.last_lines && j.last_lines.length) {
+              out.textContent = j.last_lines.join("\n");
+              out.scrollTop = out.scrollHeight;
+            }
+            if (j.running) runnerSeen = true;
+
+            // Conditions de fin :
+            //  - le runner est passé true puis false → terminé
+            //  - OU le state est "non configuré" (la box est revenue au wizard)
+            const stateResp = await fetch("/api/state", { cache: "no-store" }).catch(() => null);
+            const state = stateResp ? await stateResp.json().catch(() => null) : null;
+
+            if (state && state.configured === false) {
+              clearInterval(tick);
+              cd.textContent = "✓";
+              out.textContent += "\n\n✓ Reset terminé — rechargement vers le wizard…";
+              setTimeout(() => location.href = "/", 1500);
+              return;
+            }
+          } else if (r.status >= 500) {
+            out.textContent += `\n[erreur API: HTTP ${r.status}]`;
+          }
+        } catch (e) {
+          // L'API peut être temporairement indispo si setup-api est en cours de redémarrage
+          // pendant le reset (c'est normal). On continue à poller.
+        }
+
+        if (secondsLeft <= 0) {
+          clearInterval(tick);
+          location.href = "/";
+        }
+      }, 1000);
+    }
+  </script>
+</body>
+</html>

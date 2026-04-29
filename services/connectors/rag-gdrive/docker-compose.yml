@@ -1,0 +1,35 @@
+name: aibox-conn-rag-gdrive
+
+services:
+  rag-gdrive:
+    build: .
+    container_name: aibox-conn-rag-gdrive
+    restart: unless-stopped
+    environment:
+      GOOGLE_SERVICE_ACCOUNT_JSON: /secrets/sa.json
+      GOOGLE_SUBJECT_EMAIL: ${GOOGLE_SUBJECT_EMAIL}
+      GOOGLE_DRIVE_ID: ${GOOGLE_DRIVE_ID:-}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      OLLAMA_URL: http://ollama:11434
+      LLM_EMBED: ${LLM_EMBED:-bge-m3}
+      QDRANT_URL: http://aibox-qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
+    volumes:
+      - rag_gdrive_state:/data
+      - ${GOOGLE_SA_JSON_PATH}:/secrets/sa.json:ro
+    networks:
+      - aibox_net
+      - ollama_net
+
+volumes:
+  rag_gdrive_state:
+    name: aibox_conn_rag_gdrive_state
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

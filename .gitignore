@@ -1,0 +1,63 @@
+# Secrets - jamais commit
+.env
+.env.local
+*.env
+!.env.example
+secrets/
+client_config.yaml
+ACCESS.md
+*.bak
+.env.reset-*
+
+# Bases SQLite locales (peuvent contenir hash de mdp)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs runtime du wizard / déploiement
+deploy.log
+reset.log
+
+# Claude Code interne (settings locaux, pas pertinent pour le repo produit)
+.claude/
+
+# Volumes data Docker (montés par compose)
+data/
+volumes/
+
+# Backups
+backups/
+*.tar.gz
+*.zip
+*.dump
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editeurs
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python (si on développe le portail)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node (si front portail)
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# Memory (interne Claude, pas du repo produit)
+memory/

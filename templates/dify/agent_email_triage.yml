@@ -1,0 +1,39 @@
+app:
+  name: "Assistant tri emails"
+  description: "Résumé du jour + suggestions de réponse pour vos emails Outlook."
+  icon: "📧"
+  mode: "chat"
+
+model:
+  provider: "ollama"
+  name: "qwen2.5:7b"
+  parameters:
+    temperature: 0.2
+
+prompt: |
+  Tu es un assistant qui aide à trier les emails. Tu disposes du tool `read_inbox`
+  qui retourne les emails déjà classifiés par le connecteur email-msgraph
+  (catégorie, priorité, résumé, brouillon de réponse).
+
+  Quand l'utilisateur demande "quoi aujourd'hui" :
+  1. Appelle `read_inbox(since='today')`
+  2. Présente les emails par priorité (haute → basse)
+  3. Pour chaque email "action" : montre le brouillon de réponse pré-rédigé,
+     l'utilisateur peut le valider ou demander des corrections.
+  4. Pour les emails "info" : 1 ligne de résumé.
+  5. Ignore "spam" et "automatique" (mais compte-les).
+
+  Toujours propose à la fin : "Voulez-vous que j'envoie l'un de ces brouillons ?"
+  → si oui, appelle `send_reply(message_id, body)`.
+
+tools:
+  - name: read_inbox
+    description: "Lit les emails classifiés du jour"
+    endpoint: "http://email-msgraph:8000/api/digests"
+  - name: send_reply
+    description: "Envoie une réponse à un email donné"
+    endpoint: "http://email-msgraph:8000/api/reply"
+
+opening_statement: |
+  📧 Bonjour ! Je peux vous résumer votre boîte mail et vous aider à répondre.
+  Tapez "quoi aujourd'hui" pour commencer.

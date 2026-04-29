@@ -1,0 +1,30 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  Configuration Avahi pour annoncer la box sur le LAN en mDNS.
+  L'utilisateur peut alors taper http://aibox.local depuis son poste.
+
+  À déposer dans /etc/avahi/services/aibox.service sur le serveur.
+  Recharger avec : systemctl reload avahi-daemon
+-->
+<service-group>
+  <name replace-wildcards="yes">AI Box (%h)</name>
+
+  <service>
+    <type>_http._tcp</type>
+    <port>80</port>
+    <txt-record>path=/</txt-record>
+    <txt-record>product=AI Box</txt-record>
+  </service>
+
+  <service>
+    <type>_https._tcp</type>
+    <port>443</port>
+    <txt-record>path=/</txt-record>
+  </service>
+
+  <service>
+    <type>_workstation._tcp</type>
+    <port>9</port>
+  </service>
+</service-group>

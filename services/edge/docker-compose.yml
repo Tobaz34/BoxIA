@@ -1,0 +1,64 @@
+# =============================================================================
+# AI Box — Edge (reverse proxy + TLS)
+# =============================================================================
+# Caddy 2 prend :80 et :443 et expose tous les services AI Box derrière des
+# sous-domaines :
+#   - https://auth.<DOMAIN>     → Authentik
+#   - https://chat.<DOMAIN>     → Open WebUI
+#   - https://agents.<DOMAIN>   → Dify
+#   - https://flows.<DOMAIN>    → n8n
+#   - https://admin.<DOMAIN>    → Portainer
+#   - https://status.<DOMAIN>   → Uptime Kuma
+#   - https://files.<DOMAIN>    → Duplicati (admin)
+#   - https://qdrant.<DOMAIN>   → Qdrant dashboard (protégé par Authentik forward_auth)
+#
+# Mode TLS :
+#   - Si DOMAIN public + ACME_EMAIL définis → Let's Encrypt automatique
+#   - Sinon (LAN, dev) → certificats internes auto-signés (acceptables pour test)
+#
+# Conflit avec NPM existant : si NPM tourne aussi sur :80/:443, ARRÊTER NPM
+# avant de démarrer ce stack. Voir README.md de ce dossier.
+# =============================================================================
+
+name: aibox-edge
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: aibox-edge-caddy
+    restart: unless-stopped
+    ports:
+      - "${EDGE_HTTP_PORT:-80}:80"
+      - "${EDGE_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data           # certs Let's Encrypt + state ACME
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ADMIN_EMAIL}
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+    networks:
+      - aibox_net
+      - ollama_net   # pour proxifier open-webui qui est sur l'ancien net
+    healthcheck:
+      # caddy:alpine n'a ni curl ni wget → on utilise nc (netcat) qui est dans busybox
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 && echo OK || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  caddy_data:
+    name: aibox_edge_caddy_data
+  caddy_config:
+    name: aibox_edge_caddy_config
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

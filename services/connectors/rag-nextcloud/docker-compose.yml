@@ -1,0 +1,29 @@
+name: aibox-conn-rag-nextcloud
+
+services:
+  rag-nextcloud:
+    build: .
+    container_name: aibox-conn-rag-nextcloud
+    restart: unless-stopped
+    environment:
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL}
+      NEXTCLOUD_USER: ${NEXTCLOUD_USER}
+      NEXTCLOUD_PASSWORD: ${NEXTCLOUD_PASSWORD}
+      NEXTCLOUD_PATH: ${NEXTCLOUD_PATH:-/}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      OLLAMA_URL: http://ollama:11434
+      LLM_EMBED: ${LLM_EMBED:-bge-m3}
+      QDRANT_URL: http://aibox-qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-60}
+    networks:
+      - aibox_net
+      - ollama_net
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

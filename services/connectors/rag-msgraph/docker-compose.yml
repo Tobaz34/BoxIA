@@ -1,0 +1,36 @@
+name: aibox-conn-rag-msgraph
+
+services:
+  rag-msgraph:
+    build: .
+    container_name: aibox-conn-rag-msgraph
+    restart: unless-stopped
+    environment:
+      MS_TENANT_ID: ${MS_TENANT_ID}
+      MS_CLIENT_ID: ${MS_CLIENT_ID}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET}
+      MS_DRIVE_ID: ${MS_DRIVE_ID:-}
+      MS_SITE_ID: ${MS_SITE_ID:-}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      OLLAMA_URL: http://ollama:11434
+      LLM_EMBED: ${LLM_EMBED:-bge-m3}
+      QDRANT_URL: http://aibox-qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
+    volumes:
+      - rag_msgraph_state:/data
+    networks:
+      - aibox_net
+      - ollama_net
+
+volumes:
+  rag_msgraph_state:
+    name: aibox_conn_rag_msgraph_state
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true
