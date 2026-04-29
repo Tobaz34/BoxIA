@@ -24,26 +24,26 @@ export async function GET() {
   }
   const email = session.user.email;
 
-  // Profil Authentik (best-effort — peut être indispo selon configuration)
+  // Profil Authentik (best-effort — peut être indispo selon configuration).
+  // On cherche par email exact (?email=) ; fallback sur ?search= si non trouvé.
   let profile: unknown = null;
   try {
-    const r = await akFetch(`/core/users/?username=${encodeURIComponent(
-      email.split("@")[0],
-    )}`);
-    if (r.ok) {
-      const j = await r.json();
-      const u = (j.results || [])[0];
-      if (u) {
-        profile = {
-          username: u.username,
-          name: u.name,
-          email: u.email,
-          groups: u.groups,
-          last_login: u.last_login,
-          date_joined: u.date_joined,
-          is_active: u.is_active,
-        };
-      }
+    let r = await akFetch(`/core/users/?email=${encodeURIComponent(email)}`);
+    let u = r.ok ? ((await r.json()).results || [])[0] : null;
+    if (!u) {
+      r = await akFetch(`/core/users/?search=${encodeURIComponent(email)}`);
+      u = r.ok ? ((await r.json()).results || [])[0] : null;
+    }
+    if (u) {
+      profile = {
+        username: u.username,
+        name: u.name,
+        email: u.email,
+        groups: u.groups,
+        last_login: u.last_login,
+        date_joined: u.date_joined,
+        is_active: u.is_active,
+      };
     }
   } catch { /* noop */ }
 
