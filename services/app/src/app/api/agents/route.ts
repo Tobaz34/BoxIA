@@ -1,13 +1,14 @@
 /**
- * GET /api/agents — liste les agents disponibles pour cet utilisateur.
+ * GET /api/agents — liste les agents disponibles pour l'utilisateur courant.
  *
- * Renvoie uniquement les métadonnées publiques (slug, nom, icône,
- * description) — pas les clés API.
+ * Filtré côté serveur par le rôle de l'utilisateur (calculé depuis ses
+ * groupes Authentik). Renvoie uniquement les métadonnées publiques —
+ * jamais les clés API.
  */
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { listAvailableAgents } from "@/lib/agents";
+import { listAvailableAgents, roleFromGroups } from "@/lib/agents";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export async function GET() {
   if (!session?.user?.email) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const agents = listAvailableAgents();
-  return NextResponse.json({ agents });
+  const groups = (session.user as { groups?: string[] }).groups || [];
+  const role = roleFromGroups(groups);
+  const agents = listAvailableAgents(role);
+  return NextResponse.json({ agents, role });
 }

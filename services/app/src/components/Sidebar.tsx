@@ -9,8 +9,10 @@ import {
   FileText,
   Users,
   Activity,
+  ScrollText,
   Settings,
   HelpCircle,
+  ShieldCheck,
 } from "lucide-react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
 
@@ -23,6 +25,7 @@ const items = [
 
 const adminItems = [
   { href: "/users",   label: "Utilisateurs",  icon: Users },
+  { href: "/audit",   label: "Audit",         icon: ScrollText },
   { href: "/system",  label: "État serveur",  icon: Activity },
   { href: "/settings",label: "Paramètres",    icon: Settings },
 ];
@@ -95,7 +98,14 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
       </div>
 
       {/* Footer sidebar */}
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-3 space-y-1">
+        <Link
+          href="/me"
+          className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted hover:bg-muted/30 transition-default"
+        >
+          <ShieldCheck size={16} />
+          <span>Mes données</span>
+        </Link>
         <Link
           href="/help"
           className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted hover:bg-muted/30 transition-default"

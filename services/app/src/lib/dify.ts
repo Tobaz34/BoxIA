@@ -7,7 +7,9 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { NextResponse } from "next/server";
-import { getAgentKey, defaultAgentSlug, AGENTS } from "@/lib/agents";
+import {
+  getAgentKey, defaultAgentSlug, AGENTS, canUseAgent, roleFromGroups,
+} from "@/lib/agents";
 
 export const DIFY_BASE_URL =
   process.env.DIFY_BASE_URL || "http://localhost:8081";
@@ -39,6 +41,23 @@ export async function requireDifyContext(
       { status: 400 },
     );
   }
+
+  // Vérifie le rôle vs allowedRoles de l'agent
+  const groups = (session.user as { groups?: string[] }).groups || [];
+  const role = roleFromGroups(groups);
+  if (!canUseAgent(slug, role)) {
+    return NextResponse.json(
+      {
+        error: "agent_forbidden",
+        message:
+          `L'agent « ${AGENTS[slug].name} » est réservé aux ` +
+          (AGENTS[slug].allowedRoles?.join(" / ") || "rôles autorisés") + ".",
+        agent: slug,
+      },
+      { status: 403 },
+    );
+  }
+
   const key = getAgentKey(slug);
   if (!key) {
     return NextResponse.json(

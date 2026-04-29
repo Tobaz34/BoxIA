@@ -822,6 +822,51 @@ DEFAULT_AGENTS: list[dict[str, str]] = [
 ]
 
 
+def _attach_recovery_flow_to_brand(c: httpx.Client, base: str) -> dict[str, Any]:
+    """Trouve un recovery flow et l'attache au brand par défaut.
+
+    Authentik génère des liens de récupération de mot de passe uniquement
+    si le brand a `flow_recovery` configuré. Par défaut, ce champ est null
+    sur une fresh install. On utilise le 1er flow ayant designation=recovery
+    (Authentik ships avec un default-recovery-flow via blueprint).
+
+    Si aucun recovery flow n'existe, on laisse tel quel — l'app aibox
+    fallback sur un mdp temporaire généré localement.
+    """
+    try:
+        r = c.get(f"{base}/flows/instances/",
+                  params={"designation": "recovery"})
+        if r.status_code != 200:
+            return {"ok": False, "step": "list_flows",
+                    "status": r.status_code}
+        results = r.json().get("results", [])
+        if not results:
+            return {"ok": False, "skipped": "no_recovery_flow_in_authentik"}
+        flow_pk = results[0]["pk"]
+        flow_slug = results[0].get("slug", "")
+
+        # Trouve le brand par défaut
+        rb = c.get(f"{base}/core/brands/", params={"default": "true"})
+        if rb.status_code != 200:
+            return {"ok": False, "step": "list_brands",
+                    "status": rb.status_code}
+        brands = rb.json().get("results", [])
+        if not brands:
+            return {"ok": False, "skipped": "no_default_brand"}
+        brand = brands[0]
+        if brand.get("flow_recovery") == flow_pk:
+            return {"ok": True, "already": True, "flow_slug": flow_slug}
+
+        rp = c.patch(f"{base}/core/brands/{brand['pk']}/",
+                     json={"flow_recovery": flow_pk})
+        if rp.status_code not in (200, 201):
+            return {"ok": False, "step": "patch_brand",
+                    "status": rp.status_code, "body": rp.text[:200]}
+        return {"ok": True, "attached": True, "flow_slug": flow_slug}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def setup_authentik_management(env: dict[str, str]) -> dict[str, Any]:
     """Provisionne les éléments Authentik nécessaires à la gestion users
     depuis l'app aibox-app :
@@ -829,6 +874,7 @@ def setup_authentik_management(env: dict[str, str]) -> dict[str, Any]:
       2. Groupes par défaut : aibox-manager, aibox-employee
          (le groupe admin est "authentik Admins", déjà présent)
       3. S'assure que le user wizard est bien dans "authentik Admins"
+      4. Attache un recovery flow au brand pour les liens cliquables
     """
     token = _ak_admin_token(env)
     if not token:
@@ -878,10 +924,14 @@ def setup_authentik_management(env: dict[str, str]) -> dict[str, Any]:
                             c.patch(f"{base}/core/users/{user_pk}/",
                                     json={"groups": new_groups})
 
+            # 4. Recovery flow (best-effort)
+            recovery_res = _attach_recovery_flow_to_brand(c, base)
+
         return {
             "ok": True,
             "token_persisted": True,
             "groups": groups_created,
+            "recovery_flow": recovery_res,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
