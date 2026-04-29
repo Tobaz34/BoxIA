@@ -218,11 +218,17 @@ def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
     env_path = Path("/srv/ai-stack/.env")
     if env_path.exists():
         existing_secret = env.get("APP_NEXTAUTH_SECRET", "") or _gen_secret(48)
-        ak_url = env.get("AUTHENTIK_API_URL", "http://aibox-authentik-server:9000")
+        # IMPORTANT : AUTHENTIK_APP_ISSUER doit être l'URL utilisée par le NAVIGATEUR
+        # (NextAuth fait redirect côté browser). Le hostname Docker interne
+        # `aibox-authentik-server` n'est pas résolvable par le browser → ERR_NAME_NOT_RESOLVED.
+        if app_url.startswith("https://"):
+            ak_url_browser = f"https://auth.{domain}"
+        else:
+            ak_url_browser = f"http://{host}:9000"
         keys = {
             "AUTHENTIK_APP_CLIENT_ID":     f"AUTHENTIK_APP_CLIENT_ID={creds['client_id']}",
             "AUTHENTIK_APP_CLIENT_SECRET": f"AUTHENTIK_APP_CLIENT_SECRET={creds['client_secret']}",
-            "AUTHENTIK_APP_ISSUER":        f"AUTHENTIK_APP_ISSUER={ak_url}/application/o/aibox-app/",
+            "AUTHENTIK_APP_ISSUER":        f"AUTHENTIK_APP_ISSUER={ak_url_browser}/application/o/aibox-app/",
             "NEXTAUTH_URL":                f"NEXTAUTH_URL={app_url}",
             "APP_NEXTAUTH_SECRET":         f"APP_NEXTAUTH_SECRET={existing_secret}",
         }
