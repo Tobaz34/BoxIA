@@ -358,15 +358,19 @@ async def provision_sso(request: Request):
     host = (request.headers.get("host") or "localhost").split(":")[0]
     report = sso_provisioning.provision_all(env, host)
 
-    # Si OWUI OIDC OK → restart OWUI pour qu'il prenne les nouvelles env vars
-    if report.get("open_webui", {}).get("ok"):
-        try:
-            subprocess.run(
-                ["docker", "restart", "open-webui"],
-                capture_output=True, timeout=15,
-            )
-        except Exception:
-            pass
+    # Restart les containers qui dépendent du .env mis à jour par provisioning
+    for ok_key, container in [
+        ("open_webui", "open-webui"),
+        ("aibox_app", "aibox-app"),
+    ]:
+        if report.get(ok_key, {}).get("ok"):
+            try:
+                subprocess.run(
+                    ["docker", "restart", container],
+                    capture_output=True, timeout=15,
+                )
+            except Exception:
+                pass
 
     return report
 

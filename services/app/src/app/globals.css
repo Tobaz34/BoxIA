@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme dark par défaut, brandable via variables CSS injectées par le serveur */
+:root {
+  --background: 222 16% 9%;        /* #0f1115 */
+  --foreground: 210 14% 91%;       /* #e6e8eb */
+  --card: 222 13% 12%;             /* #1a1d24 */
+  --card-foreground: 210 14% 91%;
+  --muted: 220 9% 56%;             /* #8b919d */
+  --muted-foreground: 220 9% 56%;
+  --border: 220 13% 21%;           /* #2d3340 */
+  --input: 220 13% 21%;
+  --primary: 217 91% 60%;          /* #3b82f6 — overridable par BRAND_PRIMARY_COLOR */
+  --primary-foreground: 0 0% 100%;
+  --accent: 160 84% 39%;           /* #10b981 */
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --radius: 0.625rem;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html, body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Reset Tailwind pour les éléments form */
+input, button, textarea, select {
+  font: inherit;
+}
+
+/* Utility class pour les transitions douces */
+.transition-default {
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}

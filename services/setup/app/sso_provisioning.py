@@ -176,6 +176,64 @@ def _ak_upsert_oidc_app(
 
 
 # ---------------------------------------------------------------------------
+# AI Box App (front unifié custom) : OIDC via Authentik
+# ---------------------------------------------------------------------------
+def _gen_secret(n: int) -> str:
+    import secrets as _s, string
+    return "".join(_s.choice(string.ascii_letters + string.digits) for _ in range(n))
+
+
+def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
+    """Crée le provider OIDC pour l'app principale Next.js (services/app)."""
+    token = _ak_admin_token(env)
+    if not token:
+        return {"ok": False, "reason": "Authentik admin token unavailable"}
+
+    domain = env.get("DOMAIN", "")
+    if domain and domain != "xefia.local" and "." in domain:
+        app_url = f"https://app.{domain}"
+    else:
+        app_url = f"http://{host}:3100"
+
+    creds = _ak_upsert_oidc_app(
+        token,
+        app_name="AI Box App",
+        app_slug="aibox-app",
+        client_id="aibox-app",
+        redirect_uris=[f"{app_url}/api/auth/callback/authentik"],
+        description="Application principale AI Box (chat, agents, workflows)",
+    )
+
+    env_path = Path("/srv/ai-stack/.env")
+    if env_path.exists():
+        existing_secret = env.get("APP_NEXTAUTH_SECRET", "") or _gen_secret(48)
+        ak_url = env.get("AUTHENTIK_API_URL", "http://aibox-authentik-server:9000")
+        keys = {
+            "AUTHENTIK_APP_CLIENT_ID":     f"AUTHENTIK_APP_CLIENT_ID={creds['client_id']}",
+            "AUTHENTIK_APP_CLIENT_SECRET": f"AUTHENTIK_APP_CLIENT_SECRET={creds['client_secret']}",
+            "AUTHENTIK_APP_ISSUER":        f"AUTHENTIK_APP_ISSUER={ak_url}/application/o/aibox-app/",
+            "NEXTAUTH_URL":                f"NEXTAUTH_URL={app_url}",
+            "APP_NEXTAUTH_SECRET":         f"APP_NEXTAUTH_SECRET={existing_secret}",
+        }
+        lines = env_path.read_text().splitlines()
+        seen: set[str] = set()
+        new: list[str] = []
+        for line in lines:
+            k = line.split("=", 1)[0] if "=" in line else ""
+            if k in keys:
+                new.append(keys[k])
+                seen.add(k)
+            else:
+                new.append(line)
+        for k, v in keys.items():
+            if k not in seen:
+                new.append(v)
+        env_path.write_text("\n".join(new) + "\n")
+
+    return {"ok": True, "client_id": creds["client_id"], "app_url": app_url}
+
+
+# ---------------------------------------------------------------------------
 # Open WebUI : OIDC complet via Authentik
 # ---------------------------------------------------------------------------
 def setup_owui_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
@@ -416,6 +474,7 @@ def setup_uptime_kuma_admin(env: dict[str, str], host: str = "") -> dict[str, An
 def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
     """Exécute tous les provisioning. Renvoie un rapport par app."""
     return {
+        "aibox_app":  setup_aibox_app_oidc(env, host),
         "open_webui": setup_owui_oidc(env, host),
         "dify":       setup_dify_admin(env),
         "n8n":        setup_n8n_owner(env, host),

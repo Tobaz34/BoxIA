@@ -1,0 +1,59 @@
+# =============================================================================
+# AI Box — Application principale (front unifié custom)
+# =============================================================================
+# Cette app remplace l'expérience par défaut "page configured + 6 tuiles".
+# Au prochain reset, on la rendra accessible direct sur http://aibox.local
+# (le wizard ne servant qu'au 1er démarrage).
+# =============================================================================
+
+name: aibox-app
+
+services:
+  app:
+    build:
+      context: .
+    container_name: aibox-app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3100}:3000"
+    volumes:
+      # Pour interroger les containers (statut connecteurs)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # ---- NextAuth ----
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3100}
+      NEXTAUTH_SECRET: ${APP_NEXTAUTH_SECRET}
+
+      # ---- Authentik OIDC ----
+      AUTHENTIK_ISSUER: ${AUTHENTIK_APP_ISSUER:-http://aibox-authentik-server:9000/application/o/aibox-app/}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_APP_CLIENT_ID:-aibox-app}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_APP_CLIENT_SECRET}
+
+      # ---- Backend services ----
+      DIFY_BASE_URL: http://aibox-dify-nginx:80
+      N8N_BASE_URL: http://n8n:5678
+      OWUI_BASE_URL: http://open-webui:8080
+      PROMETHEUS_URL: http://aibox-prometheus:9090
+      AUTHENTIK_API_URL: http://aibox-authentik-server:9000
+      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
+
+      # ---- Branding ----
+      BRAND_NAME: ${BRAND_NAME:-AI Box}
+      BRAND_LOGO_URL: ${BRAND_LOGO_URL:-}
+      BRAND_PRIMARY_COLOR: ${BRAND_PRIMARY_COLOR:-#3b82f6}
+      BRAND_ACCENT_COLOR: ${BRAND_ACCENT_COLOR:-#10b981}
+      BRAND_FOOTER_TEXT: ${BRAND_FOOTER_TEXT:-}
+      CLIENT_NAME: ${CLIENT_NAME:-}
+    networks:
+      - aibox_net
+      - ollama_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

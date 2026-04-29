@@ -74,6 +74,10 @@ deploy_stack() {
   ( cd services/edge && docker compose --env-file "$env_file" up -d ) || \
       c_yellow "    (Caddy non démarré — souvent un conflit de ports avec NPM, à régler après)"
 
+  c_blue "  → Démarrage AI Box App (front unifié)..."
+  ( cd services/app && docker compose --env-file "$env_file" up -d --build ) || \
+      c_yellow "    (App non démarrée — sera relancée par le wizard après provisioning OIDC)"
+
   # Démarre la stack héritée (n8n, Portainer, Uptime Kuma, NPM, Duplicati, Dashy)
   # si elle existe sur l'hôte. Important pour que le provisioning des comptes
   # n8n/Portainer fonctionne après reset.
