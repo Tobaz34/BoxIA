@@ -194,6 +194,11 @@ services:
       DB_USERNAME: postgres
       DB_PASSWORD: ${PG_DIFY_PASSWORD}
       DB_DATABASE: dify_plugin
+      REDIS_HOST: dify-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      REDIS_USE_SSL: "false"
       SERVER_PORT: 5002
       SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
       MAX_PLUGIN_PACKAGE_SIZE: 52428800
@@ -206,6 +211,9 @@ services:
       PLUGIN_INSTALLED_PATH: plugin
       PLUGIN_PACKAGE_CACHE_PATH: plugin_packages
       PLUGIN_MEDIA_CACHE_PATH: assets
+      # FORCE_VERIFYING_SIGNATURE désactivé : on installe depuis le
+      # marketplace officiel mais aussi potentiellement depuis des
+      # plugins locaux non signés en dev.
       FORCE_VERIFYING_SIGNATURE: "false"
       PYTHON_ENV_INIT_TIMEOUT: 120
       PLUGIN_MAX_EXECUTION_TIMEOUT: 600
