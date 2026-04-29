@@ -23,6 +23,7 @@ import yaml
 from datetime import datetime, timezone
 
 import sso_provisioning
+import template_importer
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -368,6 +369,27 @@ async def provision_sso(request: Request):
             pass
 
     return report
+
+
+@app.post("/api/deploy/import-templates")
+def import_templates(request: Request):
+    """Auto-import des templates Dify + n8n selon les techs cochées.
+
+    Lit `client_config.yaml` pour déterminer les templates pertinents.
+    Doit être appelé APRÈS provision-sso (les comptes admin doivent exister).
+    Idempotent : skip les apps/workflows déjà créés.
+    """
+    env_path = AIBOX_ROOT / ".env"
+    if not env_path.exists():
+        raise HTTPException(400, "Pas de .env")
+    env: dict[str, str] = {}
+    for line in env_path.read_text().splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, _, v = line.partition("=")
+            env[k] = v.strip("'\"")
+
+    host = (request.headers.get("host") or "localhost").split(":")[0]
+    return template_importer.import_all_templates(env, host)
 
 
 @app.post("/api/deploy/start")

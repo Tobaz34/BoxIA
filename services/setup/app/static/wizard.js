@@ -211,7 +211,7 @@ async function deploy() {
       }
 
       // 5. Provisioning SSO + comptes locaux pour OWUI / Dify / n8n
-      out.textContent += '\n[2/2] Provisioning SSO + comptes admin locaux (OWUI, Dify, n8n)...\n';
+      out.textContent += '\n[2/3] Provisioning SSO + comptes admin locaux (OWUI, Dify, n8n)...\n';
       try {
         const r4 = await fetch('/api/deploy/provision-sso', { method: 'POST' });
         const j4 = await r4.json();
@@ -228,10 +228,31 @@ async function deploy() {
         out.textContent += '  ⚠ Erreur provisioning : ' + e + '\n';
       }
 
+      // 6. Auto-import des templates Dify + workflows n8n selon les techs cochées
+      out.textContent += '\n[3/3] Import auto des agents IA et workflows pré-configurés...\n';
+      try {
+        const r5 = await fetch('/api/deploy/import-templates', { method: 'POST' });
+        const j5 = await r5.json();
+        if (j5.dify) {
+          for (const t of j5.dify) {
+            const status = t.skipped ? '↻' : (t.ok ? '✓' : '⚠');
+            out.textContent += `  ${status} agent Dify : ${t.name || t.id} ${t.skipped || t.error || ''}\n`;
+          }
+        }
+        if (j5.n8n) {
+          for (const t of j5.n8n) {
+            const status = t.skipped ? '↻' : (t.ok ? '✓' : '⚠');
+            out.textContent += `  ${status} workflow n8n : ${t.name || t.id} ${t.skipped || t.error || ''}\n`;
+          }
+        }
+      } catch (e) {
+        out.textContent += '  ⚠ Erreur import templates : ' + e + '\n';
+      }
+
       ws.close();
       await fetch('/api/configure/finish', { method: 'POST' });
       finalize();
-    }, 20000);
+    }, 25000);
 
   } catch (e) {
     out.textContent += '\n❌ Erreur : ' + e.message;
