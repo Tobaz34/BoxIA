@@ -185,7 +185,7 @@ services:
   # une 400 "Failed to request plugin daemon" et aucun modèle ne peut être
   # configuré. Communique avec dify-api par INNER_API + clé partagée.
   dify-plugin-daemon:
-    image: langgenius/dify-plugin-daemon:0.1.4-local
+    image: langgenius/dify-plugin-daemon:0.6.0-local
     container_name: aibox-dify-plugin-daemon
     restart: unless-stopped
     environment:
