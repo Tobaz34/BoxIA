@@ -369,10 +369,14 @@ async def provision_sso(request: Request):
     for ok_key, compose_dir in compose_dirs:
         if report.get(ok_key, {}).get("ok"):
             try:
+                # --env-file pointe vers le .env central (les compose enfants
+                # n'ont pas leur propre .env). Sans cette option, les
+                # ${VARS} restent vides à la recreate.
                 subprocess.run(
-                    ["docker", "compose", "up", "-d"],
+                    ["docker", "compose", "--env-file", "/srv/ai-stack/.env",
+                     "up", "-d"],
                     cwd=compose_dir,
-                    capture_output=True, timeout=60,
+                    capture_output=True, timeout=120,
                 )
             except Exception as e:
                 print(f"[provision-sso] compose up failed for {ok_key}: {e}", flush=True)
