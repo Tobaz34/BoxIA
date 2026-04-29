@@ -22,6 +22,9 @@ services:
     volumes:
       # Pour interroger les containers (statut connecteurs)
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Persistance applicative (état des connecteurs activés, settings,
+      # éventuellement audit log custom à venir).
+      - /srv/ai-stack/data:/data
     environment:
       # En host mode, on doit dire à Next.js d'écouter sur le port custom
       PORT: "${APP_PORT:-3100}"

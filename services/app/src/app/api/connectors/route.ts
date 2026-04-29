@@ -1,90 +1,60 @@
 /**
- * GET /api/connectors — liste l'état des connecteurs IA (containers aibox-conn-*).
+ * GET /api/connectors — liste enrichie : catalogue + état persistant.
  *
- * Renvoie pour chaque connecteur configuré dans le catalog :
- *   { id, name, icon, brand, running, last_sync? }
+ * ?status=active|inactive|hidden  → filtre
+ * ?category=storage|email|...     → filtre
  *
- * Source : interroge Docker socket via /var/run/docker.sock (monté dans le container).
+ * Le sidebar (ConnectorsStatus) consomme cet endpoint avec ?status=active
+ * pour ne montrer que les connecteurs vraiment branchés. La page
+ * /connectors consomme la version complète pour permettre activation.
  */
-import { NextResponse } from "next/server";
-import * as net from "net";
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { publicCatalog, CATEGORIES } from "@/lib/connectors";
+import { listStates, publicState, type ConnectorStatus } from "@/lib/connectors-state";
 
-interface ConnectorInfo {
-  id: string;
-  name: string;
-  brand: string;            // "Microsoft" | "Google" | "Odoo" | ...
-  icon: string;
-  container_name: string;
-  running: boolean;
-  configured: boolean;
-}
+export const dynamic = "force-dynamic";
 
-// Catalogue des connecteurs côté UI
-const CATALOG: Omit<ConnectorInfo, "running" | "configured">[] = [
-  { id: "rag-msgraph",       name: "SharePoint / OneDrive", brand: "Microsoft", icon: "🪟", container_name: "aibox-conn-rag-msgraph" },
-  { id: "email-msgraph",     name: "Outlook / Exchange",    brand: "Microsoft", icon: "📧", container_name: "aibox-conn-email-msgraph" },
-  { id: "rag-gdrive",        name: "Google Drive",           brand: "Google",   icon: "🟢", container_name: "aibox-conn-rag-gdrive" },
-  { id: "email-gmail",       name: "Gmail",                  brand: "Google",   icon: "📧", container_name: "aibox-conn-email-gmail" },
-  { id: "email-imap",        name: "Email IMAP",             brand: "IMAP",     icon: "✉️", container_name: "aibox-conn-email-imap" },
-  { id: "rag-smb",           name: "NAS / SMB",              brand: "NAS",      icon: "🗄️", container_name: "aibox-conn-rag-smb" },
-  { id: "rag-nextcloud",     name: "Nextcloud",              brand: "Nextcloud",icon: "☁️", container_name: "aibox-conn-rag-nextcloud" },
-  { id: "erp-odoo",          name: "Odoo",                   brand: "Odoo",     icon: "🟣", container_name: "aibox-conn-erp-odoo" },
-  { id: "text2sql",          name: "Base SQL",               brand: "Database", icon: "🗃️", container_name: "aibox-conn-text2sql" },
-  { id: "helpdesk-glpi",     name: "GLPI Helpdesk",          brand: "GLPI",     icon: "🎫", container_name: "aibox-conn-helpdesk-glpi" },
-];
-
-/** Appel direct au socket Docker via HTTP (Unix domain socket). */
-function dockerRequest(path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const client = net.createConnection("/var/run/docker.sock");
-    let buffer = "";
-    client.on("connect", () => {
-      client.write(`GET ${path} HTTP/1.0\r\nHost: localhost\r\n\r\n`);
-    });
-    client.on("data", (d) => (buffer += d.toString()));
-    client.on("end", () => resolve(buffer));
-    client.on("error", reject);
-    setTimeout(() => { client.destroy(); reject(new Error("timeout")); }, 3000);
-  });
-}
-
-async function listRunningContainers(): Promise<Set<string>> {
-  try {
-    const raw = await dockerRequest("/containers/json?all=false");
-    const body = raw.split("\r\n\r\n").slice(1).join("\r\n\r\n");
-    const containers = JSON.parse(body) as Array<{ Names: string[] }>;
-    const names = new Set<string>();
-    for (const c of containers) {
-      for (const n of c.Names) names.add(n.replace(/^\//, ""));
-    }
-    return names;
-  } catch {
-    return new Set();
+export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-}
 
-export async function GET() {
-  const running = await listRunningContainers();
+  const { searchParams } = new URL(req.url);
+  const filterStatus = searchParams.get("status") as ConnectorStatus | null;
+  const filterCategory = searchParams.get("category");
 
-  const result: ConnectorInfo[] = CATALOG.map((c) => ({
-    ...c,
-    running: running.has(c.container_name),
-    configured: running.has(c.container_name),  // simplification : si container up = configuré
-  }));
+  const states = await listStates();
+  const catalog = publicCatalog();
 
-  // Group par brand pour l'affichage
-  const grouped: Record<string, ConnectorInfo[]> = {};
-  for (const c of result) {
-    if (!grouped[c.brand]) grouped[c.brand] = [];
-    grouped[c.brand].push(c);
+  const items = catalog.map((spec) => {
+    const st = states[spec.slug];
+    const status: ConnectorStatus = st?.status || "inactive";
+    return {
+      ...spec,
+      status,
+      // Public state (jamais les valeurs secrètes)
+      state: st ? publicState(spec.slug, st) : null,
+    };
+  });
+
+  let filtered = items;
+  if (filterStatus) {
+    filtered = filtered.filter((i) => i.status === filterStatus);
+  }
+  if (filterCategory) {
+    filtered = filtered.filter((i) => i.category === filterCategory);
   }
 
   return NextResponse.json({
-    connectors: result,
-    grouped,
+    connectors: filtered,
+    categories: CATEGORIES,
     summary: {
-      total: result.length,
-      running: result.filter((c) => c.running).length,
+      total: items.length,
+      active: items.filter((i) => i.status === "active").length,
+      hidden: items.filter((i) => i.status === "hidden").length,
     },
   });
 }

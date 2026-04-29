@@ -13,6 +13,7 @@ import {
   Settings,
   HelpCircle,
   ShieldCheck,
+  Plug,
 } from "lucide-react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
 
@@ -24,10 +25,11 @@ const items = [
 ];
 
 const adminItems = [
-  { href: "/users",   label: "Utilisateurs",  icon: Users },
-  { href: "/audit",   label: "Audit",         icon: ScrollText },
-  { href: "/system",  label: "État serveur",  icon: Activity },
-  { href: "/settings",label: "Paramètres",    icon: Settings },
+  { href: "/users",      label: "Utilisateurs", icon: Users },
+  { href: "/connectors", label: "Connecteurs",  icon: Plug },
+  { href: "/audit",      label: "Audit",        icon: ScrollText },
+  { href: "/system",     label: "État serveur", icon: Activity },
+  { href: "/settings",   label: "Paramètres",   icon: Settings },
 ];
 
 interface SidebarProps {

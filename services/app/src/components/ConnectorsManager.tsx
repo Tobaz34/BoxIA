@@ -1,0 +1,546 @@
+"use client";
+
+/**
+ * Page /connectors — gestion des connecteurs.
+ *
+ * 3 sections :
+ *   - ACTIFS    : connecteurs branchés (avec dernière synchro, nb objets, sync now, désactiver)
+ *   - DISPONIBLES : prêts à brancher (filtrable par catégorie)
+ *   - MASQUÉS   : cachés par l'admin (peuvent être restaurés)
+ *
+ * Modal d'activation : form généré dynamiquement depuis fields[].
+ *
+ * Réservée admin pour les actions write (l'API renvoie 403 sinon).
+ */
+import {
+  Plug, Plus, Trash2, EyeOff, Eye, RefreshCw, AlertCircle,
+  CheckCircle2, X, Settings as SettingsIcon, Search, Clock,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSession } from "next-auth/react";
+
+interface Field {
+  key: string;
+  label: string;
+  type: "text" | "password" | "url" | "select";
+  required?: boolean;
+  placeholder?: string;
+  helpText?: string;
+  options?: { value: string; label: string }[];
+}
+
+type Category =
+  | "storage" | "email" | "erp_crm" | "helpdesk" | "comms"
+  | "project" | "finance" | "bi";
+
+type ImplStatus = "implemented" | "beta" | "coming_soon";
+type Status = "active" | "inactive" | "hidden";
+
+interface ConnectorItem {
+  slug: string;
+  name: string;
+  icon: string;
+  description: string;
+  category: Category;
+  implStatus: ImplStatus;
+  authMethod?: string;
+  fields: Field[];
+  docUrl?: string;
+  status: Status;
+  state: {
+    config_keys_present: string[];
+    has_secrets: boolean;
+    last_sync_at: number | null;
+    last_error: string | null;
+    activated_at: number | null;
+    stats?: {
+      objects_indexed?: number;
+      last_objects_added?: number;
+    };
+  } | null;
+}
+
+interface ApiResponse {
+  connectors: ConnectorItem[];
+  categories: Record<Category, { label: string; icon: string }>;
+  summary: { total: number; active: number; hidden: number };
+}
+
+const IMPL_BADGE: Record<ImplStatus, { label: string; cls: string }> = {
+  implemented:  { label: "Stable",     cls: "bg-accent/15 text-accent" },
+  beta:         { label: "Bêta",       cls: "bg-yellow-500/15 text-yellow-400" },
+  coming_soon:  { label: "À venir",    cls: "bg-muted/20 text-muted" },
+};
+
+function relTime(ms: number | null): string {
+  if (!ms) return "jamais";
+  const diff = Date.now() - ms;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `il y a ${h} h`;
+  const d = Math.floor(h / 24);
+  return `il y a ${d} j`;
+}
+
+export function ConnectorsManager() {
+  const { data: session } = useSession();
+  const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+
+  const [data, setData] = useState<ApiResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<Category | "">("");
+  const [error, setError] = useState<string | null>(null);
+
+  // Modal activation
+  const [editing, setEditing] = useState<ConnectorItem | null>(null);
+  const [editConfig, setEditConfig] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await fetch("/api/connectors", { cache: "no-store" });
+      if (!r.ok) {
+        setError("Erreur de chargement");
+        return;
+      }
+      setData(await r.json());
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const { active, available, hidden } = useMemo(() => {
+    const items = (data?.connectors || []).filter((c) => {
+      if (search && !`${c.name} ${c.description} ${c.slug}`
+            .toLowerCase().includes(search.toLowerCase())) return false;
+      if (categoryFilter && c.category !== categoryFilter) return false;
+      return true;
+    });
+    return {
+      active:    items.filter((c) => c.status === "active"),
+      available: items.filter((c) => c.status === "inactive"),
+      hidden:    items.filter((c) => c.status === "hidden"),
+    };
+  }, [data, search, categoryFilter]);
+
+  function openActivate(c: ConnectorItem) {
+    setEditing(c);
+    // Pré-remplir avec les clés présentes (sans valeurs secrètes — qu'on
+    // demande de ré-entrer si besoin)
+    const initial: Record<string, string> = {};
+    for (const f of c.fields) initial[f.key] = "";
+    setEditConfig(initial);
+    setError(null);
+  }
+
+  async function submitActivate() {
+    if (!editing) return;
+    // Validation : champs required
+    for (const f of editing.fields) {
+      if (f.required && !editConfig[f.key]?.trim()) {
+        setError(`Champ requis : ${f.label}`);
+        return;
+      }
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/connectors/${editing.slug}/activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: editConfig }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        setError(j.message || j.error || `Erreur ${r.status}`);
+        return;
+      }
+      setEditing(null);
+      setEditConfig({});
+      await refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function deactivate(slug: string) {
+    if (!confirm("Désactiver ce connecteur ? Les credentials seront conservés.")) return;
+    await fetch(`/api/connectors/${slug}/deactivate`, { method: "POST" });
+    refresh();
+  }
+
+  async function toggleHide(slug: string, hidden: boolean) {
+    await fetch(`/api/connectors/${slug}/hide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden }),
+    });
+    refresh();
+  }
+
+  async function syncNow(slug: string) {
+    await fetch(`/api/connectors/${slug}/sync`, { method: "POST" });
+    refresh();
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="p-6 max-w-3xl mx-auto">
+        <div className="rounded-lg border border-border bg-card p-8 text-center">
+          <AlertCircle size={32} className="mx-auto text-muted mb-3" />
+          <h1 className="text-lg font-semibold mb-1">Accès réservé</h1>
+          <p className="text-sm text-muted">
+            La gestion des connecteurs est réservée aux administrateurs.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto pb-20">
+      <header className="mb-6 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
+            <Plug size={20} />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold">Connecteurs</h1>
+            <p className="text-sm text-muted">
+              {data?.summary.active || 0} actif{(data?.summary.active || 0) > 1 ? "s" : ""}
+              {" · "}{data?.summary.total || 0} disponibles dans le catalogue
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={refresh}
+          className="text-muted hover:text-foreground transition-default p-2 rounded hover:bg-muted/20"
+          title="Rafraîchir"
+        >
+          <RefreshCw size={16} />
+        </button>
+      </header>
+
+      {/* Filtres */}
+      <div className="mb-6 grid grid-cols-[1fr_auto] gap-2">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Rechercher un connecteur (Outlook, Drive, Pennylane…)"
+            className="w-full bg-card border border-border rounded-md pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-primary"
+          />
+        </div>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value as Category | "")}
+          className="bg-card border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-primary"
+        >
+          <option value="">Toutes catégories</option>
+          {data && Object.entries(data.categories).map(([key, cat]) => (
+            <option key={key} value={key}>{cat.icon} {cat.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <div className="text-center text-sm text-muted py-12">Chargement…</div>
+      ) : (
+        <>
+          {/* ACTIFS */}
+          {active.length > 0 && (
+            <Section title="Actifs" count={active.length}>
+              {active.map((c) => (
+                <ActiveRow
+                  key={c.slug}
+                  c={c}
+                  onSync={() => syncNow(c.slug)}
+                  onConfig={() => openActivate(c)}
+                  onDeactivate={() => deactivate(c.slug)}
+                />
+              ))}
+            </Section>
+          )}
+
+          {/* DISPONIBLES */}
+          <Section title="Disponibles" count={available.length}>
+            {available.length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-muted">
+                Tous les connecteurs sont activés ou masqués.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {available.map((c) => (
+                  <AvailableCard
+                    key={c.slug}
+                    c={c}
+                    onActivate={() => openActivate(c)}
+                    onHide={() => toggleHide(c.slug, true)}
+                  />
+                ))}
+              </div>
+            )}
+          </Section>
+
+          {/* MASQUÉS */}
+          {hidden.length > 0 && (
+            <Section title="Masqués" count={hidden.length} muted>
+              {hidden.map((c) => (
+                <div
+                  key={c.slug}
+                  className="px-4 py-2.5 flex items-center gap-3 border-b border-border last:border-0 text-sm"
+                >
+                  <span className="text-base">{c.icon}</span>
+                  <span className="flex-1 text-muted truncate">{c.name}</span>
+                  <button
+                    onClick={() => toggleHide(c.slug, false)}
+                    className="text-xs px-2 py-1 rounded hover:bg-muted/30 text-muted"
+                  >
+                    <Eye size={12} className="inline mr-1" /> Restaurer
+                  </button>
+                </div>
+              ))}
+            </Section>
+          )}
+        </>
+      )}
+
+      {error && !editing && (
+        <div className="fixed bottom-4 right-4 max-w-sm rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-3 py-2 shadow-lg">
+          {error}
+        </div>
+      )}
+
+      {/* Modal Activation */}
+      {editing && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setEditing(null)}
+        >
+          <div
+            className="bg-card border border-border rounded-lg w-full max-w-lg p-6 shadow-2xl max-h-[90vh] overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-1">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-2xl">{editing.icon}</span>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold">{editing.name}</h2>
+                  <span className={"inline-block text-[10px] px-1.5 py-0.5 rounded-full mt-0.5 " + IMPL_BADGE[editing.implStatus].cls}>
+                    {IMPL_BADGE[editing.implStatus].label}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditing(null)}
+                className="p-1 rounded hover:bg-muted/30 shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-sm text-muted mt-2 mb-4">{editing.description}</p>
+
+            {editing.implStatus !== "implemented" && (
+              <div className="mb-4 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs px-3 py-2">
+                <strong>Connecteur en {IMPL_BADGE[editing.implStatus].label.toLowerCase()}.</strong>{" "}
+                Vous pouvez enregistrer la configuration ; le worker de
+                synchronisation sera activé dès qu'il sera disponible.
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {editing.fields.map((f) => (
+                <div key={f.key}>
+                  <label className="text-xs font-medium block mb-1">
+                    {f.label}
+                    {f.required && <span className="text-red-400 ml-0.5">*</span>}
+                  </label>
+                  {f.type === "select" ? (
+                    <select
+                      value={editConfig[f.key] || ""}
+                      onChange={(e) => setEditConfig({ ...editConfig, [f.key]: e.target.value })}
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                    >
+                      <option value="">— sélectionner —</option>
+                      {f.options?.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type={f.type === "password" ? "password" : f.type === "url" ? "url" : "text"}
+                      value={editConfig[f.key] || ""}
+                      onChange={(e) => setEditConfig({ ...editConfig, [f.key]: e.target.value })}
+                      placeholder={f.placeholder}
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary"
+                    />
+                  )}
+                  {f.helpText && (
+                    <p className="text-[11px] text-muted mt-0.5">{f.helpText}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {error && (
+              <div className="mt-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-3 py-2">
+                {error}
+              </div>
+            )}
+
+            <div className="mt-5 flex items-center justify-between gap-2">
+              {editing.docUrl && (
+                <a
+                  href={editing.docUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted hover:text-foreground"
+                >
+                  Documentation ↗
+                </a>
+              )}
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={() => setEditing(null)}
+                  className="px-3 py-2 text-sm rounded-md border border-border hover:bg-muted/20"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={submitActivate}
+                  disabled={submitting}
+                  className="px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-2"
+                >
+                  <CheckCircle2 size={14} />
+                  {submitting ? "Activation…" : (editing.status === "active" ? "Mettre à jour" : "Activer")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Section({
+  title, count, muted, children,
+}: { title: string; count: number; muted?: boolean; children: React.ReactNode }) {
+  return (
+    <section className="mb-6">
+      <h2 className={"text-xs font-semibold uppercase tracking-wide mb-2 " +
+        (muted ? "text-muted" : "")}>
+        {title} <span className="text-muted font-normal">({count})</span>
+      </h2>
+      <div className={muted
+        ? "rounded-lg border border-border bg-muted/5"
+        : "rounded-lg border border-border bg-card"}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function ActiveRow({
+  c, onSync, onConfig, onDeactivate,
+}: {
+  c: ConnectorItem;
+  onSync: () => void;
+  onConfig: () => void;
+  onDeactivate: () => void;
+}) {
+  return (
+    <div className="px-4 py-3 grid grid-cols-[auto_1fr_auto] gap-4 items-center border-b border-border last:border-0">
+      <span className="text-2xl">{c.icon}</span>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className="font-medium truncate">{c.name}</span>
+          <span className={"text-[10px] px-1.5 py-0.5 rounded-full " + IMPL_BADGE[c.implStatus].cls}>
+            {IMPL_BADGE[c.implStatus].label}
+          </span>
+        </div>
+        <div className="text-xs text-muted flex items-center gap-3 flex-wrap">
+          <span className="inline-flex items-center gap-1">
+            <Clock size={10} />
+            sync : {relTime(c.state?.last_sync_at || null)}
+          </span>
+          {c.state?.stats?.objects_indexed != null && (
+            <span>{c.state.stats.objects_indexed.toLocaleString("fr-FR")} objets indexés</span>
+          )}
+          {c.state?.last_error && (
+            <span className="text-red-400 truncate max-w-xs">⚠ {c.state.last_error}</span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={onSync}
+          title="Sync now"
+          className="p-2 rounded hover:bg-muted/30 text-muted hover:text-foreground transition-default"
+        >
+          <RefreshCw size={14} />
+        </button>
+        <button
+          onClick={onConfig}
+          title="Reconfigurer"
+          className="p-2 rounded hover:bg-muted/30 text-muted hover:text-foreground transition-default"
+        >
+          <SettingsIcon size={14} />
+        </button>
+        <button
+          onClick={onDeactivate}
+          title="Désactiver"
+          className="p-2 rounded hover:bg-red-500/10 text-muted hover:text-red-400 transition-default"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AvailableCard({
+  c, onActivate, onHide,
+}: {
+  c: ConnectorItem;
+  onActivate: () => void;
+  onHide: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-card p-3 hover:border-primary/50 transition-default group">
+      <div className="flex items-start gap-3 mb-2">
+        <span className="text-2xl">{c.icon}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="font-medium truncate">{c.name}</span>
+            <span className={"text-[10px] px-1.5 py-0.5 rounded-full shrink-0 " + IMPL_BADGE[c.implStatus].cls}>
+              {IMPL_BADGE[c.implStatus].label}
+            </span>
+          </div>
+          <p className="text-xs text-muted line-clamp-2">{c.description}</p>
+        </div>
+      </div>
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={onActivate}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium transition-default"
+        >
+          <Plus size={12} /> Activer
+        </button>
+        <button
+          onClick={onHide}
+          title="Masquer"
+          className="px-2 py-1.5 rounded-md text-muted hover:bg-muted/20 transition-default opacity-0 group-hover:opacity-100"
+        >
+          <EyeOff size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
