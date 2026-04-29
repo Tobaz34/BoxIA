@@ -16,36 +16,40 @@ import rehypeHighlight from "rehype-highlight";
 import { Check, Copy } from "lucide-react";
 import { useState, type ComponentProps } from "react";
 
-function CodeBlock({ children, className }: { children: string; className?: string }) {
+function CodeBlockHeader({ lang, raw }: { lang: string; raw: string }) {
   const [copied, setCopied] = useState(false);
-  const lang = (className || "").replace(/^language-/, "") || "text";
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(children);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch { /* noop */ }
-  }
-
   return (
-    <div className="relative group my-3 rounded-md overflow-hidden border border-border bg-background/60">
-      <div className="flex items-center justify-between px-3 py-1 text-[11px] text-muted bg-muted/10 border-b border-border">
-        <span>{lang}</span>
-        <button
-          onClick={copy}
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted/30 transition-default"
-          title="Copier"
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? "Copié" : "Copier"}
-        </button>
-      </div>
-      <pre className="overflow-x-auto p-3 text-xs leading-relaxed">
-        <code className={className}>{children}</code>
-      </pre>
+    <div className="flex items-center justify-between px-3 py-1 text-[11px] text-muted bg-muted/10 border-b border-border">
+      <span>{lang}</span>
+      <button
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(raw);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          } catch { /* noop */ }
+        }}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted/30 transition-default"
+        title="Copier"
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+        {copied ? "Copié" : "Copier"}
+      </button>
     </div>
   );
+}
+
+/** Extrait le texte brut d'un noeud react-markdown (pour le bouton Copier).
+ *  Avec rehype-highlight les enfants deviennent des spans imbriqués → on
+ *  walk récursivement pour reconstituer le texte original. */
+function extractText(node: unknown): string {
+  if (node == null) return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (typeof node === "object" && "props" in node) {
+    return extractText((node as { props: { children?: unknown } }).props.children);
+  }
+  return "";
 }
 
 export function MessageMarkdown({ content }: { content: string }) {
@@ -55,21 +59,37 @@ export function MessageMarkdown({ content }: { content: string }) {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
-          // Code block standalone (avec ```lang)
-          pre: ({ children }: ComponentProps<"pre">) => {
-            // Cherche l'enfant <code> pour extraire son texte + className
-            const codeChild = Array.isArray(children) ? children[0] : children;
+          // pre = wrapper autour du code block. On lui ajoute juste un header
+          // (langue + bouton copier). Le contenu est rendu par le composant
+          // <code> ci-dessous (qui reçoit déjà les <span> highlightés).
+          pre: ({ children, ...rest }: ComponentProps<"pre">) => {
+            // Trouve le <code> enfant pour extraire className (langue) + texte brut
+            const codeChild = Array.isArray(children)
+              ? children.find(
+                  (c) => c && typeof c === "object" && "type" in c && c.type === "code",
+                )
+              : children;
             const codeProps =
               codeChild && typeof codeChild === "object" && "props" in codeChild
-                ? (codeChild as { props: { children?: unknown; className?: string } }).props
-                : { children: "", className: "" };
-            const text = String(codeProps.children ?? "");
-            return <CodeBlock className={codeProps.className}>{text}</CodeBlock>;
+                ? (codeChild as { props: { className?: string; children?: unknown } }).props
+                : { className: "", children: "" };
+            const lang = (codeProps.className || "")
+              .replace(/^language-/, "")
+              .replace(/\s.*$/, "") || "text";
+            const raw = extractText(codeProps.children).replace(/\n$/, "");
+            return (
+              <div className="relative my-3 rounded-md overflow-hidden border border-border bg-background/60">
+                <CodeBlockHeader lang={lang} raw={raw} />
+                <pre className="overflow-x-auto p-3 text-xs leading-relaxed" {...rest}>
+                  {children}
+                </pre>
+              </div>
+            );
           },
-          // Code inline (`foo`)
+          // Code inline (`foo`) — pas de className=language-* (sinon c'est un block géré par <pre>).
           code: ({ children, className, ...rest }: ComponentProps<"code">) => {
-            // Si className=language-... → géré par <pre> ci-dessus, on rend brut
-            if (className?.startsWith("language-")) {
+            if (className) {
+              // Block fenced — laisse rehype-highlight rendre les <span> enfants
               return <code className={className} {...rest}>{children}</code>;
             }
             return (
