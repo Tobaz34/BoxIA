@@ -421,42 +421,68 @@ def _dify_console_client(base: str, email: str, password: str) -> httpx.Client |
         return None
 
 
+MARKETPLACE_URL = "https://marketplace.dify.ai"
+
+
+def _fetch_ollama_package_id() -> str | None:
+    """Récupère le `latest_package_identifier` (format: langgenius/ollama:X.Y.Z@hash)
+    via l'API marketplace publique. Sans ça, l'install Dify retourne 400.
+    """
+    try:
+        r = httpx.get(f"{MARKETPLACE_URL}/api/v1/plugins/langgenius/ollama",
+                      timeout=10)
+        if r.status_code != 200:
+            return None
+        return r.json().get("data", {}).get("plugin", {}).get(
+            "latest_package_identifier")
+    except Exception:
+        return None
+
+
 def _ensure_ollama_plugin(c: httpx.Client, base: str) -> dict[str, Any]:
     """S'assure que le plugin Ollama est installé dans Dify (idempotent).
 
     Dify 1.x n'a plus les providers en built-in : ils sont packagés en plugins
-    (langgenius/ollama). On vérifie d'abord la liste des plugins installés ;
-    si Ollama est absent, on l'installe depuis le marketplace officiel.
+    (langgenius/ollama). On vérifie la liste des plugins installés ; si Ollama
+    est absent, on l'installe depuis le marketplace officiel en passant le
+    package_identifier complet (langgenius/ollama:0.1.5@<sha256>).
     """
     try:
         r = c.get(f"{base}/console/api/workspaces/current/plugin/list",
                   params={"page": 1, "page_size": 50})
         if r.status_code == 200:
             for p in r.json().get("data", {}).get("list", []):
-                # plugin_id format: "langgenius/ollama/ollama"
                 if "ollama" in str(p.get("plugin_id", "")).lower():
                     return {"ok": True, "installed": True, "already": True}
 
-        # Pas trouvé → installe depuis marketplace
+        # Pas trouvé → résoudre l'identifier puis installer
+        pkg_id = _fetch_ollama_package_id()
+        if not pkg_id:
+            return {"ok": False, "error": "marketplace unreachable for ollama identifier"}
+
         r = c.post(
             f"{base}/console/api/workspaces/current/plugin/install/marketplace",
-            json={"plugin_unique_identifiers": ["langgenius/ollama/ollama:latest"]},
+            json={"plugin_unique_identifiers": [pkg_id]},
         )
         if r.status_code not in (200, 201):
-            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
-        # L'install est asynchrone : on poll jusqu'à 60s pour vérifier
-        task_id = r.json().get("task_id")
-        deadline = time.time() + 60
+            return {"ok": False, "status": r.status_code, "body": r.text[:300],
+                    "pkg_id": pkg_id}
+        task_id = r.json().get("task_id") or r.json().get("data", {}).get("task_id")
+
+        # Poll jusqu'à 90s : l'install peut prendre du temps (téléchargement +
+        # init du venv Python du plugin).
+        deadline = time.time() + 90
         while time.time() < deadline:
-            time.sleep(2)
+            time.sleep(3)
             r = c.get(f"{base}/console/api/workspaces/current/plugin/list",
                       params={"page": 1, "page_size": 50})
             if r.status_code == 200:
                 for p in r.json().get("data", {}).get("list", []):
                     if "ollama" in str(p.get("plugin_id", "")).lower():
-                        return {"ok": True, "installed": True, "task_id": task_id}
+                        return {"ok": True, "installed": True,
+                                "task_id": task_id, "pkg_id": pkg_id}
         return {"ok": False, "error": "timeout waiting for ollama plugin install",
-                "task_id": task_id}
+                "task_id": task_id, "pkg_id": pkg_id}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
