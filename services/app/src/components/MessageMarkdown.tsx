@@ -73,9 +73,12 @@ export function MessageMarkdown({ content }: { content: string }) {
               codeChild && typeof codeChild === "object" && "props" in codeChild
                 ? (codeChild as { props: { className?: string; children?: unknown } }).props
                 : { className: "", children: "" };
-            const lang = (codeProps.className || "")
-              .replace(/^language-/, "")
-              .replace(/\s.*$/, "") || "text";
+            // className peut contenir plusieurs classes ("hljs language-python")
+            // → on cherche celle qui commence par "language-"
+            const langClass = (codeProps.className || "")
+              .split(/\s+/)
+              .find((c) => c.startsWith("language-"));
+            const lang = langClass ? langClass.replace("language-", "") : "text";
             const raw = extractText(codeProps.children).replace(/\n$/, "");
             return (
               <div className="relative my-3 rounded-md overflow-hidden border border-border bg-background/60">
