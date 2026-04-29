@@ -1,0 +1,125 @@
+"use client";
+
+/**
+ * Rendu Markdown pour les messages assistant.
+ *
+ * - GFM (tables, strikethrough, task lists)
+ * - Code blocks avec syntax highlighting (highlight.js via rehype-highlight)
+ * - Bouton "Copier" sur chaque code block
+ * - Liens en target="_blank" + rel="noopener noreferrer"
+ *
+ * Le thème highlight.js est importé dans globals.css.
+ */
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import { Check, Copy } from "lucide-react";
+import { useState, type ComponentProps } from "react";
+
+function CodeBlock({ children, className }: { children: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const lang = (className || "").replace(/^language-/, "") || "text";
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(children);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch { /* noop */ }
+  }
+
+  return (
+    <div className="relative group my-3 rounded-md overflow-hidden border border-border bg-background/60">
+      <div className="flex items-center justify-between px-3 py-1 text-[11px] text-muted bg-muted/10 border-b border-border">
+        <span>{lang}</span>
+        <button
+          onClick={copy}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted/30 transition-default"
+          title="Copier"
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? "Copié" : "Copier"}
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3 text-xs leading-relaxed">
+        <code className={className}>{children}</code>
+      </pre>
+    </div>
+  );
+}
+
+export function MessageMarkdown({ content }: { content: string }) {
+  return (
+    <div className="prose-chat">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        components={{
+          // Code block standalone (avec ```lang)
+          pre: ({ children }: ComponentProps<"pre">) => {
+            // Cherche l'enfant <code> pour extraire son texte + className
+            const codeChild = Array.isArray(children) ? children[0] : children;
+            const codeProps =
+              codeChild && typeof codeChild === "object" && "props" in codeChild
+                ? (codeChild as { props: { children?: unknown; className?: string } }).props
+                : { children: "", className: "" };
+            const text = String(codeProps.children ?? "");
+            return <CodeBlock className={codeProps.className}>{text}</CodeBlock>;
+          },
+          // Code inline (`foo`)
+          code: ({ children, className, ...rest }: ComponentProps<"code">) => {
+            // Si className=language-... → géré par <pre> ci-dessus, on rend brut
+            if (className?.startsWith("language-")) {
+              return <code className={className} {...rest}>{children}</code>;
+            }
+            return (
+              <code
+                className="px-1 py-0.5 rounded bg-muted/30 text-[0.9em] font-mono"
+                {...rest}
+              >
+                {children}
+              </code>
+            );
+          },
+          // Liens externes en nouvel onglet
+          a: ({ children, href, ...rest }: ComponentProps<"a">) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+              {...rest}
+            >
+              {children}
+            </a>
+          ),
+          table: ({ children, ...rest }: ComponentProps<"table">) => (
+            <div className="my-3 overflow-x-auto">
+              <table
+                className="w-full text-xs border border-border rounded"
+                {...rest}
+              >
+                {children}
+              </table>
+            </div>
+          ),
+          th: ({ children, ...rest }: ComponentProps<"th">) => (
+            <th
+              className="px-2 py-1 text-left bg-muted/20 border-b border-border font-medium"
+              {...rest}
+            >
+              {children}
+            </th>
+          ),
+          td: ({ children, ...rest }: ComponentProps<"td">) => (
+            <td className="px-2 py-1 border-b border-border/50" {...rest}>
+              {children}
+            </td>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}

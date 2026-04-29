@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme syntax highlighting (highlight.js) — adapté au dark mode AI Box */
+@import "highlight.js/styles/github-dark.css";
+
 /* Theme dark par défaut, brandable via variables CSS injectées par le serveur */
 :root {
   --background: 222 16% 9%;        /* #0f1115 */
@@ -41,3 +44,34 @@ input, button, textarea, select {
 .transition-default {
   transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Styles prose pour le rendu markdown des messages assistant.
+   On reste sobre : pas de @tailwindcss/typography (1 dep en moins),
+   on définit nos propres règles minimales. */
+.prose-chat {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.prose-chat > * + * { margin-top: 0.65rem; }
+.prose-chat h1 { font-size: 1.25rem; font-weight: 600; margin-top: 1rem; }
+.prose-chat h2 { font-size: 1.1rem;  font-weight: 600; margin-top: 0.85rem; }
+.prose-chat h3 { font-size: 1rem;    font-weight: 600; margin-top: 0.7rem; }
+.prose-chat ul { list-style: disc;     padding-left: 1.4rem; }
+.prose-chat ol { list-style: decimal;  padding-left: 1.4rem; }
+.prose-chat li { margin: 0.15rem 0; }
+.prose-chat blockquote {
+  border-left: 3px solid hsl(var(--border));
+  padding-left: 0.8rem;
+  color: hsl(var(--muted));
+  font-style: italic;
+}
+.prose-chat hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 0.8rem 0;
+}
+.prose-chat strong { font-weight: 600; }
+.prose-chat p { margin: 0; }
+/* highlight.js — fond transparent (le wrapper code-block a déjà son fond) */
+.prose-chat pre code.hljs,
+.hljs { background: transparent !important; padding: 0 !important; }
