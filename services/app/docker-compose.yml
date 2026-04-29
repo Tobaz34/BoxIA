@@ -14,28 +14,41 @@ services:
       context: .
     container_name: aibox-app
     restart: unless-stopped
-    ports:
-      - "${APP_PORT:-3100}:3000"
+    # network_mode: host = le container partage le namespace réseau de l'hôte.
+    # Avantage : il joint TOUS les services via localhost:<port> et l'IP LAN
+    # du serveur (pas de hairpin Docker, pas de DNS interne incohérent).
+    # Inconvénient : pas d'isolation réseau.
+    network_mode: host
     volumes:
       # Pour interroger les containers (statut connecteurs)
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
+      # En host mode, on doit dire à Next.js d'écouter sur le port custom
+      PORT: "${APP_PORT:-3100}"
+      HOSTNAME: "0.0.0.0"
+
       # ---- NextAuth ----
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3100}
       NEXTAUTH_SECRET: ${APP_NEXTAUTH_SECRET}
 
       # ---- Authentik OIDC ----
-      AUTHENTIK_ISSUER: ${AUTHENTIK_APP_ISSUER:-http://aibox-authentik-server:9000/application/o/aibox-app/}
+      # En host mode, localhost:9000 = le port mappé par Authentik
+      AUTHENTIK_ISSUER: ${AUTHENTIK_APP_ISSUER:-http://localhost:9000/application/o/aibox-app/}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_APP_CLIENT_ID:-aibox-app}
       AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_APP_CLIENT_SECRET}
 
-      # ---- Backend services ----
-      DIFY_BASE_URL: http://aibox-dify-nginx:80
-      N8N_BASE_URL: http://n8n:5678
-      OWUI_BASE_URL: http://open-webui:8080
-      PROMETHEUS_URL: http://aibox-prometheus:9090
-      AUTHENTIK_API_URL: http://aibox-authentik-server:9000
+      # ---- Backend services (via ports host-mapped) ----
+      DIFY_BASE_URL: http://localhost:8081
+      N8N_BASE_URL: http://localhost:5678
+      OWUI_BASE_URL: http://localhost:3000
+      PROMETHEUS_URL: http://localhost:9090
+      AUTHENTIK_API_URL: http://localhost:9000
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
+
+      # Clé API d'un agent Dify "par défaut" (créé au wizard).
+      # Si vide, /api/chat répondra 503 et le front affichera un message
+      # invitant à créer un assistant.
+      DIFY_DEFAULT_APP_API_KEY: ${DIFY_DEFAULT_APP_API_KEY:-}
 
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}
@@ -44,16 +57,3 @@ services:
       BRAND_ACCENT_COLOR: ${BRAND_ACCENT_COLOR:-#10b981}
       BRAND_FOOTER_TEXT: ${BRAND_FOOTER_TEXT:-}
       CLIENT_NAME: ${CLIENT_NAME:-}
-    networks:
-      - aibox_net
-      - ollama_net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-networks:
-  aibox_net:
-    name: ${NETWORK_NAME:-aibox_net}
-    external: true
-  ollama_net:
-    name: ollama_net
-    external: true

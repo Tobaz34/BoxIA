@@ -383,6 +383,134 @@ def setup_dify_admin(env: dict[str, str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Dify : agent par défaut + clé API (pour brancher l'app aibox sur Dify)
+# ---------------------------------------------------------------------------
+def _dify_login(base: str, email: str, password: str) -> tuple[str, str] | None:
+    """Login console Dify → renvoie (access_token, refresh_token) ou None."""
+    try:
+        with httpx.Client(timeout=10) as c:
+            r = c.post(
+                f"{base}/console/api/login",
+                json={"email": email, "password": password, "language": "fr-FR",
+                      "remember_me": True},
+            )
+            if r.status_code != 200:
+                log.warning("Dify login HTTP %s : %s", r.status_code, r.text[:200])
+                return None
+            data = r.json().get("data", {}) or r.json()
+            tok = data.get("access_token")
+            rtok = data.get("refresh_token", "")
+            if not tok:
+                return None
+            return (tok, rtok)
+    except Exception as e:
+        log.warning("Dify login error: %s", e)
+        return None
+
+
+def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
+    """Provisionne (ou retrouve) un agent Dify "par défaut" et renvoie sa clé API.
+
+    Étapes :
+      1. Login console avec ADMIN_EMAIL / ADMIN_PASSWORD
+      2. Liste des apps existantes ; si "Assistant général" existe → réutilise
+         son ID. Sinon → POST /console/api/apps pour le créer (mode=chat)
+      3. POST /console/api/apps/{id}/api-keys → récupère la clé "app-..."
+      4. Écrit DIFY_DEFAULT_APP_API_KEY=... dans /srv/ai-stack/.env (idempotent)
+
+    Idempotent : si l'app existe déjà avec une clé valide, ne recrée rien.
+    """
+    base = "http://aibox-dify-nginx:80"
+    email = env.get("ADMIN_EMAIL", "")
+    pwd = env.get("ADMIN_PASSWORD", "")
+    if not email or not pwd:
+        return {"ok": False, "error": "ADMIN_EMAIL / ADMIN_PASSWORD requis"}
+
+    login = _dify_login(base, email, pwd)
+    if not login:
+        return {"ok": False, "error": "login Dify impossible (admin pas encore créé ?)"}
+    access_tok, _refresh = login
+    auth_headers = {"Authorization": f"Bearer {access_tok}"}
+
+    APP_NAME = "Assistant général"
+
+    try:
+        with httpx.Client(timeout=15, headers=auth_headers) as c:
+            # 1. Cherche l'app par nom
+            app_id: str | None = None
+            r = c.get(f"{base}/console/api/apps", params={"page": 1, "limit": 50})
+            if r.status_code == 200:
+                for app in r.json().get("data", []):
+                    if app.get("name") == APP_NAME:
+                        app_id = app.get("id")
+                        break
+
+            # 2. Sinon, crée l'app (mode chat = chatbot simple)
+            if not app_id:
+                r = c.post(
+                    f"{base}/console/api/apps",
+                    json={
+                        "name": APP_NAME,
+                        "mode": "chat",
+                        "icon_type": "emoji",
+                        "icon": "🤖",
+                        "icon_background": "#FFEAD5",
+                        "description": "Assistant par défaut de la AI Box (créé automatiquement).",
+                    },
+                )
+                if r.status_code not in (200, 201):
+                    return {"ok": False, "step": "create_app",
+                            "status": r.status_code, "body": r.text[:300]}
+                app_id = r.json().get("id")
+                if not app_id:
+                    return {"ok": False, "error": "no app id returned"}
+
+            # 3. Liste des clés API existantes ; sinon en crée une
+            api_key: str | None = None
+            r = c.get(f"{base}/console/api/apps/{app_id}/api-keys")
+            if r.status_code == 200:
+                keys = r.json().get("data", [])
+                if keys:
+                    # On a une clé mais Dify ne renvoie le token complet qu'à la création.
+                    # Si la clé existe déjà, on doit en créer une nouvelle pour avoir le token.
+                    api_key = keys[0].get("token")  # peut être tronqué (****abcd)
+                    if api_key and api_key.startswith("app-") and "*" not in api_key:
+                        pass  # on a la vraie clé
+                    else:
+                        api_key = None  # force creation
+
+            if not api_key:
+                r = c.post(f"{base}/console/api/apps/{app_id}/api-keys", json={})
+                if r.status_code not in (200, 201):
+                    return {"ok": False, "step": "create_key",
+                            "status": r.status_code, "body": r.text[:300]}
+                api_key = r.json().get("token")
+                if not api_key:
+                    return {"ok": False, "error": "no token returned"}
+
+        # 4. Écrit la clé dans /srv/ai-stack/.env (montage host)
+        env_path = Path("/srv/ai-stack/.env")
+        if env_path.exists():
+            txt = env_path.read_text()
+            if "DIFY_DEFAULT_APP_API_KEY=" in txt:
+                # Remplace ligne existante
+                lines = []
+                for line in txt.splitlines():
+                    if line.startswith("DIFY_DEFAULT_APP_API_KEY="):
+                        lines.append(f"DIFY_DEFAULT_APP_API_KEY={api_key}")
+                    else:
+                        lines.append(line)
+                env_path.write_text("\n".join(lines) + "\n")
+            else:
+                with env_path.open("a") as f:
+                    f.write(f"\nDIFY_DEFAULT_APP_API_KEY={api_key}\n")
+
+        return {"ok": True, "app_id": app_id, "api_key_prefix": api_key[:10] + "…"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # n8n : compte owner local via API
 # ---------------------------------------------------------------------------
 def _resolve_n8n_url(host: str) -> list[str]:
@@ -490,11 +618,19 @@ def setup_uptime_kuma_admin(env: dict[str, str], host: str = "") -> dict[str, An
 # ---------------------------------------------------------------------------
 def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
     """Exécute tous les provisioning. Renvoie un rapport par app."""
+    dify_admin = setup_dify_admin(env)
+    # On ne provisionne l'agent par défaut que si l'admin Dify est OK
+    # (sinon le login console échouerait).
+    dify_agent: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
+    if dify_admin.get("ok"):
+        dify_agent = setup_dify_default_agent(env)
+
     return {
-        "aibox_app":  setup_aibox_app_oidc(env, host),
-        "open_webui": setup_owui_oidc(env, host),
-        "dify":       setup_dify_admin(env),
-        "n8n":        setup_n8n_owner(env, host),
-        "portainer":  setup_portainer_admin(env, host),
+        "aibox_app":   setup_aibox_app_oidc(env, host),
+        "open_webui":  setup_owui_oidc(env, host),
+        "dify":        dify_admin,
+        "dify_agent":  dify_agent,
+        "n8n":         setup_n8n_owner(env, host),
+        "portainer":   setup_portainer_admin(env, host),
         "uptime_kuma": setup_uptime_kuma_admin(env, host),
     }
