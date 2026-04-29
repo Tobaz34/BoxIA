@@ -23,6 +23,7 @@ import { useSession } from "next-auth/react";
 import { ConversationsList, type Conversation } from "./ConversationsList";
 import { AgentPicker, type AgentMeta } from "./AgentPicker";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { MessageSources, type RetrieverResource } from "./MessageSources";
 
 type Role = "user" | "assistant";
 interface Message {
@@ -31,6 +32,7 @@ interface Message {
   content: string;
   difyMessageId?: string;
   feedback?: "like" | "dislike" | null;
+  sources?: RetrieverResource[];
   createdAt: number;
 }
 
@@ -164,6 +166,9 @@ export function Chat() {
           content: m.answer || "",
           difyMessageId: m.id,
           feedback: m.feedback?.rating || null,
+          sources: Array.isArray(m.retriever_resources)
+            ? (m.retriever_resources as RetrieverResource[])
+            : undefined,
           createdAt: t,
         });
       }
@@ -330,6 +335,18 @@ export function Chat() {
                       : x,
                   ),
                 );
+              } else if (data.event === "message_end") {
+                // Sources RAG (retriever_resources)
+                const rr = data?.metadata?.retriever_resources;
+                if (Array.isArray(rr) && rr.length > 0) {
+                  setMessages((m) =>
+                    m.map((x) =>
+                      x.id === asstMsg.id
+                        ? { ...x, sources: rr as RetrieverResource[] }
+                        : x,
+                    ),
+                  );
+                }
               } else if (data.event === "error") {
                 setError(data.message || "Erreur Dify");
               }
@@ -503,6 +520,10 @@ export function Chat() {
                           <div className="whitespace-pre-wrap">{m.content}</div>
                         )}
                       </div>
+
+                      {m.role === "assistant" && m.sources && m.sources.length > 0 && (
+                        <MessageSources sources={m.sources} />
+                      )}
 
                       {m.role === "assistant" && m.content && !(streaming && isLast) && (
                         <div className="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-default">
