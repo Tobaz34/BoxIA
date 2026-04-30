@@ -1,0 +1,37 @@
+name: aibox-conn-import-fec
+
+services:
+  fec:
+    build: .
+    image: aibox-conn-fec:0.1.0
+    container_name: aibox-conn-fec
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8091:8000"
+    environment:
+      FEC_TOOL_API_KEY: ${FEC_TOOL_API_KEY:?FEC_TOOL_API_KEY required}
+      FEC_MAX_FILE_MB: ${FEC_MAX_FILE_MB:-100}
+      FEC_DATA_DIR: /data
+      TENANT_ID: ${CLIENT_NAME:-default}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - fec_data:/data
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 512m
+    mem_reservation: 64m
+
+volumes:
+  fec_data:
+    name: aibox_conn_fec_data
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

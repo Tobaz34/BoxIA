@@ -138,3 +138,94 @@ def reply_ticket(
         "is_private": 1 if body.private else 0,
     }}
     return call("POST", "/TicketFollowup", json=payload)
+
+
+@app.get("/tickets/{ticket_id}")
+def get_ticket(
+    ticket_id: int,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    auth(authorization)
+    return call("GET", f"/Ticket/{ticket_id}", params={"expand_dropdowns": "true"})
+
+
+# ===========================================================================
+# Use case "tickets en retard SLA"
+# ===========================================================================
+
+@app.get("/tickets/sla_overdue")
+def list_sla_overdue(
+    days: int = 7,
+    authorization: Annotated[str | None, Header()] = None,
+) -> list[dict]:
+    """Tickets ouverts (status 1=New, 2=Pending, 5=Open, 6=Waiting) plus vieux que N jours.
+
+    GLPI ne fournit pas de "SLA breached" en API simple — on calcule avec date d'ouverture.
+    Pour vraie SLA breach, utiliser searchOptions[SLA].
+    """
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    # GLPI search v2 : criteria
+    params = {
+        "range": "0-49",
+        "expand_dropdowns": "true",
+        "criteria[0][link]": "AND",
+        "criteria[0][field]": "12",  # status
+        "criteria[0][searchtype]": "morethan",
+        "criteria[0][value]": "0",
+        # Filtrer status ouverts (1, 2, 5, 6 — pas 3=Solved, 4=Closed)
+        "criteria[1][link]": "AND",
+        "criteria[1][field]": "12",
+        "criteria[1][searchtype]": "lessthan",
+        "criteria[1][value]": "3",
+        # Date opening avant cutoff
+        "criteria[2][link]": "AND",
+        "criteria[2][field]": "15",  # date opening
+        "criteria[2][searchtype]": "lessthan",
+        "criteria[2][value]": cutoff,
+    }
+    res = call("GET", "/search/Ticket", params=params)
+    if not isinstance(res, dict):
+        return []
+    return res.get("data", [])
+
+
+@app.get("/searchOptions")
+def search_options(
+    item_type: str = "Ticket",
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    """Renvoie la liste des champs searchables par GLPI pour un item type.
+
+    Utile pour debug + savoir quel field (ID numérique) utiliser dans /search/Ticket.
+    Référence : https://github.com/glpi-project/glpi/blob/main/src/Ticket.php
+    """
+    auth(authorization)
+    return call("GET", f"/listSearchOptions/{item_type}")
+
+
+# ===========================================================================
+# Stats : tickets par catégorie / status / urgence (dashboard)
+# ===========================================================================
+
+@app.get("/stats/by_status")
+def stats_by_status(authorization: Annotated[str | None, Header()] = None) -> dict:
+    auth(authorization)
+    out: dict[str, int] = {}
+    STATUS_LABELS = {
+        1: "Nouveau", 2: "En cours", 3: "Résolu", 4: "Clos", 5: "Ouvert", 6: "En attente",
+    }
+    for status_id, label in STATUS_LABELS.items():
+        params = {
+            "range": "0-0",
+            "criteria[0][field]": "12",
+            "criteria[0][searchtype]": "equals",
+            "criteria[0][value]": str(status_id),
+        }
+        try:
+            res = call("GET", "/search/Ticket", params=params)
+            if isinstance(res, dict):
+                out[label] = res.get("totalcount", 0)
+        except Exception:
+            out[label] = 0
+    return out

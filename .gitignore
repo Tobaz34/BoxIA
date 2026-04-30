@@ -67,3 +67,8 @@ memory/
 # Exception : exclure pycache de services/memory
 services/memory/**/__pycache__/
 services/memory/**/*.pyc
+
+# pycache des nouveaux connecteurs
+services/connectors/**/__pycache__/
+services/connectors/**/*.pyc
+services/connectors/**/.pytest_cache/

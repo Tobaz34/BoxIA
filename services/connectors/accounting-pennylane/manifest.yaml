@@ -1,0 +1,16 @@
+id: accounting_pennylane
+name: "Compta Pennylane"
+category: accounting
+description: "Lecture factures clients/fournisseurs, suivi impayés, dashboards CA via API REST Pennylane"
+status: implemented
+
+required_env:
+  - PENNYLANE_TOKEN          # Bearer (Settings > API & Webhooks > New Application)
+  - PENNYLANE_TOOL_API_KEY   # Bearer pour authentifier Dify→ce service
+optional_env:
+  - PENNYLANE_BASE_URL       # défaut: https://app.pennylane.com/api/external/v1
+  - SYNC_INTERVAL_MINUTES    # défaut: 60 (pour scheduler impayés)
+
+triggered_by_questionnaire:
+  question: comptabilite
+  values: ["pennylane"]

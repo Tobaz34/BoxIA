@@ -84,6 +84,17 @@ services:
       DIFY_KB_API_KEY:                 ${DIFY_KB_API_KEY:-}
       DIFY_DEFAULT_DATASET_ID:         ${DIFY_DEFAULT_DATASET_ID:-}
 
+      # ---- Mémoire long-terme (mem0 sidecar, optionnel) ----
+      # Si MEM0_API_KEY défini : injecte les facts dans le 1er prompt de
+      # chaque conversation + sauvegarde l'échange en background.
+      # Si vide : feature désactivée silencieusement (pas d'erreur).
+      MEM0_API_KEY:                    ${MEM0_API_KEY:-}
+      MEM0_BASE_URL:                   ${MEM0_BASE_URL:-http://aibox-mem0:8000}
+
+      # ---- Agents autonomes sidecar (optionnel) ----
+      AGENTS_API_KEY:                  ${AGENTS_API_KEY:-}
+      AGENTS_BASE_URL:                 ${AGENTS_BASE_URL:-http://aibox-agents:8000}
+
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}
       BRAND_LOGO_URL: ${BRAND_LOGO_URL:-}

@@ -6,6 +6,12 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, difyFetch, DIFY_BASE_URL } from "@/lib/dify";
+import {
+  addUserMemory,
+  formatMemoryContext,
+  isMemoryEnabled,
+  searchUserMemory,
+} from "@/lib/memory";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +43,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "empty_query" }, { status: 400 });
   }
 
+  // ----- Mémoire long-terme (mem0) — best-effort, n'échoue jamais -----
+  // Au 1er message d'une nouvelle conversation, on injecte les faits connus
+  // sur le user. Sur les suivants, Dify a déjà le contexte conversationnel.
+  let memoryPrefix = "";
+  if (isMemoryEnabled() && ctx.user && !body.conversation_id) {
+    const facts = await searchUserMemory(ctx.user, query, {
+      agentId: body.agent || "default",
+    });
+    memoryPrefix = formatMemoryContext(facts);
+  }
+  const augmentedQuery = memoryPrefix ? `${memoryPrefix}---\n\n${query}` : query;
+
   const upstream = await fetch(`${DIFY_BASE_URL}/v1/chat-messages`, {
     method: "POST",
     headers: {
@@ -45,7 +63,7 @@ export async function POST(req: NextRequest) {
     },
     body: JSON.stringify({
       inputs: {},
-      query,
+      query: augmentedQuery,
       response_mode: "streaming",
       conversation_id: body.conversation_id || "",
       user: ctx.user,
@@ -64,6 +82,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Tee le stream : un côté pour le client, un côté pour mémoriser la réponse
+  // assistant à la fin (si mémoire activée).
+  if (isMemoryEnabled() && ctx.user) {
+    const [clientStream, captureStream] = upstream.body.tee();
+    void captureAssistantReply(captureStream).then((assistantText) => {
+      if (assistantText) {
+        addUserMemory(ctx.user, body.agent || "default", [
+          { role: "user", content: query },
+          { role: "assistant", content: assistantText },
+        ], { conversation_id: body.conversation_id });
+      }
+    });
+    return new Response(clientStream, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
+
   return new Response(upstream.body, {
     status: 200,
     headers: {
@@ -73,6 +114,43 @@ export async function POST(req: NextRequest) {
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+/**
+ * Lit le stream SSE Dify et reconstitue le texte de la réponse assistant
+ * (concat des `event: message`).
+ */
+async function captureAssistantReply(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let answer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const evt = JSON.parse(payload);
+          if (evt.event === "message" && typeof evt.answer === "string") {
+            answer += evt.answer;
+          }
+        } catch {
+          // ignore malformed
+        }
+      }
+    }
+  } catch {
+    // best-effort
+  }
+  return answer.trim();
 }
 
 // Reference imports to satisfy the linter (difyFetch isn't used here but
