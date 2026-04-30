@@ -70,14 +70,15 @@ deploy_stack() {
   ( cd services/inference && docker compose --env-file "$env_file" up -d ) || \
       c_yellow "    (déjà en cours d'exécution ou conflict avec stack héritée — non bloquant)"
 
-  c_blue "  → Démarrage Edge Caddy..."
-  # --force-recreate : Docker compose ne ré-attache PAS les networks d'un
-  # container existant. Si edge-caddy a été créé une fois avec un seul
-  # network (cas des resets en boucle), un simple up -d le laisse mal-
-  # connecté. force-recreate garantit qu'il pointe sur tous les networks
-  # déclarés dans le compose (aibox_net + ollama_net).
-  ( cd services/edge && docker compose --env-file "$env_file" up -d --force-recreate ) || \
-      c_yellow "    (Caddy non démarré — souvent un conflit de ports avec NPM, à régler après)"
+  # NOTE — Edge Caddy n'est PAS démarré ici. Quand install.sh tourne en
+  # mode wizard (depuis aibox-setup-api), aibox-setup-caddy tient encore
+  # le port 80 → edge-caddy ne peut pas binder et reste créé sans
+  # networking propre, qui contamine ensuite le handoff. C'est le
+  # _HANDOFF_SCRIPT côté setup-api/main.py:configure_finish qui démarre
+  # edge-caddy AVEC --force-recreate après avoir libéré le port 80.
+  # En mode CLI interactif (sans wizard), edge-caddy peut être démarré
+  # manuellement à la fin :  cd services/edge && docker compose up -d
+  c_blue "  → Edge Caddy : démarrage différé au handoff post-wizard"
 
   c_blue "  → Démarrage AI Box App (front unifié)..."
   ( cd services/app && docker compose --env-file "$env_file" up -d --build ) || \

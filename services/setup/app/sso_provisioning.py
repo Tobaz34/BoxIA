@@ -60,21 +60,42 @@ def _ak_admin_token(env: dict[str, str]) -> str | None:
 
 
 def _ak_get_uuids(token: str) -> dict[str, str]:
-    """Récupère les UUIDs de Authentik nécessaires pour créer un Provider OIDC."""
+    """Récupère les UUIDs de Authentik nécessaires pour créer un Provider OIDC.
+
+    Les flows par défaut sont créés par les blueprints Authentik au boot.
+    Sur un fresh install, ils peuvent ne pas être encore présents au moment
+    où provision-sso s'exécute → on retry pendant max 60s avant de raiser.
+    """
+    import time as _t
     H = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     base = f"{AUTHENTIK_INTERNAL}/api/v3"
     out = {}
+    required_flows = [
+        ("default-provider-authorization-implicit-consent", "authz_flow"),
+        ("default-authentication-flow",                     "auth_flow"),
+        ("default-provider-invalidation-flow",              "invalidation_flow"),
+    ]
     with httpx.Client(headers=H, timeout=30) as c:
-        for slug, key in [
-            ("default-provider-authorization-implicit-consent", "authz_flow"),
-            ("default-authentication-flow",                     "auth_flow"),
-            ("default-provider-invalidation-flow",              "invalidation_flow"),
-        ]:
-            r = c.get(f"{base}/flows/instances/", params={"slug": slug})
-            r.raise_for_status()
-            res = r.json().get("results", [])
-            if res:
-                out[key] = res[0]["pk"]
+        # Wait for all flows to exist (max 60s)
+        for attempt in range(30):
+            out = {}
+            for slug, key in required_flows:
+                try:
+                    r = c.get(f"{base}/flows/instances/", params={"slug": slug})
+                    r.raise_for_status()
+                    res = r.json().get("results", [])
+                    if res:
+                        out[key] = res[0]["pk"]
+                except Exception:
+                    pass
+            if all(k in out for _, k in required_flows):
+                break
+            _t.sleep(2)
+        else:
+            missing = [k for _, k in required_flows if k not in out]
+            raise RuntimeError(
+                f"Flows Authentik introuvables après 60s: {missing}"
+            )
 
         # Première clé crypto signing disponible
         r = c.get(f"{base}/crypto/certificatekeypairs/")

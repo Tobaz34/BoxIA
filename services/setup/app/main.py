@@ -568,11 +568,18 @@ subprocess.run([
 # 2. Stop le wizard (libère le port 80). aibox-setup-api se suicidera
 #    avec son sibling — pas grave, la réponse est déjà partie.
 subprocess.run(["docker", "stop", "aibox-setup-caddy"], timeout=30, check=False)
-# 3. Démarre edge-caddy (qui était en `Created` car port 80 était occupé).
+# 3. Démarre edge-caddy avec --force-recreate :
+#    install.sh ne démarre plus edge (port 80 occupé par setup-caddy à
+#    ce moment-là), donc c'est ICI que le container est créé pour la 1re
+#    fois. --force-recreate garantit que tous les networks déclarés dans
+#    le compose (aibox_net + ollama_net) sont bien attachés. Sans ça, un
+#    container pré-existant (cas des cycles reset) garde son ancienne
+#    config réseau et ne peut pas résoudre aibox-authentik-server.
 subprocess.run(
-    ["docker", "compose", "--env-file", "/srv/ai-stack/.env", "up", "-d"],
+    ["docker", "compose", "--env-file", "/srv/ai-stack/.env",
+     "up", "-d", "--force-recreate"],
     cwd="/srv/ai-stack/services/edge",
-    timeout=60, check=False,
+    timeout=120, check=False,
 )
 # 4. Stop setup-api (nous-mêmes). Le service systemd a Condition !configured,
 #    donc il ne se relancera plus.
