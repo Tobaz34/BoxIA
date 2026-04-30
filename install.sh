@@ -84,6 +84,15 @@ deploy_stack() {
   ( cd services/app && docker compose --env-file "$env_file" up -d --build ) || \
       c_yellow "    (App non démarrée — sera relancée par le wizard après provisioning OIDC)"
 
+  c_blue "  → Démarrage n8n (workflow automation)..."
+  ( cd services/n8n && docker compose --env-file "$env_file" up -d ) || \
+      c_yellow "    (n8n non démarré — workflows non disponibles)"
+
+  c_blue "  → Démarrage Monitoring (Prometheus + Grafana + Loki + DCGM)..."
+  # DCGM nécessite GPU NVIDIA — démarre quand même sans pour Prometheus seul.
+  ( cd services/monitoring && docker compose --env-file "$env_file" up -d ) || \
+      c_yellow "    (Monitoring partiellement démarré — métriques /system page peuvent être vides)"
+
   # Démarre la stack héritée (n8n, Portainer, Uptime Kuma, NPM, Duplicati, Dashy)
   # si elle existe sur l'hôte. Important pour que le provisioning des comptes
   # n8n/Portainer fonctionne après reset.

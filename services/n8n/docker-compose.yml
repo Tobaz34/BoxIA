@@ -1,0 +1,57 @@
+# =============================================================================
+# AI Box — n8n (workflow automation)
+# =============================================================================
+# n8n permet d'automatiser des tâches : digest matin emails, relance factures,
+# sync data entre apps. Les workflows sont importés au wizard depuis
+# templates/n8n/ selon les technos cochées par le client.
+#
+# Le user/password admin est créé au 1er accès (sso_provisioning.setup_n8n).
+# n8n écoute sur :5678 (binding 0.0.0.0 pour que aibox-app en network_mode:
+# host puisse y accéder via localhost:5678 ET pour qu'un user puisse y
+# accéder direct via http://<box>:5678 en debug).
+# =============================================================================
+
+name: aibox-n8n
+
+services:
+  n8n:
+    image: n8nio/n8n:1.71.3
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # Clé pour chiffrer les credentials stockés (à conserver en cas de reset).
+      # Utilise DIFY_SECRET_KEY pour ne pas dupliquer un secret.
+      N8N_ENCRYPTION_KEY: ${DIFY_SECRET_KEY}
+      # n8n par défaut bind sur 127.0.0.1 → on force 0.0.0.0 pour le LAN
+      N8N_HOST: "0.0.0.0"
+      N8N_PORT: 5678
+      # Path public — utilisé pour générer les liens dans les emails workflow.
+      # En LAN : http://<box>:5678
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-}
+      # Désactive le double-prompt password de la 1re visite — le
+      # provisioning crée le compte owner via API à l'install.
+      N8N_BASIC_AUTH_ACTIVE: "false"
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Paris}
+      # Healthcheck endpoint
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  n8n_data:
+    name: aibox_n8n_data
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
