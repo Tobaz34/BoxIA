@@ -19,6 +19,11 @@
 {
     email {$ACME_EMAIL}
     acme_ca {$ACME_CA}
+    # En mode LAN/dev : on désactive l'auto-redirect http→https pour
+    # que les utilisateurs puissent accéder à l'app sans avoir à
+    # accepter le warning de cert auto-signé. En prod (Let's Encrypt),
+    # commenter cette ligne pour réactiver le redirect HTTPS-only.
+    auto_https disable_redirects
     servers {
         protocols h1 h2 h3
     }
@@ -33,28 +38,25 @@
     # }
 }
 
-# ----- Healthcheck (HTTP simple) -------------------------------------------
-:80 {
-    @healthz path /healthz
-    handle @healthz {
-        respond "OK" 200
-    }
-    redir https://{host}{uri} permanent
-}
-
 # ----- App principale AI Box (Next.js) — landing -------------------------
 # aibox-app tourne en network_mode: host → on ne peut pas l'atteindre par DNS
 # Docker. On utilise host.docker.internal qui pointe vers l'host (extra_hosts
 # configuré dans docker-compose.yml).
-{$DOMAIN} {
+#
+# `http://...` ET `{$DOMAIN}` (= https) servent tous les deux le même contenu
+# pour permettre l'accès facile sans warning de cert sur LAN.
+http://{$DOMAIN}, {$DOMAIN} {
     encode zstd gzip
+    @healthz path /healthz
+    handle @healthz {
+        respond "OK" 200
+    }
     reverse_proxy host.docker.internal:3100 {
         flush_interval -1
         header_up Host {host}
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto {scheme}
     }
-    # WebSocket (NextAuth long-poll, futur SSE chat)
     @websocket {
         header Connection *Upgrade*
         header Upgrade websocket
@@ -65,7 +67,7 @@
 }
 
 # ----- Authentik (SSO) -----------------------------------------------------
-auth.{$DOMAIN} {
+http://auth.{$DOMAIN}, auth.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy aibox-authentik-server:9000 {
         flush_interval -1
@@ -76,7 +78,7 @@ auth.{$DOMAIN} {
 }
 
 # ----- Dify (agent builder console) ----------------------------------------
-agents.{$DOMAIN} {
+http://agents.{$DOMAIN}, agents.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy aibox-dify-nginx:80 {
         flush_interval -1
@@ -87,7 +89,7 @@ agents.{$DOMAIN} {
 }
 
 # ----- Open WebUI (chat utilisateur alternatif) ----------------------------
-chat.{$DOMAIN} {
+http://chat.{$DOMAIN}, chat.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy open-webui:8080 {
         flush_interval -1
@@ -102,7 +104,7 @@ chat.{$DOMAIN} {
 }
 
 # ----- n8n (workflows) -----------------------------------------------------
-flows.{$DOMAIN} {
+http://flows.{$DOMAIN}, flows.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy n8n:5678 {
         flush_interval -1
@@ -117,7 +119,7 @@ flows.{$DOMAIN} {
 }
 
 # ----- Portainer (admin Docker) --------------------------------------------
-admin.{$DOMAIN} {
+http://admin.{$DOMAIN}, admin.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy https://portainer:9443 {
         transport http {
@@ -129,7 +131,7 @@ admin.{$DOMAIN} {
 }
 
 # ----- Uptime Kuma (monitoring uptime) -------------------------------------
-status.{$DOMAIN} {
+http://status.{$DOMAIN}, status.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy uptime-kuma:3001 {
         flush_interval -1
@@ -137,7 +139,7 @@ status.{$DOMAIN} {
 }
 
 # ----- Qdrant dashboard (RAG debug, admin only) ----------------------------
-qdrant.{$DOMAIN} {
+http://qdrant.{$DOMAIN}, qdrant.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy aibox-qdrant:6333
     import authentik_proxy
