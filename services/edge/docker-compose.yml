@@ -32,12 +32,16 @@ services:
       - "${EDGE_HTTPS_PORT:-443}:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data           # certs Let's Encrypt + state ACME
+      - caddy_data:/data           # certs Let's Encrypt + state ACME (et local CA)
       - caddy_config:/config
     environment:
       DOMAIN: ${DOMAIN}
       ACME_EMAIL: ${ADMIN_EMAIL}
       ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+    # aibox-app tourne en network_mode: host (port 3100 sur l'host) → on
+    # doit pouvoir l'atteindre depuis le container Caddy via host-gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - aibox_net
       - ollama_net   # pour proxifier open-webui qui est sur l'ancien net

@@ -1,24 +1,30 @@
 # =============================================================================
 # AI Box — Caddy reverse proxy
 # =============================================================================
-# Sous-domaines : auth, chat, agents, flows, admin, status, qdrant
-# Lecture des envvars : {$DOMAIN}, {$ACME_EMAIL}
+# Sous-domaines exposés derrière HTTPS :
+#   - {$DOMAIN}              → aibox-app (Next.js, network_mode: host)
+#   - auth.{$DOMAIN}         → Authentik
+#   - agents.{$DOMAIN}       → Dify (console builder)
+#   - flows.{$DOMAIN}        → n8n
+#   - chat.{$DOMAIN}         → Open WebUI
+#   - admin.{$DOMAIN}        → Portainer
+#   - status.{$DOMAIN}       → Uptime Kuma
+#   - qdrant.{$DOMAIN}       → Qdrant dashboard
+#
+# Mode TLS :
+#   - DOMAIN public + ACME_EMAIL → Let's Encrypt (acme_ca par défaut = LE prod)
+#   - DOMAIN local (.local) + ACME_CA=internal → cert auto-signé Caddy local CA
 # =============================================================================
 
 {
-    # Email pour Let's Encrypt (les certs publics)
     email {$ACME_EMAIL}
-    # CA endpoint paramétrable (LE production par défaut, staging pour tests)
     acme_ca {$ACME_CA}
-    # Server header propre
     servers {
         protocols h1 h2 h3
     }
 }
 
-# ----- Snippet : forward auth via Authentik (futur) ------------------------
-# Pour protéger des admin tools (Portainer, Qdrant…) derrière un login Authentik.
-# À activer plus tard quand Authentik aura un outpost configuré.
+# ----- Snippet : forward auth Authentik (à activer plus tard) ---------------
 (authentik_proxy) {
     # forward_auth aibox-authentik-server:9000 {
     #     uri /outpost.goauthentik.io/auth/caddy
@@ -27,15 +33,35 @@
     # }
 }
 
-# ----- Healthcheck (sans TLS, IP/localhost) --------------------------------
+# ----- Healthcheck (HTTP simple) -------------------------------------------
 :80 {
     @healthz path /healthz
     handle @healthz {
         respond "OK" 200
     }
-
-    # Tout le reste sur :80 → redirect HTTPS (sauf si DOMAIN absent / dev pur)
     redir https://{host}{uri} permanent
+}
+
+# ----- App principale AI Box (Next.js) — landing -------------------------
+# aibox-app tourne en network_mode: host → on ne peut pas l'atteindre par DNS
+# Docker. On utilise host.docker.internal qui pointe vers l'host (extra_hosts
+# configuré dans docker-compose.yml).
+{$DOMAIN} {
+    encode zstd gzip
+    reverse_proxy host.docker.internal:3100 {
+        flush_interval -1
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+    # WebSocket (NextAuth long-poll, futur SSE chat)
+    @websocket {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @websocket {
+        reverse_proxy host.docker.internal:3100
+    }
 }
 
 # ----- Authentik (SSO) -----------------------------------------------------
@@ -49,27 +75,29 @@ auth.{$DOMAIN} {
     }
 }
 
-# ----- Open WebUI (chat utilisateur) ---------------------------------------
+# ----- Dify (agent builder console) ----------------------------------------
+agents.{$DOMAIN} {
+    encode zstd gzip
+    reverse_proxy aibox-dify-nginx:80 {
+        flush_interval -1
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+# ----- Open WebUI (chat utilisateur alternatif) ----------------------------
 chat.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy open-webui:8080 {
         flush_interval -1
     }
-    # WebSocket pour streaming chat
     @websocket {
         header Connection *Upgrade*
         header Upgrade websocket
     }
     handle @websocket {
         reverse_proxy open-webui:8080
-    }
-}
-
-# ----- Dify (agent builder) ------------------------------------------------
-agents.{$DOMAIN} {
-    encode zstd gzip
-    reverse_proxy aibox-dify-nginx:80 {
-        flush_interval -1
     }
 }
 
@@ -100,7 +128,7 @@ admin.{$DOMAIN} {
     import authentik_proxy
 }
 
-# ----- Uptime Kuma (statut services) ---------------------------------------
+# ----- Uptime Kuma (monitoring uptime) -------------------------------------
 status.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy uptime-kuma:3001 {
@@ -108,16 +136,9 @@ status.{$DOMAIN} {
     }
 }
 
-# ----- Qdrant dashboard (debug RAG) ----------------------------------------
+# ----- Qdrant dashboard (RAG debug, admin only) ----------------------------
 qdrant.{$DOMAIN} {
     encode zstd gzip
     reverse_proxy aibox-qdrant:6333
     import authentik_proxy
-}
-
-# ----- Page d'accueil (catch-all) ------------------------------------------
-{$DOMAIN} {
-    encode zstd gzip
-    # Redirige vers le dashboard apps Authentik (qui montre les apps autorisées)
-    redir https://auth.{$DOMAIN}/if/user/ permanent
 }
