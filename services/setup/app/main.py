@@ -185,11 +185,28 @@ async def configure(payload: WizardSubmit):
     def shell_escape(s: str) -> str:
         return "'" + s.replace("'", "'\"'\"'") + "'"
 
+    # Mode LAN (.local) ou prod selon le domaine choisi.
+    #   .local  → Caddy edge avec certs internes auto-signés, NextAuth doit
+    #             tolérer le cert auto-signé pour son back-channel server→server.
+    #   public  → Let's Encrypt prod, certs valides.
+    is_lan_mdns = payload.domain.endswith(".local")
+    if is_lan_mdns:
+        domain_prefix = payload.domain.removesuffix(".local") or "aibox"
+        acme_ca = "internal"
+        allow_self_signed = "1"
+    else:
+        domain_prefix = "aibox"  # non utilisé sur domaine public, mais défini
+        acme_ca = "letsencrypt prod"
+        allow_self_signed = "0"
+
     env_lines = [
         f'CLIENT_NAME={shell_escape(payload.client_name)}',
         f"CLIENT_SECTOR={payload.client_sector}",
         f"CLIENT_USERS_COUNT={payload.users_count}",
         f"DOMAIN={payload.domain}",
+        f"DOMAIN_PREFIX={domain_prefix}",
+        f"ACME_CA={acme_ca}",
+        f"ALLOW_SELF_SIGNED={allow_self_signed}",
         f"ADMIN_FULLNAME={shell_escape(payload.admin_fullname)}",
         f"ADMIN_USERNAME={payload.admin_username}",
         f"ADMIN_EMAIL={payload.admin_email}",
@@ -377,11 +394,17 @@ async def provision_sso(request: Request):
                 # --env-file pointe vers le .env central (les compose enfants
                 # n'ont pas leur propre .env). Sans cette option, les
                 # ${VARS} restent vides à la recreate.
+                # --build : pour services/app, le code source est build localement
+                # à partir du repo. Sans --build, on ressuscite l'image périmée
+                # entre 2 reset/install (l'image cache contient potentiellement
+                # une version du code qui ne sait pas lire les nouvelles vars
+                # OIDC ou autres). Sur open_webui, l'image est pull (pas build),
+                # le flag est sans effet.
                 subprocess.run(
                     ["docker", "compose", "--env-file", "/srv/ai-stack/.env",
-                     "up", "-d"],
+                     "up", "-d", "--build"],
                     cwd=compose_dir,
-                    capture_output=True, timeout=120,
+                    capture_output=True, timeout=300,
                 )
             except Exception as e:
                 print(f"[provision-sso] compose up failed for {ok_key}: {e}", flush=True)

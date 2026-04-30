@@ -205,6 +205,33 @@ def _dns_resolves(hostname: str) -> bool:
         return False
 
 
+def _service_url(service: str, domain: str) -> tuple[str, str]:
+    """Construit l'URL HTTPS d'un service derrière le edge Caddy.
+
+    Retourne (browser_url, hostname).
+
+    - DOMAIN se termine en `.local` → convention PLATE `<prefix>-<service>.local`
+      (compatible Bonjour Windows mono-label, servie par Caddy edge avec
+      certs auto-signés). Le service `app` (root) sort comme `<prefix>.local`.
+    - DOMAIN public → multi-label `<service>.<domain>` (Caddy + Let's Encrypt).
+    - DOMAIN vide → string vide ; le caller doit fallback sur http://host:port.
+
+    `service` doit être l'un de :  app, auth, agents, flows, chat, admin,
+    status, qdrant. (Les autres sont acceptés mais non garantis servis par
+    Caddy.)
+    """
+    if not domain:
+        return "", ""
+    if domain.endswith(".local"):
+        prefix = domain.removesuffix(".local") or "aibox"
+        host = f"{prefix}.local" if service == "app" else f"{prefix}-{service}.local"
+        return f"https://{host}", host
+    # Domaine public : on suppose que `app` est sur le domaine racine
+    # (ex: DOMAIN=ai.client.fr → app sur https://ai.client.fr).
+    host = domain if service == "app" else f"{service}.{domain}"
+    return f"https://{host}", host
+
+
 def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
     """Crée le provider OIDC pour l'app principale Next.js (services/app).
 
@@ -224,9 +251,13 @@ def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
 
     domain = env.get("DOMAIN", "")
     has_real_domain = bool(domain and domain != "xefia.local" and "." in domain)
-    prod_url = f"https://app.{domain}" if has_real_domain else None
+    is_lan_mdns = has_real_domain and domain.endswith(".local")
+
+    prod_url, prod_dns = _service_url("app", domain) if has_real_domain else ("", "")
     lan_url = f"http://{host}:3100"
-    prod_resolves = bool(prod_url) and _dns_resolves(f"app.{domain}")
+    # `.local` : on fait confiance à mDNS+Caddy au lieu de tester le DNS
+    # (mDNS n'est pas forcément encore up au moment du provisioning).
+    prod_resolves = is_lan_mdns or (bool(prod_dns) and _dns_resolves(prod_dns))
 
     redirect_uris: list[str] = [f"{lan_url}/api/auth/callback/authentik"]
     if prod_url:
@@ -235,7 +266,7 @@ def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
     # URL utilisée par le navigateur pour les redirects login
     if prod_resolves and prod_url:
         active_app_url = prod_url
-        ak_url_browser = f"https://auth.{domain}"
+        ak_url_browser, _ = _service_url("auth", domain)
     else:
         active_app_url = lan_url
         ak_url_browser = f"http://{host}:9000"
@@ -298,7 +329,7 @@ def setup_owui_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
     # OWUI redirige vers <WEBUI_URL>/oauth/oidc/callback
     domain = env.get("DOMAIN", "")
     if domain and domain != "xefia.local":
-        owui_url = f"https://chat.{domain}"
+        owui_url, _ = _service_url("chat", domain)
     else:
         owui_url = f"http://{host}:3000"
 
@@ -340,7 +371,8 @@ def setup_owui_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
 
 def host_provider_url(host: str, domain: str) -> str:
     if domain and domain != "xefia.local":
-        return f"https://auth.{domain}/application/o/open-webui/.well-known/openid-configuration"
+        auth_url, _ = _service_url("auth", domain)
+        return f"{auth_url}/application/o/open-webui/.well-known/openid-configuration"
     return f"http://{host}:9000/application/o/open-webui/.well-known/openid-configuration"
 
 
