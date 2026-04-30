@@ -1,0 +1,15 @@
+[Unit]
+Description=Publish AI Box mDNS aliases (aibox.local + sous-domaines)
+Documentation=https://github.com/Tobaz34/BoxIA/blob/main/docs/ACCESS.md
+After=avahi-daemon.service network-online.target
+Requires=avahi-daemon.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aibox-mdns-publish.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
