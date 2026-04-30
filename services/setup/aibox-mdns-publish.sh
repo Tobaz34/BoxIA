@@ -19,7 +19,12 @@
 
 set -euo pipefail
 
-PREFIX="${AIBOX_PREFIX:-aibox}"
+# Le prefix peut être défini par 2 sources (fallback en cascade) :
+#   1. AIBOX_PREFIX     — override direct (ex: pour tester localement)
+#   2. DOMAIN_PREFIX    — écrit par le wizard dans /srv/ai-stack/.env
+#                         (sourcé via EnvironmentFile dans le service systemd)
+#   3. fallback "aibox" — valeur par défaut consistante avec install-firstrun
+PREFIX="${AIBOX_PREFIX:-${DOMAIN_PREFIX:-aibox}}"
 # Hostnames PLATS (1 label avant .local) pour rester compatibles avec
 # Bonjour Windows qui ne résout pas le mDNS multi-label.
 ALIASES=(

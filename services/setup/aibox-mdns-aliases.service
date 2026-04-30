@@ -7,6 +7,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Lit DOMAIN_PREFIX écrit par le wizard dans /srv/ai-stack/.env. Le `-`
+# rend le fichier optionnel (le service démarre quand même au 1er boot,
+# avant que le wizard ait écrit .env). Quand .env change, redémarrer
+# manuellement : sudo systemctl restart aibox-mdns-aliases.service
+EnvironmentFile=-/srv/ai-stack/.env
 ExecStart=/usr/local/bin/aibox-mdns-publish.sh
 Restart=on-failure
 RestartSec=5
