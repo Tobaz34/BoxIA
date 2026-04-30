@@ -148,3 +148,81 @@ function humanizeSpeechError(code: string): string {
       return `Erreur dictée: ${code}`;
   }
 }
+
+
+// =============================================================================
+// Text-to-Speech (TTS) — lecture vocale des réponses assistant.
+// Utilise speechSynthesis (browser natif, marche partout).
+// =============================================================================
+
+interface UseTTSResult {
+  supported: boolean;
+  speaking: boolean;
+  /** ID du message actuellement lu (utile pour styler le bouton play). */
+  speakingMessageId: string | null;
+  speak: (text: string, messageId: string, lang?: string) => void;
+  stop: () => void;
+}
+
+export function useTTS(): UseTTSResult {
+  const [speaking, setSpeaking] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  const supported =
+    typeof window !== "undefined" && "speechSynthesis" in window;
+
+  const speak = useCallback((text: string, messageId: string, lang = "fr-FR") => {
+    if (!supported) return;
+    // Stop tout ce qui est en cours
+    window.speechSynthesis.cancel();
+
+    // Strip basic markdown for cleaner spoken output (sans plomber le code complexe)
+    const clean = text
+      .replace(/```[\s\S]*?```/g, "(extrait de code)")     // fences
+      .replace(/`([^`]+)`/g, "$1")                          // inline code
+      .replace(/\*\*([^*]+)\*\*/g, "$1")                    // bold
+      .replace(/\*([^*]+)\*/g, "$1")                        // italic
+      .replace(/^#+\s+/gm, "")                              // headers
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")              // links → keep text
+      .replace(/\n{3,}/g, "\n\n");
+
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = lang;
+    u.rate = 1.05;     // un peu plus rapide que défaut, plus naturel
+    u.pitch = 1;
+    // Préfère une voix FR si disponible
+    const voices = window.speechSynthesis.getVoices();
+    const frVoice = voices.find((v) => v.lang.startsWith("fr"))
+                 || voices.find((v) => v.lang.startsWith("fr-FR"));
+    if (frVoice) u.voice = frVoice;
+    u.onend = () => {
+      setSpeaking(false);
+      setSpeakingMessageId(null);
+    };
+    u.onerror = () => {
+      setSpeaking(false);
+      setSpeakingMessageId(null);
+    };
+    utteranceRef.current = u;
+    window.speechSynthesis.speak(u);
+    setSpeaking(true);
+    setSpeakingMessageId(messageId);
+  }, [supported]);
+
+  const stop = useCallback(() => {
+    if (!supported) return;
+    window.speechSynthesis.cancel();
+    setSpeaking(false);
+    setSpeakingMessageId(null);
+  }, [supported]);
+
+  // Cleanup au unmount
+  useEffect(() => {
+    return () => {
+      if (supported) window.speechSynthesis.cancel();
+    };
+  }, [supported]);
+
+  return { supported, speaking, speakingMessageId, speak, stop };
+}

@@ -26,11 +26,11 @@ import { AgentPicker, type AgentMeta } from "./AgentPicker";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageSources, type RetrieverResource } from "./MessageSources";
 import { useUI, setUI } from "@/lib/ui-store";
-import { useSpeech } from "@/lib/use-speech";
+import { useSpeech, useTTS } from "@/lib/use-speech";
 import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu";
 import {
   Plus, RefreshCcw, FileDown, Bot as BotIcon,
-  HelpCircle, Sparkles as SparkIcon,
+  HelpCircle, Sparkles as SparkIcon, Volume2, VolumeX,
 } from "lucide-react";
 
 type Role = "user" | "assistant";
@@ -121,6 +121,8 @@ export function Chat() {
 
   // Voice input (Web Speech API, browser-side, FR par défaut)
   const speech = useSpeech();
+  // Voice output (TTS) — lecture des réponses assistant
+  const tts = useTTS();
   // Quand le transcript change pendant l'écoute, on remplace le contenu
   // du textarea (mode "remplace ce qu'on a dicté", pas append). Si l'user
   // veut combiner texte + voix, il dictera après avoir tapé.
@@ -297,25 +299,49 @@ export function Chat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streaming, suggested]);
 
-  // ----- Raccourcis clavier globaux : Cmd/Ctrl+K nouvelle conv, Esc fermer drawers -----
+  // ----- Raccourcis clavier globaux ----------------------------------
+  // Cmd/Ctrl+K  → nouvelle conversation
+  // Esc         → arrête le streaming en cours (priorité haute)
+  //                puis ferme les drawers mobile
+  // Shift+/     → focus le textarea + insère "/" (ouvre le menu de commandes)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      // Ne pas intercepter si l'utilisateur est en train de taper dans
-      // un input/textarea/select
       const target = e.target as HTMLElement;
       const inField = target?.tagName?.match(/^(INPUT|TEXTAREA|SELECT)$/);
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         newConversation();
-      } else if (e.key === "Escape" && !inField) {
-        // Esc ferme les drawers mobile (gérés par le store global)
-        setUI({ mobileMenuOpen: false, convDrawerOpen: false });
+      } else if (e.key === "Escape") {
+        // 1. Si streaming en cours → arrête le streaming
+        if (abortRef.current) {
+          e.preventDefault();
+          abortRef.current.abort();
+          return;
+        }
+        // 2. Si TTS en cours → stop la lecture
+        if (tts.speaking) {
+          e.preventDefault();
+          tts.stop();
+          return;
+        }
+        // 3. Sinon → ferme les drawers (uniquement hors champ pour ne
+        //    pas casser l'Esc=clear-input des inputs)
+        if (!inField) {
+          setUI({ mobileMenuOpen: false, convDrawerOpen: false });
+        }
+      } else if (e.key === "/" && !inField && !e.ctrlKey && !e.metaKey) {
+        // Hors champ : '/' focus le textarea et y insère '/' pour ouvrir
+        // direct le menu commandes
+        e.preventDefault();
+        textareaRef.current?.focus();
+        setInput("/");
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tts.speaking]);
 
   // ----- Auto-resize textarea -----
   useEffect(() => {
@@ -918,6 +944,33 @@ export function Chat() {
                       {m.role === "assistant" && m.content && !(streaming && isLast) && (
                         <div className="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-default">
                           <CopyButton content={m.content} />
+                          {/* Lecture vocale (TTS) — Web Speech API natif */}
+                          {tts.supported && (
+                            <button
+                              onClick={() =>
+                                tts.speakingMessageId === m.id
+                                  ? tts.stop()
+                                  : tts.speak(m.content, m.id, "fr-FR")
+                              }
+                              className={
+                                "p-1.5 rounded hover:bg-muted/30 transition-default " +
+                                (tts.speakingMessageId === m.id
+                                  ? "text-primary"
+                                  : "text-muted hover:text-foreground")
+                              }
+                              title={
+                                tts.speakingMessageId === m.id
+                                  ? "Arrêter la lecture"
+                                  : "Lire la réponse à haute voix"
+                              }
+                            >
+                              {tts.speakingMessageId === m.id ? (
+                                <VolumeX size={14} />
+                              ) : (
+                                <Volume2 size={14} />
+                              )}
+                            </button>
+                          )}
                           {isLast && (
                             <button
                               onClick={regenerate}
