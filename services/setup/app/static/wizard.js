@@ -1,10 +1,10 @@
 // AI Box - Wizard de configuration
 //
 // Note : pas de saisie de mot de passe ici. La box est livrée avec un
-// mot de passe par défaut (boxia2026!) que l'utilisateur devra changer
+// mot de passe par défaut (aibox-changeme!) que l'utilisateur devra changer
 // à sa 1re connexion. Plus simple, plus tolérant aux fautes de frappe,
 // pratique appliance standard (Synology / TrueNAS / Proxmox).
-const DEFAULT_ADMIN_PASSWORD = 'boxia2026!';
+const DEFAULT_ADMIN_PASSWORD = 'aibox-changeme!';
 const state = {
   step: 1,
   data: {

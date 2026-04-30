@@ -3,7 +3,7 @@
 /**
  * Bannière persistante en haut de l'app qui s'affiche tant que
  * l'utilisateur connecté a `attributes.must_change_password=true` côté
- * Authentik (livré avec le mot de passe par défaut `boxia2026!`).
+ * Authentik (livré avec le mot de passe par défaut `aibox-changeme!`).
  *
  * Flow utilisateur :
  *   1. Bannière apparaît → propose un bouton « Changer maintenant »

@@ -411,6 +411,20 @@ def setup_dify_admin(env: dict[str, str]) -> dict[str, Any]:
     # Workaround bug Dify 1.10 perms storage
     _ensure_dify_storage_writable()
 
+    # Dify nginx peut renvoyer 502 pendant 30-60 s après docker compose up
+    # (le temps que dify-api démarre derrière). On attend qu'il réponde
+    # avec un 200 sur /console/api/setup avant de poursuivre.
+    import time as _t
+    for attempt in range(30):  # max 60s
+        try:
+            with httpx.Client(timeout=5) as cc:
+                s = cc.get(f"{base}/console/api/setup")
+                if s.status_code == 200:
+                    break
+        except Exception:
+            pass
+        _t.sleep(2)
+
     try:
         # IMPORTANT : Dify utilise une session Flask (cookie-based) pour propager
         # `is_init_validated` entre POST /init et POST /setup. Le httpx.Client
@@ -420,6 +434,10 @@ def setup_dify_admin(env: dict[str, str]) -> dict[str, Any]:
             s = c.get(f"{base}/console/api/setup")
             if s.status_code == 200 and s.json().get("step") == "finished":
                 return {"ok": True, "created": False, "note": "déjà initialisé"}
+            if s.status_code != 200:
+                return {"ok": False, "step": "warmup",
+                        "status": s.status_code,
+                        "body": f"Dify pas prêt après 60s (HTTP {s.status_code})"}
 
             # Étape 1 : init validation (POST /console/api/init)
             v = c.post(

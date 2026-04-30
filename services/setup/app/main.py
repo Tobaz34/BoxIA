@@ -44,7 +44,7 @@ QUESTIONNAIRE_ESSENTIALS_PATH = AIBOX_ROOT / "config" / "questionnaire-essential
 # l'app principale détecte ce flag pour afficher une bannière persistante.
 # Override possible via l'env BOXIA_DEFAULT_PASSWORD si on veut un mdp
 # par-box (printé sur sticker par exemple).
-DEFAULT_ADMIN_PASSWORD = os.environ.get("BOXIA_DEFAULT_PASSWORD", "boxia2026!")
+DEFAULT_ADMIN_PASSWORD = os.environ.get("BOXIA_DEFAULT_PASSWORD", "aibox-changeme!")
 
 app = FastAPI(title="AI Box Setup", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
@@ -347,7 +347,7 @@ async def create_admin_user():
     if ready:
         _t.sleep(10)
 
-    # Le password est-il celui par défaut (boxia2026!) ?
+    # Le password est-il celui par défaut (aibox-changeme!) ?
     # Si oui → on pose le flag must_change_password=True sur l'user pour
     # que l'app principale affiche une bannière de rappel à la 1re
     # connexion. Sinon (mode legacy / custom-pwd) → flag à False.
