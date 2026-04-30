@@ -109,10 +109,21 @@ function Setup-Bonjour {
 }
 
 # --- 1. Setup résolution DNS ----------------------------------------------
+# Note importante : Bonjour Windows ne résout que les hostnames mDNS
+# à un seul label (aibox.local OK, auth.aibox.local NON). Donc même
+# en mode Bonjour, on ajoute les SOUS-domaines au hosts file.
+# Pour `aibox.local` lui-même, Bonjour suffit et reste résolvable même
+# si l'IP de la box change.
 if ($Mode -eq "hosts") {
   Setup-Hosts
 } else {
   Setup-Bonjour
+  # Bonjour résout aibox.local automatiquement, mais pas les sous-noms
+  # → on ajoute aussi les sous-domaines au hosts (pour Windows uniquement)
+  Write-Host ""
+  Write-Host "  Bonjour résout aibox.local automatiquement, mais Windows ne fait" -ForegroundColor DarkGray
+  Write-Host "  pas de mDNS multi-label → on ajoute les sous-domaines au hosts." -ForegroundColor DarkGray
+  Setup-Hosts
 }
 
 # --- 2. Cert racine Caddy (optionnel) -------------------------------------
