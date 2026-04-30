@@ -456,10 +456,54 @@ async def deploy_start():
 
 @app.post("/api/configure/finish")
 async def configure_finish():
-    """Marque la box comme configurée — le wizard ne sera plus servi."""
+    """Marque la box comme configurée et passe la main à l'edge Caddy.
+
+    Le hand-off est délicat : tant que `aibox-setup-caddy` tient le port
+    80, `aibox-edge-caddy` ne peut pas démarrer (port collision). On le
+    fait en background après avoir répondu, pour que le client reçoive
+    bien sa confirmation finale.
+    """
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text("configured\n")
-    return {"configured": True}
+    # Démarre une tâche détachée qui fait la transition
+    # (docker stop wizard → start edge-caddy → écrit le marker host)
+    subprocess.Popen(
+        ["python3", "-c", _HANDOFF_SCRIPT],
+        env={**os.environ},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {"configured": True, "handoff": "scheduled"}
+
+
+# Script Python exécuté en sous-process détaché pour faire la transition
+# wizard → edge sans bloquer la réponse au client. Utilise les commandes
+# Docker disponibles via /var/run/docker.sock (déjà monté dans setup-api).
+_HANDOFF_SCRIPT = r"""
+import subprocess, time
+# 2 s de marge pour que le client reçoive la 200 OK
+time.sleep(2)
+# 1. Mark .configured côté HÔTE (pour ConditionPathExists du firstrun.service).
+#    On passe par un container temporaire qui bind-mount /var/lib/aibox.
+subprocess.run([
+    "docker", "run", "--rm",
+    "-v", "/var/lib/aibox:/h",
+    "alpine:3.20", "sh", "-c", "mkdir -p /h && touch /h/.configured",
+], timeout=30, check=False)
+# 2. Stop le wizard (libère le port 80). aibox-setup-api se suicidera
+#    avec son sibling — pas grave, la réponse est déjà partie.
+subprocess.run(["docker", "stop", "aibox-setup-caddy"], timeout=30, check=False)
+# 3. Démarre edge-caddy (qui était en `Created` car port 80 était occupé).
+subprocess.run(
+    ["docker", "compose", "--env-file", "/srv/ai-stack/.env", "up", "-d"],
+    cwd="/srv/ai-stack/services/edge",
+    timeout=60, check=False,
+)
+# 4. Stop setup-api (nous-mêmes). Le service systemd a Condition !configured,
+#    donc il ne se relancera plus.
+subprocess.run(["docker", "stop", "aibox-setup-api"], timeout=30, check=False)
+"""
 
 
 # =============================================================================
