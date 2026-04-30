@@ -63,3 +63,7 @@ build/
 memory/
 !services/memory/
 !services/memory/**
+
+# Exception : exclure pycache de services/memory
+services/memory/**/__pycache__/
+services/memory/**/*.pyc
