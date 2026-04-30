@@ -37,6 +37,13 @@ export interface AgentConfig {
    *  remplace silencieusement l'image par un placeholder texte ce qui
    *  donne une UX cassée — d'où ce flag. */
   vision?: boolean;
+  /** Phrase d'accroche affichée quand l'utilisateur ouvre une nouvelle
+   *  conversation avec cet agent. Si absent, le `description` est utilisé. */
+  openingStatement?: string;
+  /** Suggestions de questions affichées en grille au-dessus de la zone
+   *  d'input pour une nouvelle conversation. Doivent être adaptées au
+   *  domaine fonctionnel de l'agent. 4 max recommandé pour l'UX. */
+  suggestedQuestions?: string[];
 }
 
 export const AGENTS: Record<string, AgentConfig> = {
@@ -47,9 +54,16 @@ export const AGENTS: Record<string, AgentConfig> = {
     description: "Pour toutes vos questions du quotidien",
     envVar: "DIFY_DEFAULT_APP_API_KEY",
     isDefault: true,
-    // Modèle qwen2.5vl:7b — comprend les images
-    vision: true,
-    // ouvert à tous
+    vision: true,  // qwen2.5vl:7b — comprend les images
+    openingStatement:
+      "Bonjour ! Je suis votre assistant général. Posez-moi une question, " +
+      "joignez un document, ou utilisez le micro pour me dicter.",
+    suggestedQuestions: [
+      "Résume-moi les derniers documents ajoutés",
+      "Aide-moi à rédiger un email professionnel",
+      "Explique-moi le bilan d'une entreprise en 5 points",
+      "Quelle est la procédure de demande de congés ?",
+    ],
   },
   accountant: {
     slug: "accountant",
@@ -57,8 +71,16 @@ export const AGENTS: Record<string, AgentConfig> = {
     icon: "📊",
     description: "Devis, factures, TVA, comptabilité",
     envVar: "DIFY_AGENT_ACCOUNTANT_API_KEY",
-    // Données comptables sensibles → admins + managers seulement
     allowedRoles: ["admin", "manager"],
+    openingStatement:
+      "Bonjour ! Je suis spécialisé en comptabilité française : TVA, " +
+      "devis, factures, déclarations. Que puis-je faire pour vous ?",
+    suggestedQuestions: [
+      "Quel taux de TVA pour la restauration sur place ?",
+      "Génère-moi un modèle de devis pour un client SARL",
+      "Comment gérer l'auto-liquidation TVA pour un achat US ?",
+      "Quels sont les seuils du régime simplifié 2026 ?",
+    ],
   },
   hr: {
     slug: "hr",
@@ -66,8 +88,16 @@ export const AGENTS: Record<string, AgentConfig> = {
     icon: "👥",
     description: "Congés, contrats, droit du travail",
     envVar: "DIFY_AGENT_HR_API_KEY",
-    // Sujets RH sensibles → admins + managers seulement
     allowedRoles: ["admin", "manager"],
+    openingStatement:
+      "Bonjour ! Je suis votre référent RH : congés, contrats, droit " +
+      "du travail français. Comment puis-je vous aider ?",
+    suggestedQuestions: [
+      "Quelle est la procédure pour poser des congés ?",
+      "Modèle de contrat CDI cadre, période d'essai 4 mois",
+      "Calcule l'indemnité de licenciement pour 5 ans d'ancienneté",
+      "Combien de jours de congés payés pour un mi-temps ?",
+    ],
   },
   support: {
     slug: "support",
@@ -75,7 +105,15 @@ export const AGENTS: Record<string, AgentConfig> = {
     icon: "🎧",
     description: "Réponses commerciales, ton client",
     envVar: "DIFY_AGENT_SUPPORT_API_KEY",
-    // ouvert à tous : un employé peut rédiger une réponse client
+    openingStatement:
+      "Bonjour ! Je vous aide à rédiger des réponses clients : ton " +
+      "professionnel, empathique, structuré.",
+    suggestedQuestions: [
+      "Réponds à un client qui se plaint d'un retard de livraison",
+      "Rédige un mail de relance après devis sans réponse depuis 15 jours",
+      "Comment annoncer une augmentation de tarif à un client fidèle ?",
+      "Réponds à un avis Google négatif (3 étoiles, livraison)",
+    ],
   },
 };
 

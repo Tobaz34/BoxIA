@@ -20,6 +20,10 @@ export interface AgentMeta {
   /** Modèle multimodal (vision). L'UI affiche le bouton paperclip
    *  uniquement quand ce flag est vrai. */
   vision?: boolean;
+  /** Phrase d'accroche affichée en empty state du chat. */
+  openingStatement?: string;
+  /** Questions suggérées (4 max) en empty state du chat. */
+  suggestedQuestions?: string[];
 }
 
 interface Props {

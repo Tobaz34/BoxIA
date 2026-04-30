@@ -61,11 +61,12 @@ interface Message {
   attachments?: { kind: AttachedKind; name: string; url?: string }[];
 }
 
-const SUGGESTIONS_INITIAL = [
-  "Résume mes emails non lus",
-  "Génère un devis pour Acme SARL",
+// Fallback si l'agent ne définit pas ses propres suggestions
+const SUGGESTIONS_FALLBACK = [
+  "Aide-moi à rédiger un email professionnel",
   "Quelle est la procédure de demande de congés ?",
-  "Combien de tickets ouverts cette semaine ?",
+  "Résume-moi les derniers documents ajoutés",
+  "Explique-moi un concept en 5 points",
 ];
 
 const LS_AGENT_KEY = "aibox.currentAgent";
@@ -849,11 +850,15 @@ export function Chat() {
                   {currentAgentMeta?.name || "Assistant"}
                 </h1>
                 <p className="text-muted text-lg">
-                  {currentAgentMeta?.description ||
+                  {currentAgentMeta?.openingStatement ||
+                    currentAgentMeta?.description ||
                     "Posez-moi une question."}
                 </p>
                 <div className="grid sm:grid-cols-2 gap-2 mt-8">
-                  {SUGGESTIONS_INITIAL.map((s) => (
+                  {(currentAgentMeta?.suggestedQuestions?.length
+                    ? currentAgentMeta.suggestedQuestions
+                    : SUGGESTIONS_FALLBACK
+                  ).map((s) => (
                     <button
                       key={s}
                       onClick={() => send(s)}
@@ -862,6 +867,14 @@ export function Chat() {
                       {s}
                     </button>
                   ))}
+                </div>
+                {/* Hints pour les nouvelles features */}
+                <div className="mt-6 text-xs text-muted space-y-1">
+                  <div>💡 Glissez un PDF ou DOCX ici pour me l'analyser</div>
+                  {speech.supported && (
+                    <div>🎤 Cliquez sur le micro pour me dicter votre question</div>
+                  )}
+                  <div>⚡ Tapez <code className="text-foreground">/</code> pour les commandes (regen, export, summarize…)</div>
                 </div>
               </div>
             </div>
