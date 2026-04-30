@@ -307,23 +307,38 @@ async def create_admin_user():
     if not password:
         raise HTTPException(500, "ADMIN_PASSWORD vide dans .env")
 
-    # Attends qu'Authentik soit VRAIMENT prêt : ak check + DB migrations terminées
-    # (l'`ak check` peut répondre OK avant que les models soient disponibles).
+    # Attends qu'Authentik soit VRAIMENT prêt : check progressif qui exerce
+    # plus que l'existence du groupe — il faut aussi pouvoir lire/écrire la
+    # table users (les migrations peuvent être terminées mais la session
+    # de bootstrap encore en train de seeder, ce qui crée des conflits sur
+    # update_or_create).
     import time as _t
-    for attempt in range(60):  # max 120s
+    ready = False
+    for attempt in range(60):  # max ~180s (30 attempts × 3s + travail)
         try:
             check = subprocess.run(
                 ["docker", "exec", "aibox-authentik-server", "ak", "shell", "-c",
                  "from authentik.core.models import User, Group; "
-                 "g = Group.objects.filter(name='authentik Admins').exists(); "
-                 "print('READY' if g else 'NOT_READY')"],
-                capture_output=True, text=True, timeout=10,
+                 "from django.db import connection; "
+                 # Force une requête réelle (pas juste exists) pour vérifier
+                 # que la connexion DB est stable et que les migrations sont
+                 # complètement appliquées.
+                 "g = Group.objects.filter(name='authentik Admins').first(); "
+                 "n = User.objects.count(); "
+                 "print('READY' if g and n >= 0 else 'NOT_READY')"],
+                capture_output=True, text=True, timeout=15,
             )
             if "READY" in check.stdout:
+                ready = True
                 break
         except Exception:
             pass
-        _t.sleep(2)
+        _t.sleep(3)
+    # Marge supplémentaire pour laisser Authentik finir ses tasks de
+    # bootstrap (création des outpost-users etc.) — sinon update_or_create
+    # peut entrer en conflit avec la création concurrente d'un user.
+    if ready:
+        _t.sleep(10)
 
     # Le password est-il celui par défaut (boxia2026!) ?
     # Si oui → on pose le flag must_change_password=True sur l'user pour
@@ -358,11 +373,13 @@ async def create_admin_user():
         "'check=', u.check_password(os.environ['AK_PASSWORD']))\n"
     )
 
-    # Retry avec backoff (3 tentatives, 5s entre chaque) — la 1ère échoue
-    # parfois sur "ProgrammingError: relation 'authentik_core_user' does not exist".
+    # Retry avec backoff (5 tentatives, 10s entre chaque) — la 1ère échoue
+    # parfois sur "ProgrammingError: relation 'authentik_core_user' does not exist"
+    # ou sur conflit avec la création concurrente de l'outpost user.
     last_stdout = ""
     last_stderr = ""
-    for attempt in range(3):
+    last_returncode = -1
+    for attempt in range(5):
         try:
             out = subprocess.run(
                 ["docker", "exec",
@@ -372,24 +389,40 @@ async def create_admin_user():
                  "-e", f"AK_PASSWORD={password}",
                  "-e", f"AK_MUST_CHANGE_PWD={'1' if is_default_pwd else '0'}",
                  "aibox-authentik-server", "ak", "shell", "-c", script],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=45,
             )
             last_stdout = out.stdout
             last_stderr = out.stderr
+            last_returncode = out.returncode
+            # Log côté server pour debug post-mortem (visible dans docker logs)
+            print(f"[create-admin-user] attempt={attempt+1} rc={out.returncode} "
+                  f"stdout-tail={out.stdout[-150:]!r} "
+                  f"stderr-tail={out.stderr[-150:]!r}", flush=True)
             if "USER_OK" in out.stdout or "USER_UPDATED" in out.stdout:
                 return {"created": True,
                         "attempt": attempt + 1,
+                        "must_change_password": is_default_pwd,
                         "stdout": out.stdout[-300:]}
         except subprocess.TimeoutExpired:
-            last_stderr = "timeout"
-        if attempt < 2:
-            _t.sleep(5)  # backoff avant retry
+            last_stderr = "timeout après 45s"
+            print(f"[create-admin-user] attempt={attempt+1} TIMEOUT", flush=True)
+        if attempt < 4:
+            _t.sleep(10)  # backoff avant retry
 
-    # 3 retries échoués → erreur HTTP claire (au lieu de retourner created:false)
+    # 5 retries échoués → erreur HTTP claire avec stderr complet (au lieu
+    # de retourner created:false ou une erreur silencieuse). Le frontend
+    # doit STOPPER ici, pas continuer avec provision-sso.
     raise HTTPException(
         500,
-        f"Création user Authentik échouée après 3 tentatives. "
-        f"stdout={last_stdout[-200:]} stderr={last_stderr[-200:]}",
+        detail={
+            "error": "create_admin_failed",
+            "message": "Création de l'admin Authentik échouée après 5 tentatives. "
+                       "Vérifier que aibox-authentik-server est healthy et que .env "
+                       "contient ADMIN_USERNAME / ADMIN_PASSWORD valides.",
+            "returncode": last_returncode,
+            "stdout_tail": last_stdout[-400:],
+            "stderr_tail": last_stderr[-400:],
+        },
     )
 
 

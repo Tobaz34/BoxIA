@@ -181,14 +181,29 @@ async function deploy() {
 
     // 4. Attente puis création des comptes admin
     setTimeout(async () => {
-      out.textContent += '\n[1/2] Création du compte administrateur dans Authentik...\n';
+      out.textContent += '\n[1/3] Création du compte administrateur dans Authentik...\n';
       try {
         const r3 = await fetch('/api/deploy/create-admin-user', { method: 'POST' });
         const j3 = await r3.json();
-        if (j3.created) out.textContent += '  ✓ Authentik : compte créé (ou mis à jour)\n';
-        else out.textContent += '  ⚠ Authentik : ' + (j3.stderr || 'non créé') + '\n';
+        if (r3.ok && j3.created) {
+          out.textContent += '  ✓ Authentik : compte créé (tentative ' + (j3.attempt || '?') + ')\n';
+        } else {
+          // CRITIQUE : sans user admin, OIDC ne pourra pas marcher → on STOPPE
+          // au lieu de continuer en mode dégradé silencieux.
+          const detail = (j3.detail && typeof j3.detail === 'object') ? j3.detail : j3;
+          const msg = detail.message || detail.error || 'inconnu';
+          const stderr = detail.stderr_tail || j3.stderr || '';
+          out.textContent += '\n  ✗ ÉCHEC création admin Authentik : ' + msg + '\n';
+          if (stderr) out.textContent += '    stderr: ' + stderr.slice(0, 200) + '\n';
+          out.textContent += '\n  → Le wizard s\'arrête. Une fois le problème résolu :\n';
+          out.textContent += '    sudo /srv/ai-stack/recover-admin-password.sh --random\n';
+          out.textContent += '    (créera/reset l\'admin et synchronisera .env)\n';
+          throw new Error('create-admin failed; stopping deploy flow');
+        }
       } catch (e) {
-        out.textContent += '  ⚠ Erreur Authentik : ' + e + '\n';
+        if (String(e).includes('stopping deploy flow')) return;  // déjà loggé
+        out.textContent += '  ✗ Erreur réseau Authentik : ' + e + '\n';
+        return;  // STOP : pas de provision-sso si pas de user
       }
 
       // 5. Provisioning SSO + comptes locaux pour OWUI / Dify / n8n
