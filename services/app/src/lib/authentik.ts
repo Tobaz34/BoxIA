@@ -8,6 +8,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { NextResponse } from "next/server";
+import { isUserActive } from "@/lib/user-cache";
 
 const AUTHENTIK_BASE_URL =
   process.env.AUTHENTIK_API_URL || "http://localhost:9000";
@@ -45,6 +46,17 @@ export async function requireAdmin(): Promise<
   if (!u.isAdmin) {
     return NextResponse.json(
       { error: "forbidden", message: "Réservé aux administrateurs." },
+      { status: 403 },
+    );
+  }
+  // Auto-déconnexion live : si le user a été désactivé côté Authentik
+  // depuis l'émission de son JWT, on le bloque sans attendre la fin
+  // de session (TTL cache 3 min).
+  const active = await isUserActive(u.email);
+  if (!active.active) {
+    return NextResponse.json(
+      { error: "user_disabled",
+        message: "Votre compte a été désactivé." },
       { status: 403 },
     );
   }

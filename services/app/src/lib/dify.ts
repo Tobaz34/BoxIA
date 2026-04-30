@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import {
   getAgentKey, defaultAgentSlug, AGENTS, canUseAgent, roleFromGroups,
 } from "@/lib/agents";
+import { isUserActive } from "@/lib/user-cache";
 
 export const DIFY_BASE_URL =
   process.env.DIFY_BASE_URL || "http://localhost:8081";
@@ -25,6 +26,18 @@ export async function requireDifyContext(
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // Vérifie que l'utilisateur est encore actif côté Authentik
+  // (auto-déconnexion live : un user désactivé voit ses requêtes
+  // refusées dans les 3 min — TTL du cache).
+  const active = await isUserActive(session.user.email);
+  if (!active.active) {
+    return NextResponse.json(
+      { error: "user_disabled",
+        message: "Votre compte a été désactivé. Contactez l'administrateur." },
+      { status: 403 },
+    );
   }
 
   const slug = agentSlug || defaultAgentSlug();
