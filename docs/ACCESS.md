@@ -60,18 +60,53 @@ curl http://192.168.15.210/healthz   # doit répondre "OK"
 
 #### Côté chaque poste utilisateur (admin du LAN)
 
-**Option A — via Avahi/mDNS (Mac/Linux/iPhone — fonctionne tout seul)**
+**Option A — Avahi/mDNS (zéro config sur Mac/Linux/iPhone)**
 
-Le hostname `aibox.local` se résout automatiquement grâce à Bonjour /
-Avahi. **Aucune configuration côté poste**.
+La box s'annonce sur le LAN via mDNS (le service `aibox-mdns-aliases`
+côté serveur publie `aibox.local` + tous les sous-domaines comme
+A-records mDNS). Tout client compatible mDNS résout automatiquement
+le hostname comme avec un Synology, une imprimante AirPrint, ou un
+iMac sur le réseau.
 
-Sur Mac/iPhone : ça marche d'origine.
-Sur Linux : si `avahi-daemon` est installé (le cas par défaut sur Ubuntu/
-Debian/Fedora), ça marche.
+| OS client | Status |
+|---|---|
+| **macOS** | ✅ Bonjour intégré, aucune installation |
+| **Linux** (Ubuntu/Debian/Fedora) | ✅ Avahi installé par défaut |
+| **iOS / iPadOS** | ✅ mDNS natif |
+| **Android** | ⚠️ Variable selon ROM. La plupart des Android 8+ : ✅ |
+| **Windows** | ❌ Par défaut. Voir option B ci-dessous |
 
-**Option B — via fichier hosts (Windows / fallback)**
+Sur ces postes, taper directement `https://aibox.local` dans le
+navigateur fonctionne sans rien configurer.
 
-Sur Windows, éditer `C:\Windows\System32\drivers\etc\hosts` (en admin) :
+**Option B — Windows : Bonjour Apple OU fichier hosts**
+
+Windows n'a pas de client mDNS générique installé d'office (même les
+Win11 récents l'utilisent uniquement pour des protocoles spécifiques
+comme l'impression). 2 solutions :
+
+**B.1 — Installer Bonjour Service (recommandé)**
+
+Apple distribue gratuitement « Bonjour Print Services for Windows »
+(10 Mo, signé Apple). Une fois installé, Windows résout
+automatiquement les hostnames `.local` (comme un Mac).
+
+Méthode automatique via le script PowerShell :
+
+```powershell
+# PS en admin
+.\docs\setup-windows-aibox-local.ps1 -Mode Bonjour
+```
+
+Méthode manuelle :
+1. Télécharger https://support.apple.com/kb/dl999 (ou direct
+   `https://download.info.apple.com/Mac_OS_X/061-7495.20120814.mEsFv/BonjourPSSetup.exe`)
+2. Double-cliquer sur l'installer, accepter
+3. Redémarrer (recommandé)
+
+**B.2 — Fichier hosts (rapide mais figé)**
+
+Edition manuelle de `C:\Windows\System32\drivers\etc\hosts` (en admin) :
 
 ```
 192.168.15.210  aibox.local
@@ -83,14 +118,17 @@ Sur Windows, éditer `C:\Windows\System32\drivers\etc\hosts` (en admin) :
 192.168.15.210  status.aibox.local
 ```
 
-Sur Linux/Mac sans mDNS : `/etc/hosts` (besoin de `sudo`).
+OU automatiquement via le script :
 
-**Option C — DNS local du routeur (entreprise structurée)**
+```powershell
+.\docs\setup-windows-aibox-local.ps1     # mode hosts par défaut
+```
 
-Si l'entreprise a un serveur DNS interne (Active Directory, pfSense,
-serveur DNS Linux, etc.), ajouter une zone qui pointe `aibox.local` et
-ses sous-domaines vers `192.168.15.210`. Tous les postes du domaine
-profitent automatiquement.
+**Option C — DNS interne (entreprise avec AD/pfSense/etc.)**
+
+Si l'entreprise a déjà un serveur DNS, ajouter une zone qui pointe
+`aibox.local` et ses sous-domaines vers `192.168.15.210`. Tous les
+postes du domaine profitent automatiquement.
 
 #### Premier accès : warning de sécurité
 
