@@ -19,15 +19,18 @@
 
 set -euo pipefail
 
+PREFIX="${AIBOX_PREFIX:-aibox}"
+# Hostnames PLATS (1 label avant .local) pour rester compatibles avec
+# Bonjour Windows qui ne résout pas le mDNS multi-label.
 ALIASES=(
-  "aibox.local"
-  "auth.aibox.local"
-  "agents.aibox.local"
-  "flows.aibox.local"
-  "chat.aibox.local"
-  "admin.aibox.local"
-  "status.aibox.local"
-  "qdrant.aibox.local"
+  "${PREFIX}.local"
+  "${PREFIX}-auth.local"
+  "${PREFIX}-agents.local"
+  "${PREFIX}-flows.local"
+  "${PREFIX}-chat.local"
+  "${PREFIX}-admin.local"
+  "${PREFIX}-status.local"
+  "${PREFIX}-qdrant.local"
 )
 
 # Détecte l'IP LAN par défaut (interface qui sort par défaut).

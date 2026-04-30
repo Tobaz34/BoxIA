@@ -31,12 +31,18 @@ sous-domaines propres :
 | URL | Service |
 |---|---|
 | `https://aibox.local` | App principale (chat) |
-| `https://auth.aibox.local` | Authentik (login admin) |
-| `https://agents.aibox.local` | Console Dify (agents builder) |
-| `https://flows.aibox.local` | n8n (workflows) |
-| `https://chat.aibox.local` | Open WebUI (chat alternatif) |
-| `https://admin.aibox.local` | Portainer (Docker) |
-| `https://status.aibox.local` | Uptime Kuma |
+| `https://aibox-auth.local` | Authentik (login admin) |
+| `https://aibox-agents.local` | Console Dify (agents builder) |
+| `https://aibox-flows.local` | n8n (workflows) |
+| `https://aibox-chat.local` | Open WebUI (chat alternatif) |
+| `https://aibox-admin.local` | Portainer (Docker) |
+| `https://aibox-status.local` | Uptime Kuma |
+
+> **Note importante** : on utilise des hostnames **plats** (1 seul
+> label avant `.local`) au lieu de sous-domaines (`auth.aibox.local`).
+> C'est pour rester compatible avec **Bonjour Windows** qui ne résout
+> pas les noms mDNS multi-label. Avec ce schéma, **un seul outil
+> mDNS suffit pour TOUS les services**, y compris depuis Windows.
 
 #### Activer le edge sur la box (admin)
 
@@ -110,12 +116,12 @@ Edition manuelle de `C:\Windows\System32\drivers\etc\hosts` (en admin) :
 
 ```
 192.168.15.210  aibox.local
-192.168.15.210  auth.aibox.local
-192.168.15.210  agents.aibox.local
-192.168.15.210  flows.aibox.local
-192.168.15.210  chat.aibox.local
-192.168.15.210  admin.aibox.local
-192.168.15.210  status.aibox.local
+192.168.15.210  aibox-auth.local
+192.168.15.210  aibox-agents.local
+192.168.15.210  aibox-flows.local
+192.168.15.210  aibox-chat.local
+192.168.15.210  aibox-admin.local
+192.168.15.210  aibox-status.local
 ```
 
 OU automatiquement via le script :

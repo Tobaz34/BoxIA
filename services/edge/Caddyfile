@@ -1,28 +1,29 @@
 # =============================================================================
 # AI Box — Caddy reverse proxy
 # =============================================================================
-# Sous-domaines exposés derrière HTTPS :
-#   - {$DOMAIN}              → aibox-app (Next.js, network_mode: host)
-#   - auth.{$DOMAIN}         → Authentik
-#   - agents.{$DOMAIN}       → Dify (console builder)
-#   - flows.{$DOMAIN}        → n8n
-#   - chat.{$DOMAIN}         → Open WebUI
-#   - admin.{$DOMAIN}        → Portainer
-#   - status.{$DOMAIN}       → Uptime Kuma
-#   - qdrant.{$DOMAIN}       → Qdrant dashboard
+# Tous les services sont exposés derrière HTTPS sur des hostnames PLATS
+# (1 seul label avant .local) pour rester compatibles avec Bonjour Windows
+# qui ne résout pas les sous-domaines mDNS multi-label :
+#
+#   {$DOMAIN}                 (= aibox.local)        → app principale
+#   {$DOMAIN_PREFIX}-auth.local                       → Authentik
+#   {$DOMAIN_PREFIX}-agents.local                     → Dify console
+#   {$DOMAIN_PREFIX}-flows.local                      → n8n
+#   {$DOMAIN_PREFIX}-chat.local                       → Open WebUI
+#   {$DOMAIN_PREFIX}-admin.local                      → Portainer
+#   {$DOMAIN_PREFIX}-status.local                     → Uptime Kuma
+#   {$DOMAIN_PREFIX}-qdrant.local                     → Qdrant dashboard
 #
 # Mode TLS :
-#   - DOMAIN public + ACME_EMAIL → Let's Encrypt (acme_ca par défaut = LE prod)
+#   - DOMAIN public + ACME_EMAIL → Let's Encrypt (acme_ca = LE prod)
 #   - DOMAIN local (.local) + ACME_CA=internal → cert auto-signé Caddy local CA
 # =============================================================================
 
 {
     email {$ACME_EMAIL}
     acme_ca {$ACME_CA}
-    # En mode LAN/dev : on désactive l'auto-redirect http→https pour
-    # que les utilisateurs puissent accéder à l'app sans avoir à
-    # accepter le warning de cert auto-signé. En prod (Let's Encrypt),
-    # commenter cette ligne pour réactiver le redirect HTTPS-only.
+    # En LAN/dev : pas de redirect http→https forcé pour éviter le warning
+    # de cert auto-signé. En prod (Let's Encrypt), commenter pour HTTPS-only.
     auto_https disable_redirects
     servers {
         protocols h1 h2 h3
@@ -39,12 +40,6 @@
 }
 
 # ----- App principale AI Box (Next.js) — landing -------------------------
-# aibox-app tourne en network_mode: host → on ne peut pas l'atteindre par DNS
-# Docker. On utilise host.docker.internal qui pointe vers l'host (extra_hosts
-# configuré dans docker-compose.yml).
-#
-# `http://...` ET `{$DOMAIN}` (= https) servent tous les deux le même contenu
-# pour permettre l'accès facile sans warning de cert sur LAN.
 http://{$DOMAIN}, {$DOMAIN} {
     encode zstd gzip
     @healthz path /healthz
@@ -67,7 +62,7 @@ http://{$DOMAIN}, {$DOMAIN} {
 }
 
 # ----- Authentik (SSO) -----------------------------------------------------
-http://auth.{$DOMAIN}, auth.{$DOMAIN} {
+http://{$DOMAIN_PREFIX}-auth.local, {$DOMAIN_PREFIX}-auth.local {
     encode zstd gzip
     reverse_proxy aibox-authentik-server:9000 {
         flush_interval -1
@@ -78,7 +73,7 @@ http://auth.{$DOMAIN}, auth.{$DOMAIN} {
 }
 
 # ----- Dify (agent builder console) ----------------------------------------
-http://agents.{$DOMAIN}, agents.{$DOMAIN} {
+http://{$DOMAIN_PREFIX}-agents.local, {$DOMAIN_PREFIX}-agents.local {
     encode zstd gzip
     reverse_proxy aibox-dify-nginx:80 {
         flush_interval -1
@@ -89,7 +84,7 @@ http://agents.{$DOMAIN}, agents.{$DOMAIN} {
 }
 
 # ----- Open WebUI (chat utilisateur alternatif) ----------------------------
-http://chat.{$DOMAIN}, chat.{$DOMAIN} {
+http://{$DOMAIN_PREFIX}-chat.local, {$DOMAIN_PREFIX}-chat.local {
     encode zstd gzip
     reverse_proxy open-webui:8080 {
         flush_interval -1
@@ -104,7 +99,7 @@ http://chat.{$DOMAIN}, chat.{$DOMAIN} {
 }
 
 # ----- n8n (workflows) -----------------------------------------------------
-http://flows.{$DOMAIN}, flows.{$DOMAIN} {
+http://{$DOMAIN_PREFIX}-flows.local, {$DOMAIN_PREFIX}-flows.local {
     encode zstd gzip
     reverse_proxy n8n:5678 {
         flush_interval -1
@@ -119,7 +114,7 @@ http://flows.{$DOMAIN}, flows.{$DOMAIN} {
 }
 
 # ----- Portainer (admin Docker) --------------------------------------------
-http://admin.{$DOMAIN}, admin.{$DOMAIN} {
+http://{$DOMAIN_PREFIX}-admin.local, {$DOMAIN_PREFIX}-admin.local {
     encode zstd gzip
     reverse_proxy https://portainer:9443 {
         transport http {
@@ -131,7 +126,7 @@ http://admin.{$DOMAIN}, admin.{$DOMAIN} {
 }
 
 # ----- Uptime Kuma (monitoring uptime) -------------------------------------
-http://status.{$DOMAIN}, status.{$DOMAIN} {
+http://{$DOMAIN_PREFIX}-status.local, {$DOMAIN_PREFIX}-status.local {
     encode zstd gzip
     reverse_proxy uptime-kuma:3001 {
         flush_interval -1
@@ -139,7 +134,7 @@ http://status.{$DOMAIN}, status.{$DOMAIN} {
 }
 
 # ----- Qdrant dashboard (RAG debug, admin only) ----------------------------
-http://qdrant.{$DOMAIN}, qdrant.{$DOMAIN} {
+http://{$DOMAIN_PREFIX}-qdrant.local, {$DOMAIN_PREFIX}-qdrant.local {
     encode zstd gzip
     reverse_proxy aibox-qdrant:6333
     import authentik_proxy

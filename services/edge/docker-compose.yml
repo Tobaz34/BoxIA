@@ -41,6 +41,9 @@ services:
       - caddy_config:/config
     environment:
       DOMAIN: ${DOMAIN}
+      # Préfixe pour les hostnames plats des sous-services (mDNS-friendly).
+      # Ex: DOMAIN=aibox.local → DOMAIN_PREFIX=aibox → aibox-auth.local
+      DOMAIN_PREFIX: ${DOMAIN_PREFIX:-aibox}
       ACME_EMAIL: ${ADMIN_EMAIL}
       ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
     # aibox-app tourne en network_mode: host (port 3100 sur l'host) → on

@@ -33,15 +33,17 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
   exit 1
 }
 
+# Hostnames plats (1 label avant .local) pour Bonjour Windows
+# qui ne résout que le mDNS single-label.
 $aliases = @(
   "aibox.local",
-  "auth.aibox.local",
-  "agents.aibox.local",
-  "flows.aibox.local",
-  "chat.aibox.local",
-  "admin.aibox.local",
-  "status.aibox.local",
-  "qdrant.aibox.local"
+  "aibox-auth.local",
+  "aibox-agents.local",
+  "aibox-flows.local",
+  "aibox-chat.local",
+  "aibox-admin.local",
+  "aibox-status.local",
+  "aibox-qdrant.local"
 )
 
 function Setup-Hosts {
@@ -109,21 +111,14 @@ function Setup-Bonjour {
 }
 
 # --- 1. Setup résolution DNS ----------------------------------------------
-# Note importante : Bonjour Windows ne résout que les hostnames mDNS
-# à un seul label (aibox.local OK, auth.aibox.local NON). Donc même
-# en mode Bonjour, on ajoute les SOUS-domaines au hosts file.
-# Pour `aibox.local` lui-même, Bonjour suffit et reste résolvable même
-# si l'IP de la box change.
+# Note : depuis le passage aux hostnames plats (aibox.local,
+# aibox-auth.local, etc.), TOUS les noms sont résolvables par Bonjour
+# (label unique avant .local). Plus besoin de fallback hosts file en
+# mode Bonjour. En mode hosts, on garde l'ancien fonctionnement.
 if ($Mode -eq "hosts") {
   Setup-Hosts
 } else {
   Setup-Bonjour
-  # Bonjour résout aibox.local automatiquement, mais pas les sous-noms
-  # → on ajoute aussi les sous-domaines au hosts (pour Windows uniquement)
-  Write-Host ""
-  Write-Host "  Bonjour résout aibox.local automatiquement, mais Windows ne fait" -ForegroundColor DarkGray
-  Write-Host "  pas de mDNS multi-label → on ajoute les sous-domaines au hosts." -ForegroundColor DarkGray
-  Setup-Hosts
 }
 
 # --- 2. Cert racine Caddy (optionnel) -------------------------------------
