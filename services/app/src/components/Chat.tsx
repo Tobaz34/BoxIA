@@ -151,6 +151,9 @@ export function Chat() {
     setMessages([]);
     setSuggested([]);
     setError(null);
+    // Purge les images en attente — un agent non-vision ne saura pas les lire
+    // (Dify remplacerait par [img-0] silencieusement → UX cassée).
+    setAttached([]);
     refreshConversations();
   }, [currentAgent, refreshConversations]);
 
@@ -807,19 +810,23 @@ export function Chat() {
           />
 
           <div className="max-w-3xl mx-auto flex items-end gap-2">
-            {/* Bouton Joindre image */}
-            <button
-              onClick={pickImage}
-              disabled={streaming || uploadingImage || !currentAgent}
-              className="p-2.5 rounded-md text-muted hover:bg-muted/30 hover:text-foreground transition-default shrink-0 disabled:opacity-40"
-              title="Joindre une image"
-            >
-              {uploadingImage ? (
-                <ImageIcon size={18} className="animate-pulse text-primary" />
-              ) : (
-                <Paperclip size={18} />
-              )}
-            </button>
+            {/* Bouton Joindre image — uniquement si l'agent supporte la vision.
+                Les agents text-only (qwen2.5:7b) feraient répondre au modèle
+                « je ne vois pas l'image » : on cache simplement l'option. */}
+            {currentAgentMeta?.vision && (
+              <button
+                onClick={pickImage}
+                disabled={streaming || uploadingImage || !currentAgent}
+                className="p-2.5 rounded-md text-muted hover:bg-muted/30 hover:text-foreground transition-default shrink-0 disabled:opacity-40"
+                title="Joindre une image"
+              >
+                {uploadingImage ? (
+                  <ImageIcon size={18} className="animate-pulse text-primary" />
+                ) : (
+                  <Paperclip size={18} />
+                )}
+              </button>
+            )}
             <div className="flex-1">
               <textarea
                 ref={textareaRef}

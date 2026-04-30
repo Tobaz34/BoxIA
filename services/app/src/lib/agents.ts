@@ -32,6 +32,11 @@ export interface AgentConfig {
   /** Rôles autorisés à utiliser cet agent.
    *  undefined ou liste vide = ouvert à tous les utilisateurs authentifiés. */
   allowedRoles?: AgentRole[];
+  /** Si vrai, l'agent utilise un modèle multimodal (vision). L'UI affiche
+   *  alors le bouton "joindre image". Sur un modèle non-vision, Dify
+   *  remplace silencieusement l'image par un placeholder texte ce qui
+   *  donne une UX cassée — d'où ce flag. */
+  vision?: boolean;
 }
 
 export const AGENTS: Record<string, AgentConfig> = {
@@ -42,6 +47,8 @@ export const AGENTS: Record<string, AgentConfig> = {
     description: "Pour toutes vos questions du quotidien",
     envVar: "DIFY_DEFAULT_APP_API_KEY",
     isDefault: true,
+    // Modèle qwen2.5vl:7b — comprend les images
+    vision: true,
     // ouvert à tous
   },
   accountant: {

@@ -17,6 +17,9 @@ export interface AgentMeta {
   icon: string;
   description: string;
   isDefault?: boolean;
+  /** Modèle multimodal (vision). L'UI affiche le bouton paperclip
+   *  uniquement quand ce flag est vrai. */
+  vision?: boolean;
 }
 
 interface Props {
