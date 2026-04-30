@@ -313,6 +313,8 @@ async def assess_node(state: InvoiceState) -> InvoiceState:
 # =============================================================================
 
 def build_invoice_graph():
+    from app.persistence import get_checkpointer
+
     graph = StateGraph(InvoiceState)
     graph.add_node("extract", extract_node)
     graph.add_node("match", match_node)
@@ -323,7 +325,7 @@ def build_invoice_graph():
     graph.add_edge("match", "assess")
     graph.add_edge("assess", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=get_checkpointer())
 
 
 _GRAPH = None
@@ -340,7 +342,7 @@ def get_graph():
 # Entry point
 # =============================================================================
 
-async def run(request: ReconcileInvoiceRequest) -> ReconcileInvoiceResponse:
+async def run(request: ReconcileInvoiceRequest, thread_id: str | None = None) -> ReconcileInvoiceResponse:
     s = get_settings()
     started = time.time()
 
@@ -351,7 +353,8 @@ async def run(request: ReconcileInvoiceRequest) -> ReconcileInvoiceResponse:
         "discrepancies": [],
     }
 
-    result_state = await get_graph().ainvoke(initial_state)
+    config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    result_state = await get_graph().ainvoke(initial_state, config=config)
     duration_ms = int((time.time() - started) * 1000)
 
     best = result_state.get("best_match")

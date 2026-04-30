@@ -59,5 +59,7 @@ out/
 dist/
 build/
 
-# Memory (interne Claude, pas du repo produit)
+# Memory (interne Claude, pas du repo produit) — exception pour services/memory/
 memory/
+!services/memory/
+!services/memory/**

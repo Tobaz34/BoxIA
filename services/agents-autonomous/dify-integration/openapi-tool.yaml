@@ -1,0 +1,276 @@
+# =============================================================================
+# AI Box Agents — OpenAPI tool spec pour Dify
+# =============================================================================
+# À copier dans Dify : Tools → Custom → Create Custom Tool → Schema Type "OpenAPI 3"
+# Auth : Bearer ${AGENTS_API_KEY}
+# =============================================================================
+openapi: 3.0.3
+info:
+  title: AI Box Agents
+  version: 0.1.0
+  description: |
+    Service LangGraph sidecar exposant 3 agents autonomes pour TPE/PME français :
+    - Triage email (catégorie, priorité, réponse, actions)
+    - Génération de devis depuis brief libre
+    - Rapprochement facture ↔ commande/règlement
+
+servers:
+  - url: http://aibox-agents:8000
+    description: Réseau Docker interne aibox_net
+
+paths:
+  /v1/triage-email:
+    post:
+      operationId: triageEmail
+      summary: Trie un email entrant
+      description: |
+        Catégorise un email (commercial/support/admin/...), évalue sa priorité,
+        détecte phishing/PII, suggère une action, et rédige un brouillon de réponse
+        si action == repondre.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriageEmailRequest'
+      responses:
+        "200":
+          description: Triage result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriageEmailResponse'
+        "401":
+          description: API key invalide
+        "500":
+          description: Erreur interne (LLM down, parse fail malgré fallbacks)
+
+  /v1/generate-quote:
+    post:
+      operationId: generateQuote
+      summary: Génère un devis depuis un brief client en langage naturel
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateQuoteRequest'
+      responses:
+        "200":
+          description: Devis structuré
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateQuoteResponse'
+
+  /v1/reconcile-invoice:
+    post:
+      operationId: reconcileInvoice
+      summary: Rapproche une facture avec ses candidats
+      description: |
+        Extrait les données structurées d'une facture (OCR/texte), score chaque
+        candidat (commande / règlement) et formule une recommandation
+        (valider / enquêter / rejeter / demander_info).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReconcileInvoiceRequest'
+      responses:
+        "200":
+          description: Résultat du rapprochement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconcileInvoiceResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: Valeur de la variable AGENTS_API_KEY du service aibox-agents
+
+  schemas:
+    # ---- Triage email -----------------------------------------------------
+    TriageEmailRequest:
+      type: object
+      required: [sender, subject, body, received_at]
+      properties:
+        sender:
+          type: string
+          format: email
+          example: marie.dupont@acme.fr
+        sender_name:
+          type: string
+          example: Marie Dupont
+        recipients:
+          type: array
+          items: { type: string, format: email }
+        subject:
+          type: string
+          example: Demande de devis pour création site
+        body:
+          type: string
+          example: "Bonjour, nous souhaitons..."
+        received_at:
+          type: string
+          format: date-time
+          example: "2026-04-30T14:30:00"
+        has_attachments:
+          type: boolean
+          default: false
+        thread_history:
+          type: array
+          items: { type: string }
+          description: Résumés des messages précédents du fil (max 5)
+
+    TriageEmailResponse:
+      type: object
+      properties:
+        category:
+          type: string
+          enum: [commercial, support, administratif, interne, spam, newsletter, autre]
+        priority:
+          type: string
+          enum: [urgent, haute, normale, basse, info]
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        intent:
+          type: string
+        summary:
+          type: string
+        contains_pii:
+          type: boolean
+        contains_phishing_signals:
+          type: boolean
+        suggested_reply:
+          type: string
+          nullable: true
+        suggested_actions:
+          type: array
+          items:
+            type: object
+            properties:
+              action:
+                type: string
+                enum: [repondre, transferer, archiver, supprimer, creer_ticket, planifier_rdv, devis_a_generer]
+              rationale: { type: string }
+              target: { type: string, nullable: true }
+        needs_human_validation:
+          type: boolean
+
+    # ---- Quote generation -------------------------------------------------
+    GenerateQuoteRequest:
+      type: object
+      required: [brief, customer]
+      properties:
+        brief:
+          type: string
+          minLength: 20
+          example: "Création d'un site e-commerce avec 150 références produits..."
+        customer:
+          type: object
+          required: [name]
+          properties:
+            name: { type: string }
+            email: { type: string, format: email }
+            company: { type: string }
+            siret: { type: string }
+            address: { type: string }
+        company_context:
+          type: string
+          description: Contexte entreprise (tarifs habituels, secteur, conditions). Idéalement injecté par le RAG.
+        currency:
+          type: string
+          default: EUR
+        vat_rate_percent:
+          type: number
+          default: 20
+        valid_until_days:
+          type: integer
+          default: 30
+
+    GenerateQuoteResponse:
+      type: object
+      properties:
+        quote_number: { type: string, example: DEV-20260430-001 }
+        customer:
+          type: object
+        issue_date: { type: string, format: date }
+        valid_until: { type: string, format: date }
+        line_items:
+          type: array
+          items:
+            type: object
+            properties:
+              description: { type: string }
+              quantity: { type: number }
+              unit: { type: string }
+              unit_price_eur: { type: string }
+              total_eur: { type: string }
+        subtotal_eur: { type: string }
+        vat_eur: { type: string }
+        total_eur: { type: string }
+        payment_terms: { type: string }
+        confidence: { type: number }
+        needs_human_review: { type: boolean }
+        warnings:
+          type: array
+          items: { type: string }
+
+    # ---- Invoice reconciliation -------------------------------------------
+    ReconcileInvoiceRequest:
+      type: object
+      required: [invoice_type, invoice_text]
+      properties:
+        invoice_type:
+          type: string
+          enum: [fournisseur, client]
+        invoice_text:
+          type: string
+          minLength: 10
+          description: Texte OCR ou copié de la facture
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              candidate_id: { type: string }
+              candidate_type: { type: string, example: purchase_order }
+              amount_eur: { type: string }
+              date: { type: string, format: date }
+              reference: { type: string, nullable: true }
+              score: { type: number, default: 0 }
+              delta_eur: { type: string, default: "0" }
+              delta_days: { type: integer, default: 0 }
+
+    ReconcileInvoiceResponse:
+      type: object
+      properties:
+        invoice_data:
+          type: object
+        best_match:
+          type: object
+          nullable: true
+        match_status:
+          type: string
+          enum: [exact, partiel, divergent, introuvable]
+        confidence: { type: number }
+        discrepancies:
+          type: array
+          items: { type: string }
+        recommended_action: { type: string }
+        needs_human_validation: { type: boolean }
+        explanation: { type: string }

@@ -236,7 +236,9 @@ async def draft_node(state: EmailState) -> EmailState:
 # =============================================================================
 
 def build_email_triage_graph():
-    """Construit et compile le graphe LangGraph (sans checkpointer)."""
+    """Construit et compile le graphe LangGraph (avec checkpointer si dispo)."""
+    from app.persistence import get_checkpointer
+
     graph = StateGraph(EmailState)
     graph.add_node("classify", classify_node)
     graph.add_node("analyze", analyze_node)
@@ -247,7 +249,7 @@ def build_email_triage_graph():
     graph.add_edge("analyze", "draft")
     graph.add_edge("draft", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=get_checkpointer())
 
 
 _GRAPH = None
@@ -264,7 +266,7 @@ def get_graph():
 # Entry point (appelé par FastAPI)
 # =============================================================================
 
-async def run(request: TriageEmailRequest) -> TriageEmailResponse:
+async def run(request: TriageEmailRequest, thread_id: str | None = None) -> TriageEmailResponse:
     s = get_settings()
     started = time.time()
 
@@ -274,7 +276,8 @@ async def run(request: TriageEmailRequest) -> TriageEmailResponse:
         "steps": 0,
     }
 
-    result_state = await get_graph().ainvoke(initial_state)
+    config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    result_state = await get_graph().ainvoke(initial_state, config=config)
 
     duration_ms = int((time.time() - started) * 1000)
     cls = result_state["classification"]

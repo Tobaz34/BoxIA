@@ -22,7 +22,7 @@ import time
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -32,6 +32,8 @@ from app import __version__
 from app.config import get_settings
 from app.graphs import email_triage, invoice_reconciliation, quote_generator
 from app.llm import get_backend_info
+from app.persistence import get_mode as get_checkpointer_mode
+from app.persistence import lifespan_checkpointer
 from app.schemas import (
     GenerateQuoteRequest,
     GenerateQuoteResponse,
@@ -112,12 +114,17 @@ async def lifespan(app: FastAPI):
         outlines=s.enable_outlines,
     )
 
-    # Pré-construction des graphs (warmup léger, évite latence au 1er appel)
-    email_triage.get_graph()
-    quote_generator.get_graph()
-    invoice_reconciliation.get_graph()
+    # Init checkpointer (lifecycle async — boot + cleanup)
+    async with lifespan_checkpointer():
+        # Pré-construction des graphs (warmup, évite latence au 1er appel)
+        # Les graphs sont reconstruits avec checkpointer si dispo via get_graph()
+        email_triage.get_graph()
+        quote_generator.get_graph()
+        invoice_reconciliation.get_graph()
 
-    yield
+        log.info("checkpointer_mode", mode=get_checkpointer_mode())
+
+        yield
 
     log.info("agents_service_stopping")
 
@@ -181,6 +188,7 @@ async def info():
     return {
         "service": "aibox-agents",
         "version": __version__,
+        "checkpointer": get_checkpointer_mode(),
         **get_backend_info(),
     }
 
@@ -195,10 +203,13 @@ async def info():
     dependencies=[Depends(require_api_key)],
     summary="Trie un email entrant et propose une réponse + actions",
 )
-async def triage_email(request: TriageEmailRequest):
+async def triage_email(
+    request: TriageEmailRequest,
+    x_thread_id: str | None = Header(None, description="ID de thread pour reprendre un workflow checkpointé"),
+):
     log = structlog.get_logger("aibox.agents")
     try:
-        result = await email_triage.run(request)
+        result = await email_triage.run(request, thread_id=x_thread_id)
         log.info(
             "email_triage_done",
             category=result.category,
@@ -218,10 +229,13 @@ async def triage_email(request: TriageEmailRequest):
     dependencies=[Depends(require_api_key)],
     summary="Génère un devis structuré depuis un brief client en langage naturel",
 )
-async def generate_quote(request: GenerateQuoteRequest):
+async def generate_quote(
+    request: GenerateQuoteRequest,
+    x_thread_id: str | None = Header(None),
+):
     log = structlog.get_logger("aibox.agents")
     try:
-        result = await quote_generator.run(request)
+        result = await quote_generator.run(request, thread_id=x_thread_id)
         log.info(
             "quote_generated",
             quote_number=result.quote_number,
@@ -241,10 +255,13 @@ async def generate_quote(request: GenerateQuoteRequest):
     dependencies=[Depends(require_api_key)],
     summary="Rapproche une facture avec ses candidats (commandes ou paiements)",
 )
-async def reconcile_invoice(request: ReconcileInvoiceRequest):
+async def reconcile_invoice(
+    request: ReconcileInvoiceRequest,
+    x_thread_id: str | None = Header(None),
+):
     log = structlog.get_logger("aibox.agents")
     try:
-        result = await invoice_reconciliation.run(request)
+        result = await invoice_reconciliation.run(request, thread_id=x_thread_id)
         log.info(
             "invoice_reconciled",
             invoice_number=result.invoice_data.invoice_number,

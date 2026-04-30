@@ -16,6 +16,11 @@ services:
       OLLAMA_URL: http://ollama:11434
       LLM_MAIN: ${LLM_MAIN:-qwen2.5:7b}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-10}
+      # Mode v2 : délègue à aibox-agents (LangGraph). Si AGENTS_API_KEY vide
+      # → fallback legacy (Ollama direct, sans hardening défensif).
+      AGENTS_URL: ${AGENTS_URL:-http://aibox-agents:8000}
+      AGENTS_API_KEY: ${AGENTS_API_KEY:-}
+      AGENT_MODE: ${AGENT_MODE:-}
     volumes:
       - email_imap_state:/data
     networks:

@@ -1,0 +1,22 @@
+# =============================================================================
+# AI Box — Memory service (mem0-style sur Qdrant existant)
+# =============================================================================
+# Volontairement plus light que mem0 officiel (qui pèse ~200 Mo de deps).
+# On implémente la logique en direct : extract facts via LLM + embed + upsert.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic[email]==2.10.4
+pydantic-settings==2.7.0
+
+# Vector DB
+qdrant-client==1.12.1
+
+# HTTP / LLM
+httpx==0.28.1
+tenacity==9.0.0
+
+# Logging
+structlog==24.4.0
+
+pytest==8.3.4

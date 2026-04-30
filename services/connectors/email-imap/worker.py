@@ -1,17 +1,19 @@
 """
 Connecteur Email IMAP générique (OVH, Ionos, Gandi, Bluemind, etc.).
 
-Pareil que email-msgraph mais via IMAP. Pas d'API d'écriture côté serveur
-(IMAP ne permet pas vraiment de "tagger" facilement) — on stocke les digests
-dans un dossier IMAP `AIBox/Tries/<categorie>` via APPEND/MOVE, ou on se
-contente de générer des digests JSON consommables par Dify.
+Mode v2 (par défaut depuis 2026-04-30) : délègue le triage au service
+`aibox-agents` (LangGraph sidecar) qui fait classification + draft + actions
++ détection PII/phishing avec hardening défensif.
 
 Variables :
   IMAP_HOST, IMAP_PORT (993), IMAP_USER, IMAP_PASSWORD
   IMAP_USE_TLS=true|false
   IMAP_FOLDER=INBOX
   IMAP_MOVE_TO_FOLDER=AIBox/Tries  (optionnel — créé si manquant)
-  + LLM_MAIN, OLLAMA_URL, SYNC_INTERVAL_MINUTES
+  AGENTS_URL=http://aibox-agents:8000  (mode v2)
+  AGENTS_API_KEY=...
+  AGENT_MODE=v2|legacy  (par défaut v2 si AGENTS_API_KEY défini, sinon legacy)
+  + LLM_MAIN, OLLAMA_URL, SYNC_INTERVAL_MINUTES (legacy uniquement)
 """
 from __future__ import annotations
 
@@ -30,19 +32,27 @@ from pathlib import Path
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# ---- Config ----
+# ---- Config IMAP -----------------------------------------------------------
 IMAP_HOST = os.environ["IMAP_HOST"]
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
 IMAP_USER = os.environ["IMAP_USER"]
 IMAP_PASSWORD = os.environ["IMAP_PASSWORD"]
 IMAP_USE_TLS = os.environ.get("IMAP_USE_TLS", "true").lower() == "true"
 IMAP_FOLDER = os.environ.get("IMAP_FOLDER", "INBOX")
-IMAP_MOVE_TO = os.environ.get("IMAP_MOVE_TO_FOLDER", "")  # vide = pas de move
+IMAP_MOVE_TO = os.environ.get("IMAP_MOVE_TO_FOLDER", "")
 
 TENANT_ID = os.environ.get("TENANT_ID", "default")
+SYNC_INTERVAL_MINUTES = int(os.environ.get("SYNC_INTERVAL_MINUTES", "10"))
+
+# ---- Mode (v2 = via service agents-autonomous, legacy = Ollama direct) -----
+AGENTS_URL = os.environ.get("AGENTS_URL", "http://aibox-agents:8000")
+AGENTS_API_KEY = os.environ.get("AGENTS_API_KEY", "")
+DEFAULT_MODE = "v2" if AGENTS_API_KEY else "legacy"
+AGENT_MODE = os.environ.get("AGENT_MODE", DEFAULT_MODE)
+
+# ---- Config legacy (si AGENT_MODE=legacy) ----------------------------------
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 LLM_MAIN = os.environ.get("LLM_MAIN", "qwen2.5:7b")
-SYNC_INTERVAL_MINUTES = int(os.environ.get("SYNC_INTERVAL_MINUTES", "10"))
 
 STATE_DIR = Path(os.environ.get("STATE_DIR", "/data"))
 STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -54,17 +64,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("email-imap")
 
 
-CLASSIFY_SYSTEM = """Tu classes un email pour un employé français.
-Retourne UNIQUEMENT un JSON :
-{"category": "action"|"info"|"spam"|"automatique"|"perso",
- "priority": "haute"|"normale"|"basse",
- "summary": "1 phrase",
- "needs_reply": true|false,
- "key_actions": ["..."]}"""
-
-REPLY_SYSTEM = """Rédige un brouillon de réponse pro français, ton concis et factuel.
-Si info manquante : note [TBD: ...]. Ne signe pas."""
-
+# ===========================================================================
+# IMAP helpers
+# ===========================================================================
 
 def imap_connect() -> imaplib.IMAP4:
     if IMAP_USE_TLS:
@@ -137,8 +139,58 @@ def msg_to_dict(msg: email.message.Message) -> dict:
         "subject": str(msg.get("Subject", "")),
         "from": {"name": name, "address": addr},
         "received_at": rcv,
+        "has_attachments": any(
+            part.get_filename() for part in (msg.walk() if msg.is_multipart() else [])
+        ),
         "body": body_text[:6000],
     }
+
+
+# ===========================================================================
+# Mode v2 — délégation à aibox-agents
+# ===========================================================================
+
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=10))
+def call_agents_triage(msg: dict) -> dict:
+    """Appelle POST /v1/triage-email du service agents-autonomous.
+
+    Retourne la réponse complète (TriageEmailResponse) qu'on stocke telle quelle
+    dans le digest. Le caller (n8n / Dify / autre worker) consommera.
+    """
+    payload = {
+        "sender": msg["from"]["address"] or "unknown@example.com",
+        "sender_name": msg["from"]["name"] or None,
+        "recipients": [],
+        "subject": msg["subject"] or "(sans sujet)",
+        "body": msg["body"],
+        "received_at": msg["received_at"],
+        "has_attachments": msg.get("has_attachments", False),
+        "thread_history": [],
+    }
+    with httpx.Client(base_url=AGENTS_URL, timeout=180.0) as c:
+        r = c.post(
+            "/v1/triage-email",
+            json=payload,
+            headers={"Authorization": f"Bearer {AGENTS_API_KEY}"},
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+# ===========================================================================
+# Mode legacy — Ollama direct (fallback si AGENTS_API_KEY non configuré)
+# ===========================================================================
+
+CLASSIFY_SYSTEM = """Tu classes un email pour un employé français.
+Retourne UNIQUEMENT un JSON :
+{"category": "action"|"info"|"spam"|"automatique"|"perso",
+ "priority": "haute"|"normale"|"basse",
+ "summary": "1 phrase",
+ "needs_reply": true|false,
+ "key_actions": ["..."]}"""
+
+REPLY_SYSTEM = """Rédige un brouillon de réponse pro français, ton concis et factuel.
+Si info manquante : note [TBD: ...]. Ne signe pas."""
 
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=10))
@@ -162,7 +214,7 @@ def llm_text(prompt: str, system: str) -> str:
         return r.json()["response"].strip()
 
 
-def process(uid: int, msg: dict) -> None:
+def process_legacy(msg: dict) -> dict:
     prompt = (
         f"Sujet: {msg['subject']}\n"
         f"Expéditeur: {msg['from'].get('name')} <{msg['from'].get('address')}>\n"
@@ -180,16 +232,48 @@ def process(uid: int, msg: dict) -> None:
             "Rédige le brouillon.",
             REPLY_SYSTEM,
         )
+    return {"classification": classification, "suggested_reply": reply}
 
-    payload = {
-        "uid": uid,
-        "subject": msg["subject"],
-        "from": msg["from"],
-        "received_at": msg["received_at"],
-        "classification": classification,
-        "suggested_reply": reply,
-        "processed_at": datetime.now(timezone.utc).isoformat(),
-    }
+
+# ===========================================================================
+# Process & persist
+# ===========================================================================
+
+def process(uid: int, msg: dict) -> None:
+    if AGENT_MODE == "v2":
+        result = call_agents_triage(msg)
+        # Format unifié pour le consommateur (Dify, n8n, alerts)
+        payload = {
+            "uid": uid,
+            "subject": msg["subject"],
+            "from": msg["from"],
+            "received_at": msg["received_at"],
+            "has_attachments": msg.get("has_attachments", False),
+            "agent_version": "v2",
+            "triage": result,
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Log structuré pour Loki
+        log.info(
+            "triage uid=%d cat=%s prio=%s conf=%.2f hum=%s",
+            uid,
+            result.get("category"),
+            result.get("priority"),
+            result.get("confidence", 0.0),
+            result.get("needs_human_validation"),
+        )
+    else:
+        legacy_result = process_legacy(msg)
+        payload = {
+            "uid": uid,
+            "subject": msg["subject"],
+            "from": msg["from"],
+            "received_at": msg["received_at"],
+            "agent_version": "legacy",
+            **legacy_result,
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     (DIGESTS_DIR / f"{uid}.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -220,8 +304,11 @@ def sync_once() -> dict:
 
 
 def main() -> None:
-    log.info("email-imap démarré (host=%s, user=%s, interval=%dmin)",
-             IMAP_HOST, IMAP_USER, SYNC_INTERVAL_MINUTES)
+    log.info(
+        "email-imap démarré (host=%s, user=%s, interval=%dmin, mode=%s, agents_url=%s)",
+        IMAP_HOST, IMAP_USER, SYNC_INTERVAL_MINUTES, AGENT_MODE,
+        AGENTS_URL if AGENT_MODE == "v2" else "(legacy)",
+    )
     while True:
         try:
             stats = sync_once()

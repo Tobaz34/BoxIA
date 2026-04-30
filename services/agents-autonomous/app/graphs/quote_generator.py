@@ -312,6 +312,8 @@ async def finalize_node(state: QuoteState) -> QuoteState:
 # =============================================================================
 
 def build_quote_graph():
+    from app.persistence import get_checkpointer
+
     graph = StateGraph(QuoteState)
     graph.add_node("parse_brief", parse_brief_node)
     graph.add_node("identify_items", identify_items_node)
@@ -324,7 +326,7 @@ def build_quote_graph():
     graph.add_edge("estimate_pricing", "finalize")
     graph.add_edge("finalize", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=get_checkpointer())
 
 
 _GRAPH = None
@@ -341,7 +343,7 @@ def get_graph():
 # Entry point
 # =============================================================================
 
-async def run(request: GenerateQuoteRequest) -> GenerateQuoteResponse:
+async def run(request: GenerateQuoteRequest, thread_id: str | None = None) -> GenerateQuoteResponse:
     s = get_settings()
     started = time.time()
 
@@ -352,7 +354,8 @@ async def run(request: GenerateQuoteRequest) -> GenerateQuoteResponse:
         "warnings": [],
     }
 
-    result_state = await get_graph().ainvoke(initial_state)
+    config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    result_state = await get_graph().ainvoke(initial_state, config=config)
     duration_ms = int((time.time() - started) * 1000)
 
     line_items: list[QuoteLineItem] = result_state["priced_items"]
