@@ -46,6 +46,13 @@ services:
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_APP_CLIENT_ID:-aibox-app}
       AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_APP_CLIENT_SECRET}
 
+      # ---- Admin credentials pour Dify Console API (édition agents) ----
+      # Permet à l'app d'éditer la config des agents (pre_prompt, opening,
+      # suggestions) via /console/api. Sans ces vars, la page /agents reste
+      # en lecture seule pour les non-admins.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
       # ---- Backend services (via ports host-mapped) ----
       DIFY_BASE_URL: http://localhost:8081
       N8N_BASE_URL: http://localhost:5678
