@@ -353,7 +353,9 @@ async def run(request: ReconcileInvoiceRequest, thread_id: str | None = None) ->
         "discrepancies": [],
     }
 
-    config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    import uuid
+    effective_thread_id = thread_id or f"ephemeral-{uuid.uuid4()}"
+    config = {"configurable": {"thread_id": effective_thread_id}}
     result_state = await get_graph().ainvoke(initial_state, config=config)
     duration_ms = int((time.time() - started) * 1000)
 

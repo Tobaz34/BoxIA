@@ -276,7 +276,11 @@ async def run(request: TriageEmailRequest, thread_id: str | None = None) -> Tria
         "steps": 0,
     }
 
-    config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    # Le checkpointer LangGraph exige toujours un thread_id (sinon ValueError).
+    # Si le caller n'en fournit pas, on en génère un éphémère par run.
+    import uuid
+    effective_thread_id = thread_id or f"ephemeral-{uuid.uuid4()}"
+    config = {"configurable": {"thread_id": effective_thread_id}}
     result_state = await get_graph().ainvoke(initial_state, config=config)
 
     duration_ms = int((time.time() - started) * 1000)

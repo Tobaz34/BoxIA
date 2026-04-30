@@ -93,6 +93,27 @@ deploy_stack() {
   ( cd services/monitoring && docker compose --env-file "$env_file" up -d ) || \
       c_yellow "    (Monitoring partiellement démarré — métriques /system page peuvent être vides)"
 
+  # ---- Agents autonomes (LangGraph sidecar : triage email, devis, facture) -
+  c_blue "  → Démarrage Agents autonomes (LangGraph)..."
+  if [[ -d services/agents-autonomous ]]; then
+    ( cd services/agents-autonomous && docker compose --env-file "$env_file" up -d --build ) || \
+        c_yellow "    (Agents non démarrés — vérifier AGENTS_API_KEY dans .env)"
+  fi
+
+  # ---- Mémoire long-terme (mem0-style sur Qdrant) --------------------------
+  c_blue "  → Démarrage Memory (mem0)..."
+  if [[ -d services/memory ]]; then
+    ( cd services/memory && docker compose --env-file "$env_file" up -d --build ) || \
+        c_yellow "    (Memory non démarré — vérifier MEM0_API_KEY dans .env)"
+  fi
+
+  # ---- vLLM (optionnel, tier pme/+ uniquement) ------------------------------
+  if [[ "${HW_PROFILE:-tpe}" =~ ^pme ]] && [[ -d services/inference-vllm ]]; then
+    c_blue "  → Démarrage vLLM (tier ${HW_PROFILE})..."
+    ( cd services/inference-vllm && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (vLLM non démarré — vérifier GPU 16+ Go VRAM disponibles)"
+  fi
+
   # Démarre la stack héritée (n8n, Portainer, Uptime Kuma, NPM, Duplicati, Dashy)
   # si elle existe sur l'hôte. Important pour que le provisioning des comptes
   # n8n/Portainer fonctionne après reset.
