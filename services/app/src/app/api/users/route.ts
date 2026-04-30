@@ -31,7 +31,20 @@ export async function GET(req: NextRequest) {
     );
   }
   const j = await r.json();
-  const raw = (j.results || []) as AkUser[];
+  // Authentik renvoie aussi des comptes système qui ne sont pas des
+  // utilisateurs métier (akadmin = bootstrap admin, ak-outpost-* =
+  // service accounts pour les proxy outposts, AnonymousUser = guest
+  // par défaut). On les filtre pour ne montrer dans /users que les
+  // vrais comptes utilisables (admin ou employés).
+  const SYSTEM_USER_PATTERNS = [
+    /^akadmin$/,                  // bootstrap admin Authentik
+    /^ak-outpost-/,               // service accounts proxy outposts
+    /^AnonymousUser$/,            // guest implicite
+    /^authentik:system$/,         // user système IPC
+  ];
+  const isSystem = (u: AkUser) =>
+    SYSTEM_USER_PATTERNS.some((re) => re.test(u.username));
+  const raw = ((j.results || []) as AkUser[]).filter((u) => !isSystem(u));
 
   // Authentik renvoie groups (PKs UUID) mais pas leurs noms — on doit
   // résoudre. On charge tous les groupes une fois et on map.

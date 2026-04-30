@@ -163,12 +163,28 @@ export function Chat() {
         const j = await r.json();
         const list: AgentMeta[] = j.agents || [];
         setAgents(list);
-        // Restaure l'agent stocké, sinon le default
-        const stored =
-          (typeof window !== "undefined" && localStorage.getItem(LS_AGENT_KEY)) || "";
-        const valid = list.find((a) => a.slug === stored);
-        const initial =
-          valid?.slug || list.find((a) => a.isDefault)?.slug || list[0]?.slug || "";
+        // Priorité de sélection :
+        //   1. ?agent=<slug> dans l'URL (deep-link depuis /agents)
+        //   2. localStorage (préférence user)
+        //   3. agent default
+        //   4. premier de la liste
+        let initial = "";
+        if (typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          const fromUrl = params.get("agent");
+          if (fromUrl && list.find((a) => a.slug === fromUrl)) {
+            initial = fromUrl;
+            // Persiste pour que le refresh suivant garde la sélection
+            localStorage.setItem(LS_AGENT_KEY, fromUrl);
+          }
+        }
+        if (!initial) {
+          const stored =
+            (typeof window !== "undefined" && localStorage.getItem(LS_AGENT_KEY)) || "";
+          const valid = list.find((a) => a.slug === stored);
+          initial =
+            valid?.slug || list.find((a) => a.isDefault)?.slug || list[0]?.slug || "";
+        }
         setCurrentAgent(initial);
       } catch { /* noop */ }
     })();
@@ -847,7 +863,21 @@ export function Chat() {
                   {currentAgentMeta?.icon || "🤖"}
                 </div>
                 <h1 className="text-3xl font-semibold mb-2">
-                  {currentAgentMeta?.name || "Assistant"}
+                  {(() => {
+                    // Salutation personnalisée avec le prénom du user.
+                    // On extrait le 1er mot du `name` Authentik (ex: "Admin
+                    // Test" → "Admin", "Jean Dupont" → "Jean") et on l'ajoute
+                    // au nom de l'agent. Si pas de name, on tombe sur l'email
+                    // (avant le @) ou « Bonjour ».
+                    const fullName = session?.user?.name || "";
+                    const firstName = fullName.split(/\s+/)[0]
+                      || (session?.user?.email || "").split("@")[0]
+                      || "";
+                    const agentName = currentAgentMeta?.name || "Assistant";
+                    return firstName
+                      ? `Bonjour ${firstName}, je suis ${agentName}`
+                      : agentName;
+                  })()}
                 </h1>
                 <p className="text-muted text-lg">
                   {currentAgentMeta?.openingStatement ||

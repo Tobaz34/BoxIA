@@ -46,6 +46,38 @@ function relativeDate(epoch: number): string {
   });
 }
 
+/** Catégorise une conversation dans un bucket temporel pour l'affichage
+ *  par groupes (Aujourd'hui / Hier / Cette semaine / Plus ancien). */
+function dateBucket(epoch: number): string {
+  const now = new Date();
+  const date = new Date(epoch * 1000);
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  if (sameDay(date, now)) return "Aujourd'hui";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(date, yesterday)) return "Hier";
+  // 7 derniers jours (mais pas hier ou aujourd'hui)
+  const sevenDaysAgo = new Date(now);
+  sevenDaysAgo.setDate(now.getDate() - 7);
+  if (date >= sevenDaysAgo) return "Cette semaine";
+  // 30 derniers jours
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(now.getDate() - 30);
+  if (date >= thirtyDaysAgo) return "Ce mois-ci";
+  return "Plus ancien";
+}
+
+const BUCKET_ORDER = [
+  "Aujourd'hui",
+  "Hier",
+  "Cette semaine",
+  "Ce mois-ci",
+  "Plus ancien",
+];
+
 export function ConversationsList({
   conversations,
   currentId,
@@ -78,73 +110,89 @@ export function ConversationsList({
             Aucune conversation.<br />Lancez-en une pour commencer.
           </div>
         )}
-        {conversations.map((c) => {
-          const active = c.id === currentId;
-          return (
-            <div
-              key={c.id}
-              className={
-                "group relative flex items-center gap-2 px-2.5 py-2 rounded-md cursor-pointer text-sm transition-default " +
-                (active
-                  ? "bg-primary/15 text-foreground"
-                  : "hover:bg-muted/20 text-foreground/90")
-              }
-              onClick={() => onSelect(c.id)}
-            >
-              <MessageSquare
-                size={14}
-                className={active ? "text-primary shrink-0" : "text-muted shrink-0"}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="truncate">
-                  {c.name && c.name !== "New conversation"
-                    ? c.name
-                    : "Sans titre"}
-                </div>
-                <div className="text-[10px] text-muted">
-                  {relativeDate(c.updated_at || c.created_at)}
-                </div>
+        {/* Grouper les conversations par bucket temporel pour faciliter
+            la navigation quand l'historique grossit. */}
+        {(() => {
+          const groups: Record<string, Conversation[]> = {};
+          for (const c of conversations) {
+            const bucket = dateBucket(c.updated_at || c.created_at);
+            (groups[bucket] ||= []).push(c);
+          }
+          return BUCKET_ORDER.filter((b) => groups[b]?.length).map((bucket) => (
+            <div key={bucket} className="mb-3">
+              <div className="px-3 pb-1 text-[10px] uppercase tracking-wide text-muted font-medium">
+                {bucket}
               </div>
-              <button
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-muted/40 transition-default"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOpenMenu(openMenu === c.id ? null : c.id);
-                }}
-                title="Actions"
-              >
-                <MoreHorizontal size={14} />
-              </button>
-              {openMenu === c.id && (
-                <div
-                  className="absolute right-1 top-9 z-10 w-44 rounded-md border border-border bg-card shadow-lg py-1"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-default"
-                    onClick={async () => {
-                      setOpenMenu(null);
-                      await onRename(c.id);
-                    }}
+              {groups[bucket].map((c) => {
+                const active = c.id === currentId;
+                return (
+                  <div
+                    key={c.id}
+                    className={
+                      "group relative flex items-center gap-2 px-2.5 py-2 rounded-md cursor-pointer text-sm transition-default " +
+                      (active
+                        ? "bg-primary/15 text-foreground"
+                        : "hover:bg-muted/20 text-foreground/90")
+                    }
+                    onClick={() => onSelect(c.id)}
                   >
-                    <Wand2 size={12} /> Renommer (auto)
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 transition-default"
-                    onClick={async () => {
-                      setOpenMenu(null);
-                      if (confirm("Supprimer cette conversation ?")) {
-                        await onDelete(c.id);
-                      }
-                    }}
-                  >
-                    <Trash2 size={12} /> Supprimer
-                  </button>
-                </div>
-              )}
+                    <MessageSquare
+                      size={14}
+                      className={active ? "text-primary shrink-0" : "text-muted shrink-0"}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate">
+                        {c.name && c.name !== "New conversation"
+                          ? c.name
+                          : "Sans titre"}
+                      </div>
+                      <div className="text-[10px] text-muted">
+                        {relativeDate(c.updated_at || c.created_at)}
+                      </div>
+                    </div>
+                    <button
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-muted/40 transition-default"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenu(openMenu === c.id ? null : c.id);
+                      }}
+                      title="Actions"
+                    >
+                      <MoreHorizontal size={14} />
+                    </button>
+                    {openMenu === c.id && (
+                      <div
+                        className="absolute right-1 top-9 z-10 w-44 rounded-md border border-border bg-card shadow-lg py-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-default"
+                          onClick={async () => {
+                            setOpenMenu(null);
+                            await onRename(c.id);
+                          }}
+                        >
+                          <Wand2 size={12} /> Renommer (auto)
+                        </button>
+                        <button
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 transition-default"
+                          onClick={async () => {
+                            setOpenMenu(null);
+                            if (confirm("Supprimer cette conversation ?")) {
+                              await onDelete(c.id);
+                            }
+                          }}
+                        >
+                          <Trash2 size={12} /> Supprimer
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          ));
+        })()}
       </div>
     </div>
   );

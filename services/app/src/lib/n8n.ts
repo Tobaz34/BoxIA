@@ -116,3 +116,31 @@ export async function setWorkflowActive(id: string, active: boolean): Promise<bo
     return false;
   }
 }
+
+/** Crée un workflow dans n8n à partir de son JSON.
+ *  Retourne le workflow créé (avec id) ou null si échec.
+ *
+ *  Le JSON template peut venir de templates/n8n/*.json. n8n accepte le
+ *  format complet (name, nodes, connections, settings, etc.). On strip
+ *  les champs id/createdAt/updatedAt qui doivent être assignés par n8n.
+ */
+export async function createWorkflow(
+  template: Record<string, unknown>,
+): Promise<N8nWorkflow | null> {
+  try {
+    // Strip les champs read-only avant push
+    const { id: _id, createdAt: _ca, updatedAt: _ua, versionId: _vid,
+            ...payload } = template as Record<string, unknown>;
+    void _id; void _ca; void _ua; void _vid;
+    const r = await n8nFetch("/rest/workflows", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j.data || j) as N8nWorkflow;
+  } catch (e) {
+    console.warn("[n8n] createWorkflow error:", e);
+    return null;
+  }
+}

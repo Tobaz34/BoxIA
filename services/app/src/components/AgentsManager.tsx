@@ -14,6 +14,7 @@
 import {
   Bot, AlertCircle, Settings as SettingsIcon, Save, Check, X,
   ShieldCheck, Briefcase, User, Plus, Minus, RotateCcw,
+  MessageSquare,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -201,16 +202,28 @@ export function AgentsManager() {
                 )}
               </div>
 
-              {isAdmin && (
-                <button
-                  onClick={() => openEdit(a.slug)}
-                  disabled={editLoading}
-                  className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-primary/10 text-primary hover:bg-primary/20 text-sm font-medium transition-default disabled:opacity-50"
+              <div className="flex gap-2">
+                {/* Bouton Discuter — sélectionne l'agent + redirige vers le
+                    chat. Dispo pour tous les rôles (pas juste admins). */}
+                <a
+                  href={`/?agent=${encodeURIComponent(a.slug)}`}
+                  className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-accent/10 text-accent hover:bg-accent/20 text-sm font-medium transition-default"
+                  title={`Discuter avec ${a.name}`}
                 >
-                  <SettingsIcon size={14} />
-                  Configurer
-                </button>
-              )}
+                  <MessageSquare size={14} />
+                  Discuter
+                </a>
+                {isAdmin && (
+                  <button
+                    onClick={() => openEdit(a.slug)}
+                    disabled={editLoading}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-primary/10 text-primary hover:bg-primary/20 text-sm font-medium transition-default disabled:opacity-50"
+                  >
+                    <SettingsIcon size={14} />
+                    Configurer
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

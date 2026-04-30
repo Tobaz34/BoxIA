@@ -26,24 +26,60 @@ interface Status {
   username?: string;
 }
 
+// Clé localStorage : si le user a cliqué « J'ai changé », on stocke ici
+// pour ne pas re-afficher la bannière tant que l'API confirme aussi.
+// Permet de persister le dismiss côté client même si l'API Authentik
+// PATCH a échoué (le user n'est pas spammé).
+const LS_DISMISSED_KEY = "aibox.password-banner-dismissed";
+
 export function PasswordChangeBanner() {
   const [status, setStatus] = useState<Status | null>(null);
   const [dismissing, setDismissing] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
+  const [locallyDismissed, setLocallyDismissed] = useState(false);
+
+  // Read le dismiss local au mount (avant de fetcher l'état serveur)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (localStorage.getItem(LS_DISMISSED_KEY) === "1") {
+      setLocallyDismissed(true);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     fetch("/api/me/password-status", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (!cancelled && j) setStatus(j); })
+      .then((j) => {
+        if (!cancelled && j) {
+          setStatus(j);
+          // Si l'API confirme que le flag est down, on clean le marker
+          // local (cas : un autre admin a fait le reset, ou recovery script).
+          if (!j.must_change && typeof window !== "undefined") {
+            localStorage.removeItem(LS_DISMISSED_KEY);
+          }
+        }
+      })
       .catch(() => { /* silencieux : pas critique */ });
     return () => { cancelled = true; };
   }, []);
 
-  if (!status?.must_change) return null;
+  // Hide si :
+  //  - l'API dit que le user a déjà changé (must_change=false)
+  //  - OU le user a cliqué « J'ai changé » localement (sticky même au refresh)
+  if (!status?.must_change || locallyDismissed) return null;
 
   async function dismiss() {
     setDismissing(true);
+    // 1) Marqueur local IMMÉDIAT — la bannière disparaît même si l'API
+    //    Authentik patch est lente ou échoue.
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LS_DISMISSED_KEY, "1");
+    }
+    setLocallyDismissed(true);
+    // 2) Best-effort : tente d'aussi clear le flag côté Authentik. Si ça
+    //    échoue (ex : token expiré), pas grave — au prochain login ça
+    //    se réconciliera.
     try {
       const r = await fetch("/api/me/password-status", {
         method: "POST",

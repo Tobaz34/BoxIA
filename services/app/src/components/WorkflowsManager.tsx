@@ -24,7 +24,38 @@ interface N8nWorkflow {
   triggerCount?: number;
 }
 
-const N8N_PUBLIC_URL = "https://aibox-flows.local";
+/** URL publique de n8n. Calculée dynamiquement en fonction du host
+ *  courant pour fonctionner peu importe comment l'utilisateur accède à
+ *  l'app :
+ *
+ *  - https://aibox.local           → https://aibox-flows.local (Caddy edge mDNS)
+ *  - https://ai.client.fr          → https://flows.ai.client.fr (Caddy edge prod)
+ *  - http://192.168.15.210:3100    → http://192.168.15.210:5678 (IP brute, pas Caddy)
+ *  - http://localhost:3100         → http://localhost:5678 (dev)
+ *
+ *  Si on n'arrive pas à dériver, fallback sur l'URL flat-mDNS par défaut.
+ */
+function n8nPublicUrl(): string {
+  if (typeof window === "undefined") return "https://aibox-flows.local";
+  const { protocol, hostname, port } = window.location;
+  // Mode IP brute / localhost / dev : remplace juste le port
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname === "localhost") {
+    return `${protocol}//${hostname}:5678`;
+  }
+  // Mode flat-mDNS : aibox.local → aibox-flows.local
+  if (hostname.endsWith(".local")) {
+    const prefix = hostname.split(".")[0].split("-")[0]; // strip suffix éventuel
+    return `https://${prefix}-flows.local`;
+  }
+  // Mode prod multi-label : foo.client.fr → flows.client.fr
+  const parts = hostname.split(".");
+  if (parts.length >= 2) {
+    parts[0] = "flows";
+    return `https://${parts.join(".")}`;
+  }
+  // Fallback
+  return `${protocol}//${hostname}:5678`;
+}
 
 function relTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -46,6 +77,15 @@ export function WorkflowsManager() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  // Import templates state
+  const [importing, setImporting] = useState(false);
+  const [importReport, setImportReport] = useState<{
+    total: number; imported: number; skipped: number; failed: number;
+  } | null>(null);
+  // URL publique de n8n calculée côté client (window.location). Stockée
+  // une fois pour éviter les re-calculs et permettre le SSR fallback.
+  const [n8nUrl, setN8nUrl] = useState<string>("https://aibox-flows.local");
+  useEffect(() => { setN8nUrl(n8nPublicUrl()); }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -117,7 +157,7 @@ export function WorkflowsManager() {
             <RefreshCw size={16} />
           </button>
           <a
-            href={N8N_PUBLIC_URL}
+            href={n8nUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-default"
@@ -137,12 +177,55 @@ export function WorkflowsManager() {
       {loading ? (
         <div className="text-center text-sm text-muted py-12">Chargement…</div>
       ) : workflows && workflows.length === 0 ? (
-        <div className="border border-dashed border-border rounded-lg p-12 text-center text-muted">
+        <div className="border border-dashed border-border rounded-lg p-10 text-center text-muted">
           <Workflow size={32} className="mx-auto mb-3 opacity-50" />
-          <p>Aucun workflow pour le moment.</p>
-          <p className="text-xs mt-1">
-            Cliquez sur « Ouvrir n8n » pour créer votre premier workflow.
+          <p className="mb-4">Aucun workflow pour le moment.</p>
+          <p className="text-xs mb-4 max-w-md mx-auto">
+            Le repo BoxIA contient des workflows pré-écrits prêts à l'emploi
+            (digest emails quotidien, relance factures impayées). Importez-les
+            en 1 clic, ou créez le vôtre via n8n.
           </p>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <button
+              onClick={async () => {
+                setImporting(true);
+                setImportReport(null);
+                try {
+                  const r = await fetch("/api/workflows/import-templates", {
+                    method: "POST",
+                  });
+                  const j = await r.json().catch(() => ({}));
+                  if (r.ok) {
+                    setImportReport(j.summary);
+                    await refresh();
+                  } else {
+                    setError(j.message || j.error || "Import échoué");
+                  }
+                } finally {
+                  setImporting(false);
+                }
+              }}
+              disabled={importing}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-accent text-accent-foreground text-sm font-medium hover:opacity-90 transition-default disabled:opacity-50"
+            >
+              {importing ? "Import en cours…" : "📦 Importer les templates par défaut"}
+            </button>
+            <a
+              href={n8nUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-muted/15 transition-default"
+            >
+              <ExternalLink size={14} />
+              Ouvrir n8n pour créer le mien
+            </a>
+          </div>
+          {importReport && (
+            <div className="mt-4 text-xs text-accent">
+              ✓ {importReport.imported} importé(s){importReport.skipped > 0 ? `, ${importReport.skipped} déjà présent(s)` : ""}
+              {importReport.failed > 0 ? `, ${importReport.failed} échec(s)` : ""}
+            </div>
+          )}
         </div>
       ) : workflows && workflows.length > 0 ? (
         <div className="rounded-lg border border-border bg-card divide-y divide-border">
@@ -199,7 +282,7 @@ export function WorkflowsManager() {
                   </button>
                 )}
                 <a
-                  href={`${N8N_PUBLIC_URL}/workflow/${w.id}`}
+                  href={`${n8nUrl}/workflow/${w.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-2 rounded text-muted hover:text-foreground hover:bg-muted/30 transition-default"
