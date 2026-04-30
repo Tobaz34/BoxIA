@@ -1,0 +1,80 @@
+# =============================================================================
+# AI Box — Agents autonomes (LangGraph sidecar)
+# =============================================================================
+# Service Python qui expose 3 agents autonomes en HTTP :
+#   - POST /v1/triage-email          → triage + draft réponse + actions
+#   - POST /v1/generate-quote        → devis depuis brief client
+#   - POST /v1/reconcile-invoice     → rapprochement facture ↔ commande/règlement
+#
+# Ces endpoints sont conçus pour être appelés comme "HTTP tools" par Dify.
+#
+# Backend inférence : auto-sélectionné selon HW_PROFILE
+#   - tpe       → Ollama (séquentiel, fallback graceful si agent overloaded)
+#   - pme/+     → vLLM (continuous batching) + Outlines guided_json
+#
+# Persistance LangGraph (checkpointer) : Postgres existant de Dify (même DB,
+# schéma dédié `langgraph` pour ne pas polluer Dify).
+#
+# Sécurité : API key Bearer (AGENTS_API_KEY), bind 127.0.0.1 (Dify l'appelle
+# via le réseau aibox_net interne). Pas d'exposition LAN.
+# =============================================================================
+
+name: aibox-agents
+
+services:
+  agents:
+    build: .
+    image: aibox-agents:0.1.0
+    container_name: aibox-agents
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8085:8000"        # bind local uniquement
+    environment:
+      # ---- Profil hardware (détermine le backend) ----------------------------
+      HW_PROFILE: ${HW_PROFILE:-tpe}
+
+      # ---- Inférence ---------------------------------------------------------
+      INFERENCE_BACKEND: ${INFERENCE_BACKEND:-ollama}    # ollama | vllm
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      VLLM_URL: ${VLLM_URL:-http://vllm:8000}
+      LLM_MAIN: ${LLM_MAIN:-qwen2.5:7b}
+
+      # ---- Persistance (Postgres existant de Dify) ---------------------------
+      # Schéma dédié `langgraph` créé au boot si absent.
+      POSTGRES_URL: ${LANGGRAPH_POSTGRES_URL:-postgresql://postgres:${PG_DIFY_PASSWORD:-difyai123456}@aibox-dify-db:5432/dify}
+
+      # ---- API & sécurité ----------------------------------------------------
+      AGENTS_API_KEY: ${AGENTS_API_KEY:?AGENTS_API_KEY is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # ---- Comportement ------------------------------------------------------
+      MAX_STEPS_PER_GRAPH: ${MAX_STEPS_PER_GRAPH:-12}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-90}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+
+      # ---- Outlines / structured output --------------------------------------
+      ENABLE_OUTLINES: ${ENABLE_OUTLINES:-false}        # true si vLLM (guided_json)
+
+      # ---- Observabilité -----------------------------------------------------
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_ENDPOINT:-}   # optionnel
+
+    networks:
+      - aibox_net
+      - ollama_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # Mémoire bornée — l'app est légère mais LangGraph + httpx peut grossir si workflows longs
+    mem_limit: 1g
+    mem_reservation: 256m
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

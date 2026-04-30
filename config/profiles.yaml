@@ -1,0 +1,129 @@
+# =============================================================================
+# AI Box — Profils hardware/usage
+# =============================================================================
+# Ces profils sont la source de vérité pour adapter automatiquement la stack
+# au nombre d'utilisateurs / au matériel du client.
+#
+# Lecture par :
+#   - scripts/detect-profile.sh   → détecte HW + suggère un profil
+#   - install.sh                  → applique le profil dans .env (HW_PROFILE)
+#   - services/agents-autonomous/ → choix backend inférence + concurrence
+#   - services/inference-vllm/    → activation conditionnelle vLLM
+#
+# Règle d'or : aucun profil ne doit casser le précédent. Un profil supérieur
+# AJOUTE des features (vLLM, Outlines, reranker, agents autonomes) sans
+# retirer ce qui marche dans le profil inférieur.
+# =============================================================================
+
+profiles:
+
+  # -------------------------------------------------------------------------
+  # tpe — TPE / artisan / cabinet 1-5 users
+  # Hardware : mini-PC GPU 8-12 Go VRAM, 16-32 Go RAM
+  # -------------------------------------------------------------------------
+  tpe:
+    label: "TPE (1-5 utilisateurs)"
+    users_max: 5
+    hardware:
+      vram_gb_min: 8
+      ram_gb_min: 16
+      cpu_cores_min: 6
+      disk_gb_min: 256
+    inference:
+      backend: ollama                # 1 requête à la fois, simple et stable
+      llm_main: qwen2.5:7b           # 4.7 Go Q4_K_M
+      llm_embed: bge-m3              # 1.2 Go
+      llm_vision: null               # à la demande uniquement
+      llm_code: null
+      reranker: null                 # pas de marge VRAM
+      max_concurrent_requests: 2
+      keep_alive_minutes: 30
+    features:
+      autonomous_agents: false       # sur 7B sans batching = échec multi-step
+      structured_output_outlines: false
+      voice_stt_tts: false
+      multi_tenant_qdrant: false
+      mem0_long_term: false
+    monitoring:
+      retention_days: 14
+      alerting: minimal              # 3 alertes (disk, GPU OOM, services down)
+
+  # -------------------------------------------------------------------------
+  # pme — PME 5-30 users
+  # Hardware : tour GPU 16-24 Go VRAM (RTX 4080/4090), 32-64 Go RAM
+  # -------------------------------------------------------------------------
+  pme:
+    label: "PME (5-30 utilisateurs)"
+    users_max: 30
+    hardware:
+      vram_gb_min: 16
+      ram_gb_min: 32
+      cpu_cores_min: 12
+      disk_gb_min: 512
+    inference:
+      backend: vllm                  # continuous batching → 5x users concurrents
+      llm_main: Qwen/Qwen2.5-14B-Instruct-AWQ
+      llm_embed: bge-m3              # via Ollama (vLLM ne fait pas embed)
+      llm_vision: qwen2.5vl:7b       # Ollama, à la demande
+      llm_code: qwen2.5-coder:7b
+      reranker: BAAI/bge-reranker-v2-m3   # via TEI
+      max_concurrent_requests: 8
+      keep_alive_minutes: 60
+    features:
+      autonomous_agents: true        # LangGraph sidecar avec workflow guidé
+      structured_output_outlines: true   # JSON schema strict via vLLM guided_json
+      voice_stt_tts: true            # faster-whisper + piper1
+      multi_tenant_qdrant: false
+      mem0_long_term: true
+    monitoring:
+      retention_days: 30
+      alerting: standard             # 8 alertes (incl. queue length, latency p95)
+
+  # -------------------------------------------------------------------------
+  # pme-plus — PME 30-100 users / multi-site / multi-tenant
+  # Hardware : serveur GPU 24-48 Go VRAM (RTX 4090, A5000, A6000), 64-128 Go RAM
+  # -------------------------------------------------------------------------
+  pme-plus:
+    label: "PME+ (30-100 utilisateurs, multi-site)"
+    users_max: 100
+    hardware:
+      vram_gb_min: 24
+      ram_gb_min: 64
+      cpu_cores_min: 16
+      disk_gb_min: 1024
+    inference:
+      backend: vllm
+      llm_main: Qwen/Qwen2.5-32B-Instruct-AWQ
+      llm_embed: bge-m3
+      llm_vision: qwen2.5vl:7b
+      llm_code: qwen2.5-coder:14b
+      reranker: BAAI/bge-reranker-v2-m3
+      max_concurrent_requests: 16
+      keep_alive_minutes: 120
+    features:
+      autonomous_agents: true        # CrewAI multi-agents OK sur 32B
+      structured_output_outlines: true
+      voice_stt_tts: true
+      multi_tenant_qdrant: true      # 1 collection Qdrant par tenant
+      mem0_long_term: true
+    monitoring:
+      retention_days: 90
+      alerting: full                 # 12+ alertes + SLO tracking
+
+# =============================================================================
+# Mapping nb d'utilisateurs → profil suggéré (utilisé par detect-profile.sh)
+# =============================================================================
+user_count_to_profile:
+  - { max: 5,   profile: tpe }
+  - { max: 30,  profile: pme }
+  - { max: 100, profile: pme-plus }
+
+# =============================================================================
+# Conventions
+# =============================================================================
+# - VRAM est exprimée en Go (Gigaoctets décimaux pour cohérence avec spec GPU)
+# - Les noms de modèles Ollama suivent le format `name:tag` (ex: qwen2.5:7b)
+# - Les noms vLLM suivent le format HuggingFace (`org/repo`)
+# - `null` signifie "feature désactivée pour ce tier"
+# - Un downgrade de profil (pme → tpe) ne supprime jamais de données : il
+#   stoppe juste les services non requis.
