@@ -20,10 +20,15 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 async function loginN8n(): Promise<CachedAuth | null> {
   if (!ADMIN_EMAIL || !ADMIN_PASSWORD) return null;
   try {
+    // n8n 1.x utilise `emailOrLdapLoginId`. Depuis ~1.70 le serveur
+    // attend `email` directement (renvoie 500 « Email is required »
+    // sinon). On envoie les deux clés pour être rétro-compatible avec
+    // les anciennes versions ET la nouvelle.
     const r = await fetch(`${N8N_BASE}/rest/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        email: ADMIN_EMAIL,
         emailOrLdapLoginId: ADMIN_EMAIL,
         password: ADMIN_PASSWORD,
       }),
