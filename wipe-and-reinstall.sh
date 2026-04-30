@@ -121,7 +121,7 @@ hr
 c_blue "[1/8] Backup pré-wipe de $TARGET_DIR"
 TS=$(date +%Y%m%d-%H%M%S)
 if [[ -d "$TARGET_DIR" ]]; then
-    $SUDO mkdir -p "$BACKUP_DIR"
+    run $SUDO mkdir -p "$BACKUP_DIR"
     BAK="$BACKUP_DIR/wipe-$TS.tar.gz"
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "  [dry-run] tar -czf $BAK -C / srv/ai-stack"
@@ -226,7 +226,7 @@ run $SUDO -u "$INVOKER" git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$TAR
 hr
 c_blue "[8/8] Lancement de install-firstrun.sh (mDNS + Avahi + wizard)"
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo "  [dry-run] $TARGET_DIR/services/setup/install-firstrun.sh"
+    echo "  [dry-run] $SUDO bash $TARGET_DIR/services/setup/install-firstrun.sh"
 else
     $SUDO bash "$TARGET_DIR/services/setup/install-firstrun.sh"
 fi
