@@ -93,3 +93,73 @@ Bug observé sur le 2e wipe + reinstall : edge-caddy se retrouvait attaché uniq
 - Dify init validation 401 sur certaines runs (Dify-api pas encore prêt malgré warmup)
 - n8n connection refused (la stack héritée n'est pas démarrée — ne fait pas partie de l'install BoxIA)
 - Tester un VRAI `wipe-and-reinstall.sh` (avec sudo) pour valider qu'install-firstrun.sh + bootstrap.sh tiennent dans un scénario fully fresh
+
+---
+
+# Phase 2 — Améliorations chat (post-stabilisation)
+
+User a donné carte blanche pour 2h sur l'efficacité du chat. Features ajoutées :
+
+## Drag-drop fichiers (commit `af5b37b`)
+- **Backend** : `/api/files/upload` accepte maintenant **PDF, DOCX, TXT, MD, CSV, XLSX, PPTX, HTML** en plus des images. Limite 8 Mo image / 20 Mo doc. Retourne un champ `kind` ("image"|"document") qui choisit le bon `type` dans le payload Dify chat-messages.
+- **Frontend** : type `AttachedFile` (kind, name, size, extension, data_url optionnel). Drop overlay plein-écran avec icône Upload + hint formats. Preview dans la barre input avec icône fichier ou thumbnail image. Multi-fichiers supportés en drop.
+- Le bouton paperclip est maintenant toujours visible (les agents non-vision peuvent traiter des documents).
+
+## Voice input (commit `af5b37b`)
+- Hook custom `useSpeech()` dans `lib/use-speech.ts` qui wrappe `SpeechRecognition` (Chrome/Edge/Safari). **Privacy-first** : la voix ne quitte JAMAIS le navigateur.
+- Bouton Mic dans la barre input, rouge pulsant pendant l'écoute. Lang FR par défaut. Le textarea reçoit le transcript en temps réel.
+- Caché si navigateur non supporté.
+
+## Slash commands (commit `af5b37b`)
+- Composant `SlashCommandMenu` : autocomplete au-dessus du textarea quand l'input commence par "/". Filtre par nom + aliases. Navigation ↑↓⏎⎋⇥. Click souris OK aussi.
+- Commandes : `/help` `/new` (alias `/clear`) `/regen` (alias `/retry`, `/regenerate`) `/agent <slug>` `/export` `/summarize` (alias `/resume`)
+- Le menu intercepte Enter en mode capture pour empêcher le send.
+
+## Pre-warm Ollama (commit `af5b37b`)
+- `/api/system/warmup` (POST) load qwen2.5:7b + qwen2.5vl:7b + bge-m3 en VRAM avec `keep_alive=30m`. Évite ~5-10 s de cold-start à la 1<sup>re</sup> question d'un user.
+- Appelé en fire-and-forget au mount du Chat, 1 fois par session (cached via sessionStorage).
+- GET endpoint pour health-check externe (liste des modèles).
+
+## ThinkingIndicator dynamique (commit `af5b37b`)
+- Phrases qui rotent toutes les 1.8 s pendant la réflexion : "Je réfléchis…" → "Je consulte la base…" → "Je structure…"
+- Si user a attaché un fichier au précédent msg : phrases adaptées ("Lecture du document…", "Extraction des points clés…", etc.)
+
+## TTS lecture des réponses (commit `295d9fa`)
+- Hook `useTTS()` qui wrappe `speechSynthesis`. Strip basic markdown avant lecture (code blocks, bold, italic, headers, links).
+- Bouton 🔊 sur chaque message assistant (à côté Copy/Like/Dislike). Lit en français avec voix native si dispo.
+- Click 🔇 pour arrêter (ou Esc en raccourci global).
+
+## Raccourcis clavier améliorés (commit `295d9fa`)
+- `Cmd/Ctrl+K` → nouvelle conversation (existant)
+- `Esc` → priorité au streaming en cours :
+  1. Si streaming actif → abort
+  2. Si TTS en lecture → stop
+  3. Sinon → ferme drawer mobile
+- `/` (hors champ) → focus textarea + insère "/" pour ouvrir direct le menu commandes
+
+## Suggestions agent-specific (commit `549d97a`)
+- Avant : tous les agents affichaient les MÊMES 4 suggestions hardcoded.
+- Maintenant : chaque agent a ses `suggestedQuestions` (4 max) + `openingStatement` définis dans `lib/agents.ts`. Exposés dans `/api/agents` via `PublicAgentMeta`. Le Chat les utilise prioritairement, fallback sur 4 questions génériques si absent.
+- Détail :
+  - **general** : email pro, résumé docs, bilan, procédure congés
+  - **accountant** : TVA, devis SARL, auto-liquidation, seuils RSI 2026
+  - **hr** : congés, contrat CDI cadre, indemnité licenciement, mi-temps
+  - **support** : retard livraison, relance devis, augmentation tarif, avis Google
+- + hints discrets en empty state pour découvrir les nouvelles features (drag-drop, micro, slash commands).
+
+## Synthèse des features chat
+
+Le chat est maintenant équipé pour des usages mobiles / hands-free :
+
+| Input | Output | Mode |
+|---|---|---|
+| Texte au clavier | Texte streamé | Standard |
+| **Voix (Mic)** | Texte streamé | Hands-busy (cuisine, voiture) |
+| **Drag-drop PDF** | Texte streamé | Analyse de document |
+| **Slash command** | Action (export, regen, summarize…) | Power user |
+| Texte ou voix | **TTS (Volume)** | Hands-free / accessibility |
+
+Combinaisons :
+- 🎤 Mic + 🔊 TTS = expérience full vocal
+- 📎 PDF + ✏ texte = "résume-moi ce contrat"
+- ⚡ /summarize après 10 messages = recap automatique
