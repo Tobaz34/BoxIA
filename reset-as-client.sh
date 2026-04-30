@@ -205,9 +205,14 @@ $SUDO chmod 644 /srv/ai-stack/.env   # 644 car juste NETWORK_NAME (pas de secret
 
 # ----- Redémarrer le wizard ---------------------------------------------------
 hr
-c_blue "[6/6] Démarrage du wizard de setup"
+c_blue "[6/6] Rebuild + démarrage du wizard de setup"
 cd /srv/ai-stack/services/setup
-SETUP_PORT=${SETUP_PORT:-8090} docker compose --env-file ../../.env up -d 2>&1 | tail -3
+# `--build` important : si on a `git pull` du code wizard depuis le dernier
+# reset, on doit reconstruire l'image (sinon l'ancienne image cached est
+# réutilisée, et les nouveautés de wizard.html/wizard.js/main.py restent
+# invisibles). Sans --build, ce script donnerait une fausse impression
+# de « rien n'a changé ».
+SETUP_PORT=${SETUP_PORT:-8090} docker compose --env-file ../../.env up -d --build 2>&1 | tail -5
 
 sleep 4
 
