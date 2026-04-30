@@ -1,16 +1,21 @@
 import type { Metadata } from "next";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
-import { branding } from "@/lib/branding";
+import { getBranding } from "@/lib/branding";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { Providers } from "./providers";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: branding.name,
-  description: `${branding.name} — IA souveraine`,
-};
+export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const b = getBranding();
+  return {
+    title: b.name,
+    description: `${b.name} — IA souveraine`,
+  };
+}
 
 // Convertit hex (#3b82f6) en HSL pour CSS variable Tailwind
 function hexToHsl(hex: string): string {
@@ -36,7 +41,11 @@ function hexToHsl(hex: string): string {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Lit le branding à CHAQUE requête → le changement via /settings est
+  // visible immédiatement après refresh, sans rebuild ni restart.
+  const branding = getBranding();
   const session = await getServerSession(authOptions);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isAdmin = (session?.user as any)?.isAdmin || false;
 
   // Inject brand colors into root CSS variables
