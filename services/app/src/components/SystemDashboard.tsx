@@ -9,6 +9,7 @@
 import {
   Activity, Users, Bot, MessageSquare, FileText, Plug,
   RefreshCw, AlertCircle, Cpu, MemoryStick, HardDrive, Zap,
+  CheckCircle2, XCircle, Server,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -41,6 +42,22 @@ interface Metrics {
   gpu_pct: number | null;
 }
 
+interface HealthService {
+  key: string;
+  name: string;
+  ok: boolean;
+  latency_ms: number | null;
+  status?: number;
+  error?: string;
+  version?: string;
+}
+interface HealthResponse {
+  overall: "ok" | "degraded" | "down";
+  summary: { total: number; up: number; down: number };
+  services: HealthService[];
+  checked_at: string;
+}
+
 function fmt(n: number): string { return n.toLocaleString("fr-FR"); }
 
 function relTime(ts: number): string {
@@ -56,20 +73,23 @@ function relTime(ts: number): string {
 export function SystemDashboard() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         fetch("/api/stats", { cache: "no-store" }),
         fetch("/api/system/metrics", { cache: "no-store" }),
+        fetch("/api/system/health", { cache: "no-store" }),
       ]);
       if (r1.status === 403) { setForbidden(true); return; }
       if (r1.ok) setStats(await r1.json());
       else setError("Stats indisponibles");
       if (r2.ok) setMetrics(await r2.json());
+      if (r3.ok) setHealth(await r3.json());
     } finally {
       setLoading(false);
     }
@@ -122,6 +142,35 @@ export function SystemDashboard() {
         <div className="mb-4 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-3 py-2">
           {error}
         </div>
+      )}
+
+      {/* Services backend (Dify, Ollama, Authentik, n8n, Prometheus) */}
+      {health && (
+        <Section title="Services backend">
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 text-sm">
+              <OverallDot overall={health.overall} />
+              <span className="font-medium">
+                {health.overall === "ok"
+                  ? "Tous les services sont opérationnels"
+                  : health.overall === "down"
+                  ? "Tous les services sont injoignables"
+                  : `${health.summary.up}/${health.summary.total} services opérationnels`}
+              </span>
+              <span className="flex-1" />
+              <span className="text-[10px] text-muted">
+                {new Date(health.checked_at).toLocaleTimeString("fr-FR", {
+                  hour: "2-digit", minute: "2-digit", second: "2-digit",
+                })}
+              </span>
+            </div>
+            <div className="divide-y divide-border">
+              {health.services.map((s) => (
+                <ServiceRow key={s.key} svc={s} />
+              ))}
+            </div>
+          </div>
+        </Section>
       )}
 
       {/* Ressources hardware */}
@@ -289,6 +338,52 @@ function KpiCard({
         {suffix && <span className="text-sm text-muted font-normal">{suffix}</span>}
       </div>
       {hint && <div className="text-[10px] text-muted mt-1">{hint}</div>}
+    </div>
+  );
+}
+
+function OverallDot({ overall }: { overall: "ok" | "degraded" | "down" }) {
+  if (overall === "ok") {
+    return (
+      <span className="relative inline-flex">
+        <span className="w-2.5 h-2.5 rounded-full bg-accent" />
+        <span className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-accent animate-ping opacity-60" />
+      </span>
+    );
+  }
+  if (overall === "degraded") {
+    return <span className="w-2.5 h-2.5 rounded-full bg-yellow-400" />;
+  }
+  return <span className="w-2.5 h-2.5 rounded-full bg-red-500" />;
+}
+
+function ServiceRow({ svc }: { svc: HealthService }) {
+  const Icon = svc.ok ? CheckCircle2 : XCircle;
+  const color = svc.ok ? "text-accent" : "text-red-400";
+  return (
+    <div className="px-4 py-2.5 flex items-center gap-3 text-sm">
+      <Server size={14} className="text-muted shrink-0" />
+      <span className="font-medium">{svc.name}</span>
+      {svc.version && (
+        <span className="text-[10px] text-muted bg-muted/15 px-1.5 py-0.5 rounded">
+          v{svc.version}
+        </span>
+      )}
+      <span className="flex-1" />
+      {svc.ok && svc.latency_ms != null && (
+        <span className="text-[10px] tabular-nums text-muted">
+          {svc.latency_ms} ms
+        </span>
+      )}
+      {!svc.ok && svc.error && (
+        <span
+          className="text-[10px] text-red-400 truncate max-w-[200px]"
+          title={svc.error}
+        >
+          {svc.error}
+        </span>
+      )}
+      <Icon size={16} className={color + " shrink-0"} />
     </div>
   );
 }
