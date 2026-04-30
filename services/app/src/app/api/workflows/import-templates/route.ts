@@ -25,10 +25,11 @@ import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
 
-// Le repo est cloné en /srv/ai-stack/. En network_mode: host, le container
-// aibox-app a /srv/ai-stack monté implicitement (bind mount).
+// Le dossier `templates/` du repo est bind-mounté en /templates:ro
+// dans le container (cf. services/app/docker-compose.yml). On lit
+// les workflows JSON dans /templates/n8n.
 const TEMPLATES_DIR =
-  process.env.N8N_TEMPLATES_DIR || "/srv/ai-stack/templates/n8n";
+  process.env.N8N_TEMPLATES_DIR || "/templates/n8n";
 
 interface ImportEntry {
   filename: string;

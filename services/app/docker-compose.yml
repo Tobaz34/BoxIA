@@ -28,6 +28,10 @@ services:
       # Documents pré-écrits pour la démo client (seed-data du repo).
       # L'admin peut les charger en 1 clic depuis /settings.
       - /srv/ai-stack/seed-data:/seed-data:ro
+      # Templates de workflows n8n + agents Dify (read-only).
+      # Utilisé par /api/workflows/import-templates pour push les
+      # workflows pré-écrits dans n8n en 1 clic depuis /workflows.
+      - /srv/ai-stack/templates:/templates:ro
     environment:
       # En host mode, on doit dire à Next.js d'écouter sur le port custom
       PORT: "${APP_PORT:-3100}"
