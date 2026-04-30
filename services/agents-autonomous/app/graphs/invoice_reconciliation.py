@@ -359,14 +359,24 @@ async def run(request: ReconcileInvoiceRequest) -> ReconcileInvoiceResponse:
     confidence = best.score if best else 0.0
     assessment = result_state["assessment"]
 
+    # Override defensif : si pas un match EXACT ou si discrepancies présentes,
+    # on force la validation humaine (sécurité comptable). Le LLM est faillible
+    # sur ce flag, on prend pas de risque.
+    discrepancies = result_state.get("discrepancies", [])
+    needs_validation = (
+        bool(assessment["needs_human_validation"])
+        or status != MatchStatus.EXACT
+        or len(discrepancies) > 0
+    )
+
     return ReconcileInvoiceResponse(
         invoice_data=result_state["invoice_data"],
         best_match=best,
         match_status=status,
         confidence=confidence,
-        discrepancies=result_state.get("discrepancies", []),
+        discrepancies=discrepancies,
         recommended_action=assessment["recommended_action"],
-        needs_human_validation=assessment["needs_human_validation"],
+        needs_human_validation=needs_validation,
         explanation=assessment["explanation"],
         metadata=GraphMetadata(
             graph_name="invoice_reconciliation",
