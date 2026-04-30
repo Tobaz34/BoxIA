@@ -34,10 +34,13 @@ services:
       HOSTNAME: "0.0.0.0"
 
       # En LAN avec ACME_CA=internal, le cert HTTPS de l'edge Caddy est
-      # auto-signé. NextAuth (back-channel server → https://auth.aibox.local)
-      # rejetterait sinon. Désactive uniquement si ACME_CA=internal en prod
-      # avec Let's Encrypt cette var doit être unset (cert valide).
-      NODE_TLS_REJECT_UNAUTHORIZED: "${ALLOW_SELF_SIGNED:-0}"
+      # auto-signé. NextAuth (back-channel server → https://aibox-auth.local)
+      # rejetterait sinon. ATTENTION : la sémantique est INVERSE — quand on
+      # veut PERMETTRE le self-signed, on met NODE_TLS_REJECT_UNAUTHORIZED=0.
+      # Donc :  ALLOW_SELF_SIGNED=1 → NODE_TLS_REJECT_UNAUTHORIZED=0
+      #         ALLOW_SELF_SIGNED=0 → NODE_TLS_REJECT_UNAUTHORIZED=1 (default safe)
+      # En prod (Let's Encrypt) cette var doit rester à 1.
+      NODE_TLS_REJECT_UNAUTHORIZED: "${NODE_TLS_REJECT_UNAUTHORIZED:-1}"
 
       # ---- NextAuth ----
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3100}

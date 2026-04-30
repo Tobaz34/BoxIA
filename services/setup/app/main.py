@@ -207,15 +207,21 @@ async def configure(payload: WizardSubmit):
     #   .local  → Caddy edge avec certs internes auto-signés, NextAuth doit
     #             tolérer le cert auto-signé pour son back-channel server→server.
     #   public  → Let's Encrypt prod, certs valides.
+    #
+    # NODE_TLS_REJECT_UNAUTHORIZED utilise la SÉMANTIQUE INVERSE :
+    #   0 = accepte les certs auto-signés (mode LAN)
+    #   1 = rejette les certs auto-signés (mode prod, default safe)
     is_lan_mdns = payload.domain.endswith(".local")
     if is_lan_mdns:
         domain_prefix = payload.domain.removesuffix(".local") or "aibox"
         acme_ca = "internal"
         allow_self_signed = "1"
+        node_tls_reject = "0"   # NextAuth tolère le cert Caddy auto-signé
     else:
         domain_prefix = "aibox"  # non utilisé sur domaine public, mais défini
         acme_ca = "letsencrypt prod"
         allow_self_signed = "0"
+        node_tls_reject = "1"   # default safe (cert valides en prod)
 
     env_lines = [
         f'CLIENT_NAME={shell_escape(payload.client_name)}',
@@ -225,6 +231,7 @@ async def configure(payload: WizardSubmit):
         f"DOMAIN_PREFIX={domain_prefix}",
         f"ACME_CA={acme_ca}",
         f"ALLOW_SELF_SIGNED={allow_self_signed}",
+        f"NODE_TLS_REJECT_UNAUTHORIZED={node_tls_reject}",
         f"ADMIN_FULLNAME={shell_escape(payload.admin_fullname)}",
         f"ADMIN_USERNAME={payload.admin_username}",
         f"ADMIN_EMAIL={payload.admin_email}",
