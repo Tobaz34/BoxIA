@@ -36,6 +36,11 @@ services:
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Paris}
       # Healthcheck endpoint
       N8N_DIAGNOSTICS_ENABLED: "false"
+      # En LAN sans HTTPS (accès via http://192.168.x.y:5678 ou localhost),
+      # n8n bloque par défaut le login avec un message
+      # « Your n8n server is configured to use a secure cookie ».
+      # En prod (Caddy edge avec TLS), passer cette var à "true".
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
