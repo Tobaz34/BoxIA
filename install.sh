@@ -71,7 +71,12 @@ deploy_stack() {
       c_yellow "    (déjà en cours d'exécution ou conflict avec stack héritée — non bloquant)"
 
   c_blue "  → Démarrage Edge Caddy..."
-  ( cd services/edge && docker compose --env-file "$env_file" up -d ) || \
+  # --force-recreate : Docker compose ne ré-attache PAS les networks d'un
+  # container existant. Si edge-caddy a été créé une fois avec un seul
+  # network (cas des resets en boucle), un simple up -d le laisse mal-
+  # connecté. force-recreate garantit qu'il pointe sur tous les networks
+  # déclarés dans le compose (aibox_net + ollama_net).
+  ( cd services/edge && docker compose --env-file "$env_file" up -d --force-recreate ) || \
       c_yellow "    (Caddy non démarré — souvent un conflit de ports avec NPM, à régler après)"
 
   c_blue "  → Démarrage AI Box App (front unifié)..."
