@@ -37,6 +37,15 @@ STATE_FILE = Path(os.environ.get("STATE_FILE", "/state/configured"))
 QUESTIONNAIRE_FULL_PATH = AIBOX_ROOT / "config" / "questionnaire.yaml"
 QUESTIONNAIRE_ESSENTIALS_PATH = AIBOX_ROOT / "config" / "questionnaire-essentials.yaml"
 
+# Mot de passe par défaut livré avec la box. Le wizard ne demande PAS au
+# client de saisir un mot de passe (évite les fautes de frappe lors de
+# l'install). Le client doit le changer à sa 1re connexion ; un flag
+# `must_change_password=True` est posé sur l'utilisateur Authentik et
+# l'app principale détecte ce flag pour afficher une bannière persistante.
+# Override possible via l'env BOXIA_DEFAULT_PASSWORD si on veut un mdp
+# par-box (printé sur sticker par exemple).
+DEFAULT_ADMIN_PASSWORD = os.environ.get("BOXIA_DEFAULT_PASSWORD", "boxia2026!")
+
 app = FastAPI(title="AI Box Setup", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -49,9 +58,12 @@ class WizardSubmit(BaseModel):
     users_count: int = 10
     domain: str
     admin_fullname: str
-    admin_username: str
+    admin_username: str = "admin"
     admin_email: str
-    admin_password: str           # ← saisi par l'utilisateur final, jamais loggé
+    # Optionnel : si non fourni, on utilise DEFAULT_ADMIN_PASSWORD. Le
+    # wizard officiel ne demande plus de mot de passe ; ce champ reste
+    # accepté pour des intégrations alternatives (CI, scripts, custom).
+    admin_password: str = ""
     hw_profile: str = "tpe"
     technologies: dict[str, Any] = {}
 
@@ -170,6 +182,12 @@ async def configure(payload: WizardSubmit):
     """
     if is_configured():
         raise HTTPException(409, "Box déjà configurée")
+
+    # Si pas de mot de passe fourni, on utilise le default livré avec la
+    # box. Le client le changera à sa 1re connexion (must_change_password
+    # est posé sur l'user Authentik, voir create-admin-user).
+    if not payload.admin_password:
+        payload.admin_password = DEFAULT_ADMIN_PASSWORD
 
     # Secrets internes (générés, jamais exposés au user final)
     pg_dify = gen_secret(32)
@@ -307,21 +325,36 @@ async def create_admin_user():
             pass
         _t.sleep(2)
 
+    # Le password est-il celui par défaut (boxia2026!) ?
+    # Si oui → on pose le flag must_change_password=True sur l'user pour
+    # que l'app principale affiche une bannière de rappel à la 1re
+    # connexion. Sinon (mode legacy / custom-pwd) → flag à False.
+    is_default_pwd = (password == DEFAULT_ADMIN_PASSWORD)
+
     # Script Python qui lit les valeurs depuis l'env (évite tout escape shell)
+    # Le flag `must_change_password` est stocké dans User.attributes (JSONField)
+    # — visible aussi via OIDC userinfo en tant que claim si on l'expose dans
+    # le mapping Authentik (configuré par sso_provisioning.py).
     script = (
-        "import os\n"
+        "import os, json\n"
         "from authentik.core.models import User, Group\n"
+        "must_change = os.environ.get('AK_MUST_CHANGE_PWD', '0') == '1'\n"
         "u, created = User.objects.update_or_create(\n"
         "    username=os.environ['AK_USERNAME'],\n"
         "    defaults={'name': os.environ['AK_FULLNAME'],\n"
         "              'email': os.environ['AK_EMAIL'],\n"
         "              'is_active': True})\n"
         "u.set_password(os.environ['AK_PASSWORD'])\n"
+        "# Pose ou retire le flag selon le mode (default vs custom pwd).\n"
+        "attrs = u.attributes or {}\n"
+        "attrs['must_change_password'] = bool(must_change)\n"
+        "u.attributes = attrs\n"
         "u.save()\n"
         "g = Group.objects.filter(name='authentik Admins').first()\n"
         "if g: u.ak_groups.add(g)\n"
         "print('USER_OK' if created else 'USER_UPDATED', "
         "'admin_group=', g is not None, "
+        "'must_change=', attrs['must_change_password'], "
         "'check=', u.check_password(os.environ['AK_PASSWORD']))\n"
     )
 
@@ -337,6 +370,7 @@ async def create_admin_user():
                  "-e", f"AK_FULLNAME={fullname}",
                  "-e", f"AK_EMAIL={email}",
                  "-e", f"AK_PASSWORD={password}",
+                 "-e", f"AK_MUST_CHANGE_PWD={'1' if is_default_pwd else '0'}",
                  "aibox-authentik-server", "ak", "shell", "-c", script],
                 capture_output=True, text=True, timeout=30,
             )

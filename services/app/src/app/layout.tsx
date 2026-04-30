@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
+import { PasswordChangeBanner } from "@/components/PasswordChangeBanner";
 import { getBranding } from "@/lib/branding-server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -71,6 +72,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <Sidebar isAdmin={isAdmin} />
               <div className="flex flex-col flex-1 overflow-hidden">
                 <Header brandName={branding.name} brandLogoUrl={branding.logoUrl || undefined} />
+                <PasswordChangeBanner />
                 <main className="flex-1 overflow-auto">{children}</main>
               </div>
             </div>

@@ -1,4 +1,10 @@
 // AI Box - Wizard de configuration
+//
+// Note : pas de saisie de mot de passe ici. La box est livrée avec un
+// mot de passe par défaut (boxia2026!) que l'utilisateur devra changer
+// à sa 1re connexion. Plus simple, plus tolérant aux fautes de frappe,
+// pratique appliance standard (Synology / TrueNAS / Proxmox).
+const DEFAULT_ADMIN_PASSWORD = 'boxia2026!';
 const state = {
   step: 1,
   data: {
@@ -7,34 +13,14 @@ const state = {
     users_count: 10,
     domain: '',
     admin_fullname: '',
-    admin_username: '',
+    admin_username: 'admin',
     admin_email: '',
-    admin_password: '',
+    admin_password: DEFAULT_ADMIN_PASSWORD,
     hw_profile: 'tpe',
     technologies: {},
   },
   questionnaire: null,
 };
-
-function checkPasswordStrength(p) {
-  if (!p) return { ok: false, msg: '' };
-  if (p.length < 12) return { ok: false, msg: '⚠ Trop court (12 caractères minimum)' };
-  if (!/[A-Z]/.test(p)) return { ok: false, msg: '⚠ Manque une majuscule' };
-  if (!/[0-9]/.test(p)) return { ok: false, msg: '⚠ Manque un chiffre' };
-  if (!/[^A-Za-z0-9]/.test(p)) return { ok: false, msg: '⚠ Manque un caractère spécial' };
-  return { ok: true, msg: '✓ Mot de passe robuste' };
-}
-
-document.addEventListener('input', (e) => {
-  if (e.target.id === 'admin_password') {
-    const r = checkPasswordStrength(e.target.value);
-    const el = document.getElementById('pwd-strength');
-    if (el) {
-      el.textContent = r.msg;
-      el.style.color = r.ok ? 'var(--accent)' : 'var(--warn)';
-    }
-  }
-});
 
 function show(step) {
   document.querySelectorAll('.step-content').forEach(el => {
@@ -61,8 +47,9 @@ function gather(step) {
     state.data.admin_fullname = document.getElementById('admin_fullname').value.trim();
     state.data.admin_username = document.getElementById('admin_username').value.trim().toLowerCase();
     state.data.admin_email = document.getElementById('admin_email').value.trim();
-    state.data.admin_password = document.getElementById('admin_password').value;
-    const confirm = document.getElementById('admin_password_confirm').value;
+    // Mot de passe par défaut (constant) — l'utilisateur le changera à
+    // sa 1re connexion. Pas de saisie ici → pas de risque de faute de frappe.
+    state.data.admin_password = DEFAULT_ADMIN_PASSWORD;
 
     if (!state.data.domain) { alert('Le domaine est requis'); return false; }
     if (!state.data.admin_fullname) { alert('Nom complet requis'); return false; }
@@ -71,13 +58,6 @@ function gather(step) {
       return false;
     }
     if (!state.data.admin_email) { alert('Email requis'); return false; }
-
-    const pwd = checkPasswordStrength(state.data.admin_password);
-    if (!pwd.ok) { alert('Mot de passe trop faible : ' + pwd.msg); return false; }
-    if (state.data.admin_password !== confirm) {
-      alert('Les mots de passe ne correspondent pas');
-      return false;
-    }
   }
   if (step === 3) {
     state.data.technologies = {};
@@ -165,7 +145,8 @@ function renderRecap() {
     `  Nom    : ${d.admin_fullname}\n` +
     `  Login  : ${d.admin_username}\n` +
     `  Email  : ${d.admin_email}\n` +
-    `  Mot de passe : (saisi par vous, non affiché)\n\n` +
+    `  Mot de passe par défaut : ${DEFAULT_ADMIN_PASSWORD}\n` +
+    `  ⚠ À CHANGER à la 1re connexion (rappel automatique dans l'app)\n\n` +
     `Technologies sélectionnées :\n${techs}${actsStr}`;
 }
 

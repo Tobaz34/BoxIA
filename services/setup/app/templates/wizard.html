@@ -71,7 +71,7 @@
           <small>Sous-domaines auto : auth./agents./chat. (TLS Let's Encrypt si domaine public).</small>
         </label>
 
-        <h2 style="margin-top:24px;font-size:16px;font-weight:600;">👤 Création du compte administrateur</h2>
+        <h2 style="margin-top:24px;font-size:16px;font-weight:600;">👤 Compte administrateur</h2>
         <p style="margin-top:4px;margin-bottom:16px;font-size:13px;">Ce compte est le premier utilisateur. Il aura tous les droits et pourra ensuite créer les comptes des autres collaborateurs.</p>
 
         <label>Nom complet
@@ -79,24 +79,24 @@
         </label>
 
         <label>Identifiant de connexion
-          <input type="text" id="admin_username" placeholder="jdupont" autocomplete="username">
+          <input type="text" id="admin_username" placeholder="admin" value="admin" autocomplete="username">
           <small>Lettres minuscules, chiffres, underscore — pas d'espaces ni d'accents.</small>
         </label>
 
         <label>Email
-          <input type="email" id="admin_email" placeholder="jean.dupont@monentreprise.fr" autocomplete="email">
+          <input type="email" id="admin_email" placeholder="admin@monentreprise.fr" autocomplete="email">
         </label>
 
-        <label>Mot de passe
-          <input type="password" id="admin_password" autocomplete="new-password">
-          <small>12 caractères minimum, avec majuscule, chiffre et caractère spécial.</small>
-        </label>
-
-        <label>Confirmer le mot de passe
-          <input type="password" id="admin_password_confirm" autocomplete="new-password">
-        </label>
-
-        <div id="pwd-strength" style="margin-top:-8px;font-size:12px;color:var(--muted);"></div>
+        <div style="margin-top:16px;padding:14px 16px;background:var(--panel-2);border:1px solid var(--primary);border-radius:8px;">
+          <div style="font-weight:600;margin-bottom:6px;">🔐 Mot de passe par défaut</div>
+          <p style="margin:0;font-size:13px;color:var(--muted);line-height:1.5;">
+            La box est livrée avec un mot de passe par défaut <code style="background:var(--panel);padding:2px 6px;border-radius:4px;">boxia2026!</code>.
+            Vous devrez le <strong>changer dès votre première connexion</strong> — l'application vous le rappellera.
+          </p>
+          <p style="margin:8px 0 0 0;font-size:12px;color:var(--muted);">
+            Cela évite de perdre l'accès en cas de faute de frappe à l'installation.
+          </p>
+        </div>
 
         <div class="actions">
           <button onclick="prev(2)">← Précédent</button>
