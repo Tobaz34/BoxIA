@@ -118,6 +118,34 @@ cd /srv/ai-stack
 ./wipe-and-reinstall.sh     # rase tout sauf modèles Ollama, re-clone, re-firstrun
 ```
 
+### J'ai oublié le mot de passe admin
+
+```bash
+sudo /srv/ai-stack/recover-admin-password.sh --random
+# → génère un nouveau mdp aléatoire, le set dans Authentik + .env, l'affiche une fois
+```
+ou avec un mot de passe choisi : `sudo ./recover-admin-password.sh "MonNouveauMdp"`
+
+### Le wizard a planté (NEXTAUTH_SECRET vide, OIDC pas créé)
+
+Si le wizard a foiré entre `create-admin-user` et `provision-sso` (rare,
+mais possible sur Authentik lent), l'app principale crash avec une
+erreur `MissingSecretError`. Recovery :
+
+```bash
+sudo /srv/ai-stack/recover-provisioning.sh
+# → finit le provisioning OIDC + recree aibox-app + open-webui
+```
+
+### Login impossible : `error=OAuthSignin`
+
+Le back-channel TLS NextAuth → Authentik échoue. Vérifier dans `.env` :
+```
+NODE_TLS_REJECT_UNAUTHORIZED=0    # mode LAN avec cert auto-signé
+ALLOW_SELF_SIGNED=1
+```
+Puis recreate l'app : `cd /srv/ai-stack/services/app && docker compose up -d`
+
 ---
 
 ## Installation manuelle (sans bootstrap)
