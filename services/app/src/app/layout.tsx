@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
-import { getBranding } from "@/lib/branding";
+import { getBranding } from "@/lib/branding-server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { Providers } from "./providers";
