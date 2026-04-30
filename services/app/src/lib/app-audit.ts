@@ -28,6 +28,7 @@ export type AuditAction =
   | "document.delete"
   | "rgpd.export"
   | "rgpd.delete_conversations"
+  | "rgpd.delete_memory"
   | "user.invite"
   | "user.role_change"
   | "user.toggle_active"
