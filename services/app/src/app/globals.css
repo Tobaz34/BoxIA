@@ -5,6 +5,11 @@
 /* Theme syntax highlighting (highlight.js) — adapté au dark mode AI Box */
 @import "highlight.js/styles/github-dark.css";
 
+/* KaTeX styles pour rendu des formules LaTeX (math inline `$...$` ET
+   blocks `$$...$$`). Active la prise en charge des formules dans les
+   réponses des agents (utile pour comptable / data analyst). */
+@import "katex/dist/katex.min.css";
+
 /* Theme dark par défaut, brandable via variables CSS injectées par le serveur */
 :root, html[data-theme="dark"] {
   --background: 222 16% 9%;        /* #0f1115 */

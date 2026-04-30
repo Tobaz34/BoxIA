@@ -4,15 +4,18 @@
  * Rendu Markdown pour les messages assistant.
  *
  * - GFM (tables, strikethrough, task lists)
+ * - Math (formules LaTeX inline `$...$` et display `$$...$$`) via KaTeX
  * - Code blocks avec syntax highlighting (highlight.js via rehype-highlight)
  * - Bouton "Copier" sur chaque code block
  * - Liens en target="_blank" + rel="noopener noreferrer"
  *
- * Le thème highlight.js est importé dans globals.css.
+ * Les thèmes highlight.js et KaTeX sont importés dans globals.css.
  */
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import { Check, Copy } from "lucide-react";
 import { useState, type ComponentProps } from "react";
 
@@ -56,8 +59,11 @@ export function MessageMarkdown({ content }: { content: string }) {
   return (
     <div className="prose-chat">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[
+          [rehypeHighlight, { detect: true, ignoreMissing: true }],
+          rehypeKatex,
+        ]}
         components={{
           // pre = wrapper autour du code block. On lui ajoute juste un header
           // (langue + bouton copier). Le contenu est rendu par le composant
