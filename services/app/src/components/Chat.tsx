@@ -17,7 +17,7 @@
 import {
   Send, Square, Sparkles, RotateCcw, Copy, Check,
   ThumbsUp, ThumbsDown, MessageSquare, X, Download,
-  Image as ImageIcon, Paperclip,
+  Image as ImageIcon, Paperclip, FileText, Upload, Mic, MicOff,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -26,14 +26,27 @@ import { AgentPicker, type AgentMeta } from "./AgentPicker";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageSources, type RetrieverResource } from "./MessageSources";
 import { useUI, setUI } from "@/lib/ui-store";
+import { useSpeech } from "@/lib/use-speech";
+import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu";
+import {
+  Plus, RefreshCcw, FileDown, Bot as BotIcon,
+  HelpCircle, Sparkles as SparkIcon,
+} from "lucide-react";
 
 type Role = "user" | "assistant";
+type AttachedKind = "image" | "document";
 
-interface AttachedImage {
+interface AttachedFile {
   upload_file_id: string;
+  kind: AttachedKind;
   name: string;
-  data_url: string;        // data: URL pour preview locale uniquement
   size: number;
+  /** Pour les images, data: URL pour preview locale. Vide pour les
+   *  documents (on affiche juste l'icône + le nom). */
+  data_url?: string;
+  /** Extension détectée (ex: "pdf", "docx") — utilisée pour afficher
+   *  une étiquette explicite dans la preview. */
+  extension?: string;
 }
 
 interface Message {
@@ -44,8 +57,8 @@ interface Message {
   feedback?: "like" | "dislike" | null;
   sources?: RetrieverResource[];
   createdAt: number;
-  /** Images attachées au moment de l'envoi (user msg). */
-  images?: { url: string; name: string }[];
+  /** Pièces jointes au moment de l'envoi (user msg). */
+  attachments?: { kind: AttachedKind; name: string; url?: string }[];
 }
 
 const SUGGESTIONS_INITIAL = [
@@ -101,9 +114,42 @@ export function Chat() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Images en cours d'attachement (avant envoi)
-  const [attached, setAttached] = useState<AttachedImage[]>([]);
-  const [uploadingImage, setUploadingImage] = useState(false);
+  // Fichiers en cours d'attachement (images + documents) avant envoi
+  const [attached, setAttached] = useState<AttachedFile[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  // Voice input (Web Speech API, browser-side, FR par défaut)
+  const speech = useSpeech();
+  // Quand le transcript change pendant l'écoute, on remplace le contenu
+  // du textarea (mode "remplace ce qu'on a dicté", pas append). Si l'user
+  // veut combiner texte + voix, il dictera après avoir tapé.
+  useEffect(() => {
+    if (speech.listening && speech.transcript) {
+      setInput(speech.transcript);
+    }
+  }, [speech.transcript, speech.listening]);
+  // Surface l'erreur speech dans le bandeau d'erreur global du chat
+  useEffect(() => {
+    if (speech.error) setError(speech.error);
+  }, [speech.error]);
+
+  // ----- Pre-warm Ollama au mount du chat -----
+  // Fire-and-forget : on déclenche le chargement des modèles en VRAM
+  // dès que l'utilisateur ouvre la page, pour qu'ils soient prêts quand
+  // il pose sa 1re question. Évite ~5-10s de cold-start.
+  // Appelé une seule fois par session.
+  useEffect(() => {
+    let cancelled = false;
+    if (typeof window === "undefined") return;
+    if (sessionStorage.getItem("aibox.warmup-done") === "1") return;
+    fetch("/api/system/warmup", { method: "POST" })
+      .then(() => {
+        if (!cancelled) sessionStorage.setItem("aibox.warmup-done", "1");
+      })
+      .catch(() => { /* silencieux : c'est juste de la perf */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // ----- Charger la liste d'agents -----
   useEffect(() => {
@@ -279,55 +325,99 @@ export function Chat() {
     ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
   }, [input]);
 
-  // ----- Upload d'image (paperclip) -----
-  async function pickImage() {
+  // ----- Upload de fichier (paperclip ou drag-drop) -----
+  async function pickFile() {
     fileInputRef.current?.click();
   }
-  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (e.target) e.target.value = "";
-    if (!f) return;
-    if (!f.type.startsWith("image/")) {
-      setError("Format non supporté (image uniquement).");
-      return;
-    }
-    if (f.size > 8 * 1024 * 1024) {
-      setError("Image trop grande (max 8 Mo).");
-      return;
-    }
-    setUploadingImage(true);
+
+  /** Upload une liste de fichiers (séquentiel pour préserver l'ordre).
+   *  Utilisé par le file input ET par le drop zone. */
+  async function uploadFiles(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    setUploadingFile(true);
     setError(null);
     try {
-      // 1. Lit en data URL pour preview locale
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result as string);
-        r.onerror = reject;
-        r.readAsDataURL(f);
-      });
-      // 2. Upload vers Dify
-      const fd = new FormData();
-      fd.append("file", f);
-      if (currentAgent) fd.append("agent", currentAgent);
-      const r = await fetch("/api/files/upload", { method: "POST", body: fd });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        setError(j.message || j.error || `Upload échoué (${r.status})`);
-        return;
+      for (const f of list) {
+        // 1. Pour les images, on lit en data URL pour preview locale.
+        //    Pour les documents, on n'a pas besoin de data URL (juste un
+        //    icône + nom dans la preview).
+        let dataUrl: string | undefined;
+        if (f.type.startsWith("image/")) {
+          dataUrl = await new Promise<string>((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result as string);
+            r.onerror = reject;
+            r.readAsDataURL(f);
+          });
+        }
+        // 2. Upload vers Dify (via notre proxy)
+        const fd = new FormData();
+        fd.append("file", f);
+        if (currentAgent) fd.append("agent", currentAgent);
+        const r = await fetch("/api/files/upload", { method: "POST", body: fd });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          setError(j.message || j.error || `Upload échoué (${r.status})`);
+          return;  // stop on first error pour ne pas spammer
+        }
+        const j = await r.json();
+        setAttached((cur) => [...cur, {
+          upload_file_id: j.id,
+          kind: (j.kind as AttachedKind) || "document",
+          name: j.name || f.name,
+          size: j.size || f.size,
+          extension: j.extension,
+          data_url: dataUrl,
+        }]);
       }
-      const j = await r.json();
-      setAttached((cur) => [...cur, {
-        upload_file_id: j.id,
-        name: j.name || f.name,
-        size: j.size || f.size,
-        data_url: dataUrl,
-      }]);
     } finally {
-      setUploadingImage(false);
+      setUploadingFile(false);
     }
   }
+
+  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (e.target) e.target.value = "";
+    if (files && files.length) await uploadFiles(files);
+  }
+
   function removeAttached(id: string) {
     setAttached((cur) => cur.filter((a) => a.upload_file_id !== id));
+  }
+
+  // ----- Drag-and-drop sur l'aire de chat -----
+  // Compteur global pour gérer les events nested (dragenter sur enfant ne
+  // doit pas re-déclencher si on est déjà en drag, et un dragleave sur un
+  // enfant ne doit pas masquer l'overlay).
+  const dragCounter = useRef(0);
+  function onDragEnter(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragOver(true);
+  }
+  function onDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragOver(false);
+    }
+  }
+  function onDragOver(e: React.DragEvent) {
+    if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+  }
+  async function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragOver(false);
+    if (!currentAgent) {
+      setError("Sélectionnez un agent avant de déposer des fichiers.");
+      return;
+    }
+    const files = e.dataTransfer.files;
+    if (files && files.length) await uploadFiles(files);
   }
 
   // ----- Send a message -----
@@ -348,13 +438,17 @@ export function Chat() {
         ? `[Contexte utilisateur, à garder en tête pour toutes les réponses :\n${ci}]\n\n${q}`
         : q;
 
-    // Capture les images attachées pour ce message
-    const imagesAtSend = attached.slice();
+    // Capture les pièces jointes (images + documents) pour ce message
+    const filesAtSend = attached.slice();
 
     const userMsg: Message = {
       id: uid(), role: "user", content: q, createdAt: Date.now(),
-      images: imagesAtSend.length > 0
-        ? imagesAtSend.map((a) => ({ url: a.data_url, name: a.name }))
+      attachments: filesAtSend.length > 0
+        ? filesAtSend.map((a) => ({
+            kind: a.kind,
+            name: a.name,
+            url: a.data_url,  // undefined pour les documents → on rend l'icône
+          }))
         : undefined,
     };
     const asstMsg: Message = {
@@ -385,8 +479,8 @@ export function Chat() {
           agent: currentAgent,
           query: queryForDify,
           conversation_id: conversationId,
-          files: imagesAtSend.map((a) => ({
-            type: "image" as const,
+          files: filesAtSend.map((a) => ({
+            type: a.kind,           // "image" ou "document"
             transfer_method: "local_file" as const,
             upload_file_id: a.upload_file_id,
           })),
@@ -488,6 +582,85 @@ export function Chat() {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (lastUser) send(lastUser.content, true);
   }
+
+  // ---------------------------------------------------------------------
+  // Slash commands : `/<cmd>` au début de l'input → menu autocomplete + run
+  // ---------------------------------------------------------------------
+  const slashCommands: SlashCommand[] = [
+    {
+      name: "help",
+      description: "Affiche la liste des commandes",
+      icon: <HelpCircle size={14} />,
+      run: () => {
+        setMessages((m) => [...m, {
+          id: uid(), role: "assistant", createdAt: Date.now(),
+          content:
+            "**Commandes disponibles :**\n\n" +
+            "- `/new` — Nouvelle conversation\n" +
+            "- `/regen` — Régénérer la dernière réponse\n" +
+            "- `/agent <slug>` — Changer d'agent (ex: `/agent hr`)\n" +
+            "- `/export` — Exporter la conversation en Markdown\n" +
+            "- `/summarize` — Demande un résumé en 5 points\n" +
+            "- `/help` — Afficher cette aide\n\n" +
+            "_Tape `/` pour ouvrir le menu autocomplete._",
+        }]);
+      },
+    },
+    {
+      name: "new",
+      aliases: ["clear"],
+      description: "Démarre une nouvelle conversation",
+      icon: <Plus size={14} />,
+      run: () => newConversation(),
+    },
+    {
+      name: "regen",
+      aliases: ["regenerate", "retry"],
+      description: "Régénère la dernière réponse de l'assistant",
+      icon: <RefreshCcw size={14} />,
+      run: () => regenerate(),
+    },
+    {
+      name: "export",
+      description: "Exporte la conversation en Markdown",
+      icon: <FileDown size={14} />,
+      run: () => exportAsMarkdown(),
+    },
+    {
+      name: "agent",
+      argumentHint: "<slug>",
+      description: "Change d'agent (general, accountant, hr, support)",
+      icon: <BotIcon size={14} />,
+      run: (arg) => {
+        const slug = arg.trim().toLowerCase();
+        const target = agents.find((a) =>
+          a.slug.toLowerCase() === slug ||
+          a.name.toLowerCase().startsWith(slug)
+        );
+        if (target) switchAgent(target.slug);
+        else setError(`Agent introuvable : "${slug}". Disponibles : ${agents.map((a) => a.slug).join(", ")}`);
+      },
+    },
+    {
+      name: "summarize",
+      aliases: ["resume"],
+      description: "Demande un résumé en 5 points de la conversation",
+      icon: <SparkIcon size={14} />,
+      run: () => {
+        send("Fais-moi un résumé en 5 points de ce dont nous avons parlé jusqu'ici, en commençant par le plus important.");
+      },
+    },
+  ];
+
+  // Auto-complete sur Tab : le menu envoie un CustomEvent qu'on écoute ici.
+  useEffect(() => {
+    function handler(e: Event) {
+      const value = (e as CustomEvent<string>).detail;
+      if (typeof value === "string") setInput(value);
+    }
+    window.addEventListener("aibox-slash-complete", handler as EventListener);
+    return () => window.removeEventListener("aibox-slash-complete", handler as EventListener);
+  }, []);
 
   /** Export de la conversation courante en Markdown (téléchargement
    *  immédiat). Indépendant du serveur — utilise le state local. */
@@ -595,7 +768,32 @@ export function Chat() {
         </>
       }
     >
-      <>
+      <div
+        className="flex flex-col h-full relative"
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+      >
+        {/* Drop overlay — apparaît quand l'utilisateur glisse un fichier
+            depuis l'extérieur de la fenêtre. Couvre toute la zone de chat,
+            cliquable transparent (l'event drop est géré par le wrapper). */}
+        {dragOver && (
+          <div
+            className="absolute inset-0 z-30 bg-primary/15 backdrop-blur-sm border-4 border-dashed border-primary rounded-lg flex items-center justify-center pointer-events-none"
+          >
+            <div className="text-center">
+              <Upload size={48} className="mx-auto text-primary mb-3" />
+              <div className="text-lg font-semibold text-primary">
+                Déposez vos fichiers ici
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Images, PDF, DOCX, TXT, MD, CSV, XLSX… (8 Mo image, 20 Mo doc)
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Top bar de la conversation (desktop) — visible si messages */}
         {!empty && (
           <div className="hidden lg:flex h-10 px-4 border-b border-border bg-card/40 items-center justify-between">
@@ -674,26 +872,36 @@ export function Chat() {
                           m.content ? (
                             <MessageMarkdown content={m.content} />
                           ) : (
-                            <span className="text-muted italic">
-                              <span className="inline-flex gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce" />
-                                <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
-                                <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
-                              </span>
-                            </span>
+                            <ThinkingIndicator
+                              hasAttachments={
+                                messages[idx - 1]?.attachments
+                                  ? messages[idx - 1].attachments!.length > 0
+                                  : false
+                              }
+                            />
                           )
                         ) : (
                           <div>
-                            {m.images && m.images.length > 0 && (
+                            {m.attachments && m.attachments.length > 0 && (
                               <div className="flex flex-wrap gap-2 mb-2">
-                                {m.images.map((img, i) => (
-                                  <img
-                                    key={i}
-                                    src={img.url}
-                                    alt={img.name}
-                                    className="max-h-48 max-w-xs rounded-md border border-border object-contain"
-                                  />
-                                ))}
+                                {m.attachments.map((a, i) =>
+                                  a.kind === "image" && a.url ? (
+                                    <img
+                                      key={i}
+                                      src={a.url}
+                                      alt={a.name}
+                                      className="max-h-48 max-w-xs rounded-md border border-border object-contain"
+                                    />
+                                  ) : (
+                                    <div
+                                      key={i}
+                                      className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-card text-xs"
+                                    >
+                                      <FileText size={14} className="text-primary shrink-0" />
+                                      <span className="truncate max-w-[200px]">{a.name}</span>
+                                    </div>
+                                  ),
+                                )}
                               </div>
                             )}
                             {m.content && (
@@ -776,19 +984,32 @@ export function Chat() {
         )}
 
         <div className="border-t border-border bg-card p-4">
-          {/* Preview des images attachées (avant envoi) */}
+          {/* Preview des pièces jointes (images + documents) avant envoi */}
           {attached.length > 0 && (
             <div className="max-w-3xl mx-auto mb-2 flex flex-wrap gap-2">
               {attached.map((a) => (
                 <div
                   key={a.upload_file_id}
-                  className="relative group rounded-md border border-border overflow-hidden"
+                  className="relative group rounded-md border border-border overflow-hidden bg-card"
                 >
-                  <img
-                    src={a.data_url}
-                    alt={a.name}
-                    className="h-16 w-16 object-cover"
-                  />
+                  {a.kind === "image" && a.data_url ? (
+                    <img
+                      src={a.data_url}
+                      alt={a.name}
+                      className="h-16 w-16 object-cover"
+                    />
+                  ) : (
+                    <div className="h-16 px-3 flex items-center gap-2 text-xs">
+                      <FileText size={20} className="text-primary shrink-0" />
+                      <div className="min-w-0 max-w-[180px]">
+                        <div className="truncate font-medium">{a.name}</div>
+                        <div className="text-[10px] text-muted">
+                          {(a.size / 1024).toFixed(0)} Ko
+                          {a.extension && ` · .${a.extension}`}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <button
                     onClick={() => removeAttached(a.upload_file_id)}
                     className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-black/80 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-default"
@@ -801,47 +1022,87 @@ export function Chat() {
             </div>
           )}
 
+          {/* Le bouton paperclip accepte maintenant images ET documents.
+              Pour les agents non-vision, on n'autorise que les documents
+              (les images seraient ignorées par le modèle). */}
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            multiple
+            accept={
+              currentAgentMeta?.vision
+                ? "image/*,.pdf,.txt,.md,.csv,.html,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                : ".pdf,.txt,.md,.csv,.html,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+            }
             className="hidden"
             onChange={onFilePicked}
           />
 
           <div className="max-w-3xl mx-auto flex items-end gap-2">
-            {/* Bouton Joindre image — uniquement si l'agent supporte la vision.
-                Les agents text-only (qwen2.5:7b) feraient répondre au modèle
-                « je ne vois pas l'image » : on cache simplement l'option. */}
-            {currentAgentMeta?.vision && (
+            {/* Bouton Joindre fichier — toujours visible (même pour les
+                agents non-vision, qui peuvent traiter des documents). */}
+            <button
+              onClick={pickFile}
+              disabled={streaming || uploadingFile || !currentAgent}
+              className="p-2.5 rounded-md text-muted hover:bg-muted/30 hover:text-foreground transition-default shrink-0 disabled:opacity-40"
+              title={
+                currentAgentMeta?.vision
+                  ? "Joindre une image ou un document (drag-drop accepté)"
+                  : "Joindre un document (PDF, DOCX, TXT, MD…)"
+              }
+            >
+              {uploadingFile ? (
+                <ImageIcon size={18} className="animate-pulse text-primary" />
+              ) : (
+                <Paperclip size={18} />
+              )}
+            </button>
+            {/* Bouton Dictée vocale — Web Speech API, FR par défaut.
+                Caché si le navigateur ne supporte pas (Firefox actuel). */}
+            {speech.supported && (
               <button
-                onClick={pickImage}
-                disabled={streaming || uploadingImage || !currentAgent}
-                className="p-2.5 rounded-md text-muted hover:bg-muted/30 hover:text-foreground transition-default shrink-0 disabled:opacity-40"
-                title="Joindre une image"
+                onClick={() => speech.listening ? speech.stop() : speech.start("fr-FR")}
+                disabled={streaming || !currentAgent}
+                className={
+                  "p-2.5 rounded-md transition-default shrink-0 disabled:opacity-40 " +
+                  (speech.listening
+                    ? "bg-red-500/15 text-red-400 ring-2 ring-red-500/40"
+                    : "text-muted hover:bg-muted/30 hover:text-foreground")
+                }
+                title={speech.listening ? "Arrêter la dictée" : "Dicter un message (FR)"}
               >
-                {uploadingImage ? (
-                  <ImageIcon size={18} className="animate-pulse text-primary" />
+                {speech.listening ? (
+                  <MicOff size={18} className="animate-pulse" />
                 ) : (
-                  <Paperclip size={18} />
+                  <Mic size={18} />
                 )}
               </button>
             )}
-            <div className="flex-1">
+            <div className="flex-1 relative">
+              {/* Menu commandes slash — apparaît au-dessus si input commence par "/" */}
+              <SlashCommandMenu
+                input={input}
+                commands={slashCommands}
+                onCommandRun={() => setInput("")}
+              />
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
                   currentAgentMeta
-                    ? `Message à ${currentAgentMeta.name}…`
+                    ? `Message à ${currentAgentMeta.name}… (tape / pour les commandes)`
                     : "Écrivez votre message…"
                 }
                 rows={1}
                 disabled={streaming || !currentAgent}
                 className="w-full resize-none bg-background border border-border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:border-primary transition-default disabled:opacity-60 max-h-[200px]"
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  // Si menu slash ouvert, le menu gère ↑↓⏎⎋⇥ → on laisse passer.
+                  // (le menu utilise capture=true sur le doc, et stopPropagation
+                  //  sur Enter pour empêcher le send.)
+                  const slashOpen = input.startsWith("/");
+                  if (e.key === "Enter" && !e.shiftKey && !slashOpen) {
                     e.preventDefault();
                     send(input);
                   }
@@ -874,7 +1135,7 @@ export function Chat() {
             pour saut de ligne · Toutes les conversations restent sur ce serveur.
           </p>
         </div>
-      </>
+      </div>
     </ChatLayout>
   );
 }
@@ -882,6 +1143,43 @@ export function Chat() {
 /** Layout responsive : desktop = panel statique à gauche, chat à droite.
  *  Mobile = panel en drawer (slide-out) qui couvre la chat.
  *  Le bouton "Conversations" en haut du chat ouvre le drawer mobile. */
+/** Indicateur visuel pendant que l'assistant réfléchit. Phrases qui
+ *  tournent toutes les 1.5s pour donner une sensation de progression
+ *  (« je lis le doc » → « je consulte la KB » → « je rédige »). */
+function ThinkingIndicator({ hasAttachments }: { hasAttachments: boolean }) {
+  const messagesText = hasAttachments
+    ? [
+        "Lecture du document…",
+        "Extraction des points clés…",
+        "Recoupement avec mes connaissances…",
+        "Rédaction de la réponse…",
+      ]
+    : [
+        "Je réfléchis…",
+        "Je consulte la base de connaissances…",
+        "Je structure la réponse…",
+      ];
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const t = setInterval(
+      () => setIdx((i) => Math.min(i + 1, messagesText.length - 1)),
+      1800,
+    );
+    return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <span className="text-muted italic inline-flex items-center gap-2">
+      <span className="inline-flex gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce" />
+        <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
+      </span>
+      <span className="text-xs">{messagesText[idx]}</span>
+    </span>
+  );
+}
+
 function ChatLayout({
   panel, children,
 }: {

@@ -1,20 +1,56 @@
 /**
- * POST /api/files/upload (multipart) — upload un fichier (image) à Dify
- * pour qu'on puisse ensuite l'inclure dans une chat-messages.
+ * POST /api/files/upload (multipart) — upload un fichier (image OU document)
+ * à Dify pour qu'on puisse ensuite l'inclure dans une chat-messages.
  *
  * body: FormData avec un champ "file" + champ "agent" (slug)
  *
- * Retourne le file_id Dify, à passer au prochain /api/chat dans :
- *   files: [{ type: "image", transfer_method: "local_file",
+ * Retourne le file_id Dify + un champ `kind` ("image" | "document"),
+ * à passer au prochain /api/chat dans :
+ *   files: [{ type: "image"|"document", transfer_method: "local_file",
  *             upload_file_id: <id> }]
+ *
+ * Limites :
+ *   - Images : 8 MB max (jpg, png, webp, gif)
+ *   - Documents : 20 MB max (pdf, txt, md, docx, doc, csv, html)
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, DIFY_BASE_URL } from "@/lib/dify";
 
 export const dynamic = "force-dynamic";
-
-// Limite raisonnable pour le multipart (5 Mo image)
 export const config = { api: { bodyParser: false } };
+
+const IMAGE_MIMES = new Set([
+  "image/jpeg", "image/png", "image/webp", "image/gif",
+]);
+const DOCUMENT_MIMES = new Set([
+  "application/pdf",
+  "text/plain", "text/markdown", "text/csv", "text/html",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+  "application/msword", // .doc (legacy)
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.ms-excel", // .xls
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
+]);
+// Fallback par extension si le navigateur ne reconnaît pas le mime
+const EXT_TO_KIND: Record<string, "image" | "document"> = {
+  jpg: "image", jpeg: "image", png: "image", webp: "image", gif: "image",
+  pdf: "document", txt: "document", md: "document", csv: "document",
+  html: "document", htm: "document",
+  doc: "document", docx: "document",
+  xls: "document", xlsx: "document",
+  ppt: "document", pptx: "document",
+};
+
+const IMG_MAX = 8 * 1024 * 1024;     // 8 MB
+const DOC_MAX = 20 * 1024 * 1024;    // 20 MB
+
+function classify(file: File): "image" | "document" | null {
+  if (IMAGE_MIMES.has(file.type)) return "image";
+  if (DOCUMENT_MIMES.has(file.type)) return "document";
+  // Fallback sur extension
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  return EXT_TO_KIND[ext] || null;
+}
 
 export async function POST(req: NextRequest) {
   const incoming = await req.formData();
@@ -24,15 +60,22 @@ export async function POST(req: NextRequest) {
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "no_file" }, { status: 400 });
   }
-  if (!file.type.startsWith("image/")) {
+  const kind = classify(file);
+  if (!kind) {
     return NextResponse.json(
-      { error: "unsupported_type", message: "Image uniquement (JPG, PNG, WebP)." },
+      { error: "unsupported_type",
+        message: `Type non supporté : ${file.type || file.name}. ` +
+                 `Formats acceptés : images (JPG, PNG, WebP) ou documents ` +
+                 `(PDF, TXT, MD, DOCX, XLSX, HTML, CSV).` },
       { status: 415 },
     );
   }
-  if (file.size > 8 * 1024 * 1024) {
+  const limit = kind === "image" ? IMG_MAX : DOC_MAX;
+  if (file.size > limit) {
+    const limitMB = Math.round(limit / 1024 / 1024);
     return NextResponse.json(
-      { error: "too_large", message: "Image trop grande (max 8 Mo)." },
+      { error: "too_large",
+        message: `Fichier trop grand (max ${limitMB} Mo pour ${kind === "image" ? "une image" : "un document"}).` },
       { status: 413 },
     );
   }
@@ -53,13 +96,15 @@ export async function POST(req: NextRequest) {
   if (!r.ok) {
     const text = await r.text().catch(() => "");
     return NextResponse.json(
-      { error: "dify_upload_error", status: r.status, body: text.slice(0, 300) },
+      { error: "dify_upload_error", status: r.status,
+        body: text.slice(0, 300) },
       { status: 502 },
     );
   }
   const j = await r.json();
   return NextResponse.json({
     id: j.id,
+    kind,                    // ← nouveau : à passer dans `files[].type` au /api/chat
     name: j.name,
     size: j.size,
     extension: j.extension,
