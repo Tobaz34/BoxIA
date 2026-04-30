@@ -25,6 +25,9 @@ services:
       # Persistance applicative (état des connecteurs activés, settings,
       # éventuellement audit log custom à venir).
       - /srv/ai-stack/data:/data
+      # Documents pré-écrits pour la démo client (seed-data du repo).
+      # L'admin peut les charger en 1 clic depuis /settings.
+      - /srv/ai-stack/seed-data:/seed-data:ro
     environment:
       # En host mode, on doit dire à Next.js d'écouter sur le port custom
       PORT: "${APP_PORT:-3100}"
