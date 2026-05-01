@@ -83,6 +83,7 @@ services:
       DIFY_AGENT_ACCOUNTANT_API_KEY:   ${DIFY_AGENT_ACCOUNTANT_API_KEY:-}
       DIFY_AGENT_HR_API_KEY:           ${DIFY_AGENT_HR_API_KEY:-}
       DIFY_AGENT_SUPPORT_API_KEY:      ${DIFY_AGENT_SUPPORT_API_KEY:-}
+      DIFY_AGENT_VISION_API_KEY:       ${DIFY_AGENT_VISION_API_KEY:-}
       # Concierge BoxIA — agent orchestrateur qui pilote l'admin via
       # /api/agents-tools/* (Custom Tool Dify « BoxIA Concierge Tools »
       # attaché auto via setup_dify_default_agent).

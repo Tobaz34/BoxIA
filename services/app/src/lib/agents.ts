@@ -54,15 +54,38 @@ export const AGENTS: Record<string, AgentConfig> = {
     description: "Pour toutes vos questions du quotidien",
     envVar: "DIFY_DEFAULT_APP_API_KEY",
     isDefault: true,
-    vision: true,  // qwen2.5vl:7b — comprend les images
+    // CHANGÉ 2026-05-01 : passé sur qwen3:14b text-only (vs qwen2.5vl
+    // historique). qwen2.5vl répond ultra-sec sur prompts factuels
+    // simples ("Capitale FR ?" → "Paris" en 5 chars). Pour l'analyse
+    // d'images, utiliser l'« Assistant vision » dédié ci-dessous.
+    vision: false,
     openingStatement:
       "Bonjour ! Je suis votre assistant général. Posez-moi une question, " +
-      "joignez un document, ou utilisez le micro pour me dicter.",
+      "joignez un document texte (PDF, DOCX), ou utilisez le micro pour me dicter. " +
+      "Pour analyser une image, choisissez plutôt l'Assistant vision.",
     suggestedQuestions: [
       "Résume-moi les derniers documents ajoutés",
       "Aide-moi à rédiger un email professionnel",
       "Explique-moi le bilan d'une entreprise en 5 points",
       "Quelle est la procédure de demande de congés ?",
+    ],
+  },
+  vision: {
+    slug: "vision",
+    name: "Assistant vision",
+    icon: "👁",
+    description: "Analyse d'images, captures, schémas",
+    envVar: "DIFY_AGENT_VISION_API_KEY",
+    vision: true,  // qwen2.5vl:7b — comprend les images
+    openingStatement:
+      "👁 Salut ! Je suis spécialisé dans l'analyse d'images et de documents " +
+      "visuels. Joins une capture d'écran (Ctrl+V), une photo, ou un PDF avec " +
+      "schémas, et je l'analyse pour toi.",
+    suggestedQuestions: [
+      "Décris cette image et ses éléments clés",
+      "Extrais le texte de cette capture (OCR)",
+      "Convertis ce tableau visuel en données structurées",
+      "Analyse ce schéma d'architecture",
     ],
   },
   accountant: {

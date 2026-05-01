@@ -1009,26 +1009,57 @@ DEFAULT_AGENTS: list[dict[str, Any]] = [
         "name": "Assistant général",
         "icon": "🤖",
         "icon_bg": "#FFEAD5",
-        "description": "Assistant polyvalent, par défaut de l'AI Box.",
-        # Vision activée — utilise qwen2.5vl:7b (multimodal) au lieu de
-        # qwen2.5:14b text-only. L'utilisateur peut joindre une capture
-        # d'écran (Ctrl+V) ou un PDF avec images et l'agent les analyse.
-        "vision": True,
+        "description": "Assistant polyvalent FR, par défaut de l'AI Box.",
+        # CHANGEMENT 2026-05-01 (post run-3 protocole) : passé sur qwen3:14b
+        # text-only au lieu de qwen2.5vl:7b. Raison : qwen2.5vl répond en
+        # 3-5 chars sur prompts factuels simples ("Capitale FR ?" → "Paris"),
+        # même avec pre_prompt renforcé. Les vraies tâches multimodales
+        # (images) doivent passer par l'« Assistant vision » dédié ci-dessous.
+        # qwen3:14b est meilleur partout sauf pour la vision.
+        "vision": False,
         "pre_prompt": (
             "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
-            "de façon naturelle et conversationnelle. **Réponds toujours "
-            "avec au moins une phrase complète**, jamais en un seul mot ou "
-            "un nombre isolé — donne le contexte ou une justification courte. "
-            "Quand on te demande de générer du code, fournis des blocs "
-            "```lang``` correctement formatés. Si l'utilisateur joint une "
-            "image ou un document, analyse-le directement et réponds en "
-            "t'appuyant sur son contenu."
+            "de façon naturelle et conversationnelle. Réponds toujours avec "
+            "au moins une phrase complète, jamais en un seul mot ou un nombre "
+            "isolé — donne le contexte ou une justification courte. Quand on "
+            "te demande de générer du code, fournis des blocs ```lang``` "
+            "correctement formatés. Pour analyser une image, l'utilisateur "
+            "doit utiliser l'« Assistant vision » dédié."
         ),
         "opening_statement": (
             "Bonjour ! Je suis votre assistant IA local. "
             "Que puis-je faire pour vous aujourd'hui ?"
         ),
         "env_var": "DIFY_DEFAULT_APP_API_KEY",
+    },
+    {
+        "slug": "vision",
+        "name": "Assistant vision",
+        "icon": "👁",
+        "icon_bg": "#DBEAFE",
+        "description": "Analyse d'images, captures, PDF avec illustrations.",
+        # Multimodal qwen2.5vl:7b. Routing vision via flag ci-dessous
+        # (cf. _setup_one_dify_agent : agent_model = vision_model_name si
+        # spec.get("vision")). qwen3vl pas encore stable sur Ollama au
+        # 2026-05 — à switcher dès dispo.
+        "vision": True,
+        "pre_prompt": (
+            "Tu es l'assistant vision de l'AI Box, spécialisé dans l'analyse "
+            "d'images, captures d'écran, photos et documents avec illustrations. "
+            "Réponds en français. Quand l'utilisateur joint une image, "
+            "décris-la précisément, extrais le texte (OCR) si présent, "
+            "identifie les éléments visuels (graphiques, tableaux, schémas, "
+            "photos, captures d'écran), et réponds à sa question en t'appuyant "
+            "sur ce que tu vois. Si aucune image n'est jointe, demande "
+            "poliment à l'utilisateur d'en attacher une (l'Assistant général "
+            "est mieux pour les questions purement textuelles)."
+        ),
+        "opening_statement": (
+            "👁 Salut ! Je suis spécialisé dans l'analyse d'images et de "
+            "documents visuels. Joins une capture d'écran, une photo, "
+            "ou un PDF avec schémas, et je l'analyse pour toi."
+        ),
+        "env_var": "DIFY_AGENT_VISION_API_KEY",
     },
     {
         "slug": "accountant",

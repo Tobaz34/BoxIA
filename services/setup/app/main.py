@@ -353,7 +353,20 @@ async def configure(payload: WizardSubmit):
 
     env_path = AIBOX_ROOT / ".env"
     env_path.write_text("\n".join(env_lines) + "\n")
-    env_path.chmod(0o600)
+    # 0o640 (rw pour owner root, r pour groupe docker) au lieu de 0o600 :
+    # le user clikinfo (membre du groupe docker) doit pouvoir lire .env
+    # pour faire `docker compose --env-file .env up -d` sans sudo lors
+    # des opérations de maintenance post-deploy. Le wizard tourne en root
+    # donc l'écriture reste OK. Tester avec : `groups clikinfo | grep docker`.
+    env_path.chmod(0o640)
+    # Chown au groupe docker si présent (l'utilisateur du host est dans
+    # ce groupe par convention sur xefia).
+    try:
+        import grp, os as _os
+        gid = grp.getgrnam("docker").gr_gid
+        _os.chown(env_path, 0, gid)
+    except (KeyError, OSError):
+        pass  # Pas de groupe docker → on garde root:root, pas critique
 
     # client_config.yaml — sans le mot de passe (sécurité)
     config = {
