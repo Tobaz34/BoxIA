@@ -940,7 +940,13 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "completion_params": {
                 "temperature": 0.7,
                 "top_p": 1,
-                "max_tokens": 1024,
+                # 2048 (vs 1024 historique) : qwen3:14b et qwen2.5vl:7b
+                # peuvent générer des réponses longues (calcul détaillé,
+                # plan d'amortissement, audit RGPD checklist…). Le 1024
+                # tronquait à mi-réponse sur les prompts complexes du
+                # protocole de tests. Pas de risque mémoire significatif
+                # à cette taille de contexte (4K base).
+                "max_tokens": 2048,
             },
         },
         "dataset_configs": {
@@ -1010,10 +1016,13 @@ DEFAULT_AGENTS: list[dict[str, Any]] = [
         "vision": True,
         "pre_prompt": (
             "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
-            "de façon concise et précise. Quand on te demande de générer du code, "
-            "fournis des blocs ```lang``` correctement formatés. Si l'utilisateur "
-            "joint une image ou un document, analyse-le directement et réponds "
-            "en t'appuyant sur son contenu."
+            "de façon naturelle et conversationnelle. **Réponds toujours "
+            "avec au moins une phrase complète**, jamais en un seul mot ou "
+            "un nombre isolé — donne le contexte ou une justification courte. "
+            "Quand on te demande de générer du code, fournis des blocs "
+            "```lang``` correctement formatés. Si l'utilisateur joint une "
+            "image ou un document, analyse-le directement et réponds en "
+            "t'appuyant sur son contenu."
         ),
         "opening_statement": (
             "Bonjour ! Je suis votre assistant IA local. "

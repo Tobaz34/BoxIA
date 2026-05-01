@@ -128,6 +128,26 @@ deploy_stack() {
         c_yellow "    (vLLM non démarré — vérifier GPU 16+ Go VRAM disponibles)"
   fi
 
+  # ---- Services post-sprint 2026-05 (best-effort) ---------------------------
+  # Langfuse (observability LLM), TTS Piper (voix neural FR), SearXNG (web
+  # search). Démarrés best-effort : si l'image n'est pas encore pull et
+  # l'admin n'a pas la bande passante, on continue sans bloquer.
+  if [[ -d services/observability ]]; then
+    c_blue "  → Démarrage Langfuse (observability)..."
+    ( cd services/observability && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (Langfuse non démarré — relancer manuellement plus tard)"
+  fi
+  if [[ -d services/tts ]]; then
+    c_blue "  → Démarrage TTS Piper (synthèse vocale FR)..."
+    ( cd services/tts && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (TTS non démarré — useTTS fallback Web Speech API)"
+  fi
+  if [[ -d services/search ]]; then
+    c_blue "  → Démarrage SearXNG (web search métamoteur)..."
+    ( cd services/search && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (SearXNG non démarré — tool web_search inactif)"
+  fi
+
   # Démarre la stack héritée (n8n, Portainer, Uptime Kuma, NPM, Duplicati, Dashy)
   # si elle existe sur l'hôte. Important pour que le provisioning des comptes
   # n8n/Portainer fonctionne après reset.
@@ -267,6 +287,19 @@ TEXT2SQL_TOOL_API_KEY=$(gen_secret 48)
 # respecter ces règles. Le wizard provisionne n8n owner avec celui-ci.
 N8N_PASSWORD=$(gen_strong_pass 24)
 
+# Services optionnels post-sprint 2026-05 (Langfuse, TTS Piper, SearXNG).
+# Vars auto-générées : si l'admin ne déploie pas le compose correspondant,
+# elles restent dormantes (no-op côté aibox-app). Pour activer :
+#   - Langfuse :   cd services/observability && docker compose up -d
+#   - TTS Piper :  cd services/tts && docker compose up -d
+#   - SearXNG :    cd services/search && docker compose up -d
+LANGFUSE_DB_PASSWORD=$(gen_secret 32)
+LANGFUSE_SALT=$(gen_secret 32)
+LANGFUSE_NEXTAUTH_SECRET=$(gen_secret 64)
+LANGFUSE_PUBLIC_KEY="pk-lf-aibox-$(gen_secret 24)"
+LANGFUSE_SECRET_KEY="sk-lf-aibox-$(gen_secret 32)"
+SEARXNG_SECRET=$(gen_secret 64)
+
 cat > .env <<EOF
 # Généré par install.sh le $(date -Iseconds)
 # Ne pas committer ce fichier.
@@ -352,6 +385,23 @@ AUTHENTIK_VERSION=2025.10.0
 
 # ----- RÉSEAU DOCKER -----
 NETWORK_NAME=aibox_net
+
+# ----- LANGFUSE (observability, optionnel) -----
+LANGFUSE_DB_PASSWORD=${LANGFUSE_DB_PASSWORD}
+LANGFUSE_SALT=${LANGFUSE_SALT}
+LANGFUSE_NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET}
+LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+LANGFUSE_BASE_URL=http://127.0.0.1:3001
+LANGFUSE_PUBLIC_URL=http://localhost:3001
+
+# ----- TTS Piper (voix neural FR, optionnel) -----
+TTS_BACKEND_URL=http://127.0.0.1:5500
+TTS_DEFAULT_VOICE=larynx:siwis-glow_tts
+
+# ----- SearXNG (web search, optionnel) -----
+SEARXNG_SECRET=${SEARXNG_SECRET}
+SEARXNG_URL=http://127.0.0.1:8888
 EOF
 
 # Génération client_config.yaml (consommable par le futur portail)

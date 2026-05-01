@@ -231,6 +231,17 @@ async def configure(payload: WizardSubmit):
     # le re-générer si besoin (rétry sur 400 password too weak).
     n8n_password = gen_strong_password(24)
 
+    # ----- Services optionnels post-sprint 2026-05 -----
+    # Langfuse (observability), TTS Piper (voice), SearXNG (web search).
+    # Vars auto-générées : si l'admin ne déploie pas le compose, elles
+    # restent dans .env mais sans effet (no-op côté aibox-app).
+    langfuse_db_password = gen_secret(32)
+    langfuse_salt = gen_secret(32)
+    langfuse_nextauth_secret = gen_secret(64)
+    langfuse_public_key = "pk-lf-aibox-" + gen_secret(24)
+    langfuse_secret_key = "sk-lf-aibox-" + gen_secret(32)
+    searxng_secret = gen_secret(64)
+
     # Échappe les caractères spéciaux pour bash (.env est sourcé par scripts shell)
     def shell_escape(s: str) -> str:
         return "'" + s.replace("'", "'\"'\"'") + "'"
@@ -305,6 +316,34 @@ async def configure(payload: WizardSubmit):
         "DIFY_VERSION=1.10.1",
         "AUTHENTIK_VERSION=2025.10.0",
         "NETWORK_NAME=aibox_net",
+
+        # ----- Langfuse self-hosted (observability) -----
+        # Démarrer manuellement : cd services/observability && docker compose up -d
+        # Une fois UP, l'app aibox-app pousse les traces de chaque chat
+        # automatiquement (lib/langfuse.ts no-op si LANGFUSE_BASE_URL absent).
+        # URL admin pour explorer les traces : http://<box>:3001/
+        f"LANGFUSE_DB_PASSWORD={langfuse_db_password}",
+        f"LANGFUSE_SALT={langfuse_salt}",
+        f"LANGFUSE_NEXTAUTH_SECRET={langfuse_nextauth_secret}",
+        f"LANGFUSE_PUBLIC_KEY={langfuse_public_key}",
+        f"LANGFUSE_SECRET_KEY={langfuse_secret_key}",
+        # IMPORTANT : aibox-app tourne en network_mode: host → ne résout
+        # pas le DNS Docker. Donc on passe par localhost (port mappé).
+        "LANGFUSE_BASE_URL=http://127.0.0.1:3001",
+        "LANGFUSE_PUBLIC_URL=http://localhost:3001",
+
+        # ----- TTS Piper (voix neural FR via OpenTTS) -----
+        # Démarrer manuellement : cd services/tts && docker compose up -d
+        # Pulled image ~1.5 GB. Sans le service, useTTS fallback sur
+        # Web Speech API natif (qualité OS-dépendante).
+        "TTS_BACKEND_URL=http://127.0.0.1:5500",
+        "TTS_DEFAULT_VOICE=larynx:siwis-glow_tts",
+
+        # ----- SearXNG (web search métamoteur) -----
+        # Démarrer manuellement : cd services/search && docker compose up -d
+        # Tool /api/agents-tools/web_search consommable par le Concierge.
+        f"SEARXNG_SECRET={searxng_secret}",
+        "SEARXNG_URL=http://127.0.0.1:8888",
     ]
     for key, val in payload.technologies.items():
         if isinstance(val, bool):
