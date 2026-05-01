@@ -10,8 +10,26 @@
  *
  * Communique avec le parent via callbacks (selection, refresh).
  */
-import { Plus, Trash2, MessageSquare, MoreHorizontal, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { Plus, Trash2, MessageSquare, MoreHorizontal, Wand2, Tag } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+
+// Inline (pas d'import depuis lib/conversation-tags qui touche à node:fs).
+// Couleur stable basée sur hash du tag → badges visuellement distincts.
+const TAG_PALETTE = [
+  { bg: "bg-blue-500/15",    text: "text-blue-300" },
+  { bg: "bg-emerald-500/15", text: "text-emerald-300" },
+  { bg: "bg-purple-500/15",  text: "text-purple-300" },
+  { bg: "bg-amber-500/15",   text: "text-amber-300" },
+  { bg: "bg-pink-500/15",    text: "text-pink-300" },
+  { bg: "bg-cyan-500/15",    text: "text-cyan-300" },
+  { bg: "bg-rose-500/15",    text: "text-rose-300" },
+  { bg: "bg-teal-500/15",    text: "text-teal-300" },
+];
+function tagColorClasses(tag: string): { bg: string; text: string } {
+  let h = 0;
+  for (let i = 0; i < tag.length; i++) h = (h * 31 + tag.charCodeAt(i)) >>> 0;
+  return TAG_PALETTE[h % TAG_PALETTE.length];
+}
 
 export interface Conversation {
   id: string;
@@ -88,6 +106,55 @@ export function ConversationsList({
   onRename,
 }: Props) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [tagsByConv, setTagsByConv] = useState<Record<string, string[]>>({});
+  const [allTags, setAllTags] = useState<{ tag: string; count: number }[]>([]);
+  const [filterTag, setFilterTag] = useState<string | null>(null);
+
+  // Charge la map convId → tags + la liste agrégée des tags du user
+  // (pour les pills filtre en haut). Refetch quand la liste de
+  // conversations change.
+  const reloadTags = useCallback(async () => {
+    try {
+      const r = await fetch("/api/conversations/tags", { cache: "no-store" });
+      if (!r.ok) return;
+      const j = (await r.json()) as {
+        user_tags?: { tag: string; count: number }[];
+        conv_tags?: Record<string, string[]>;
+      };
+      setTagsByConv(j.conv_tags || {});
+      setAllTags(j.user_tags || []);
+    } catch {
+      /* silencieux : tags pas critiques */
+    }
+  }, []);
+
+  useEffect(() => { void reloadTags(); }, [reloadTags, conversations.length]);
+
+  // Édition rapide via prompt() — UX MVP, à remplacer par popover
+  // autocomplete v2 (cf BACKLOG-V1.1.md).
+  const editTags = useCallback(async (convId: string) => {
+    const current = (tagsByConv[convId] || []).join(", ");
+    const raw = window.prompt(
+      "Tags (séparés par virgule, max 8) :",
+      current,
+    );
+    if (raw === null) return;
+    const tags = raw.split(",").map((t) => t.trim()).filter(Boolean);
+    try {
+      const r = await fetch("/api/conversations/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: convId, tags }),
+      });
+      if (r.ok) await reloadTags();
+    } catch { /* silencieux */ }
+  }, [tagsByConv, reloadTags]);
+
+  // Filtrage : si un tag pill est sélectionné, on n'affiche que les
+  // conversations qui le contiennent.
+  const visibleConvs = filterTag
+    ? conversations.filter((c) => (tagsByConv[c.id] || []).includes(filterTag))
+    : conversations;
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -101,6 +168,40 @@ export function ConversationsList({
         </button>
       </div>
 
+      {/* Filtre par tag — pills horizontales, scroll-x si beaucoup. */}
+      {allTags.length > 0 && (
+        <div className="px-2 py-1.5 border-b border-border flex gap-1 overflow-x-auto">
+          {filterTag && (
+            <button
+              onClick={() => setFilterTag(null)}
+              className="shrink-0 px-2 py-0.5 text-[10px] rounded bg-muted/30 text-foreground hover:bg-muted/50 transition-default"
+            >
+              ✕ Filtre
+            </button>
+          )}
+          {allTags.slice(0, 12).map(({ tag, count }) => {
+            const active = filterTag === tag;
+            const c = tagColorClasses(tag);
+            return (
+              <button
+                key={tag}
+                onClick={() => setFilterTag(active ? null : tag)}
+                className={
+                  "shrink-0 px-2 py-0.5 text-[10px] rounded transition-default " +
+                  (active
+                    ? `${c.bg} ${c.text} ring-1 ring-current`
+                    : `${c.bg} ${c.text} opacity-70 hover:opacity-100`)
+                }
+                title={`${count} conversation${count > 1 ? "s" : ""}`}
+              >
+                #{tag}
+                <span className="ml-1 opacity-60">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {loading && conversations.length === 0 && (
           <div className="px-3 py-2 text-xs text-muted">Chargement…</div>
@@ -110,11 +211,16 @@ export function ConversationsList({
             Aucune conversation.<br />Lancez-en une pour commencer.
           </div>
         )}
+        {!loading && filterTag && visibleConvs.length === 0 && (
+          <div className="px-3 py-6 text-xs text-muted text-center">
+            Aucune conversation avec le tag <strong>#{filterTag}</strong>.
+          </div>
+        )}
         {/* Grouper les conversations par bucket temporel pour faciliter
             la navigation quand l'historique grossit. */}
         {(() => {
           const groups: Record<string, Conversation[]> = {};
-          for (const c of conversations) {
+          for (const c of visibleConvs) {
             const bucket = dateBucket(c.updated_at || c.created_at);
             (groups[bucket] ||= []).push(c);
           }
@@ -146,8 +252,23 @@ export function ConversationsList({
                           ? c.name
                           : "Sans titre"}
                       </div>
-                      <div className="text-[10px] text-muted">
-                        {relativeDate(c.updated_at || c.created_at)}
+                      <div className="text-[10px] text-muted flex items-center gap-1.5 flex-wrap">
+                        <span>{relativeDate(c.updated_at || c.created_at)}</span>
+                        {(tagsByConv[c.id] || []).map((t) => {
+                          const cls = tagColorClasses(t);
+                          return (
+                            <span
+                              key={t}
+                              className={
+                                "px-1 py-px rounded text-[9px] " +
+                                `${cls.bg} ${cls.text}`
+                              }
+                              title={`Tag : ${t}`}
+                            >
+                              #{t}
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                     <button
@@ -173,6 +294,15 @@ export function ConversationsList({
                           }}
                         >
                           <Wand2 size={12} /> Renommer (auto)
+                        </button>
+                        <button
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-default"
+                          onClick={async () => {
+                            setOpenMenu(null);
+                            await editTags(c.id);
+                          }}
+                        >
+                          <Tag size={12} /> Tags…
                         </button>
                         <button
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 transition-default"
