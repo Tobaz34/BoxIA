@@ -1,0 +1,167 @@
+openapi: 3.0.3
+info:
+  title: BoxIA Concierge Tools
+  version: 0.1.0
+  description: |
+    Tools que l'agent IA "Concierge BoxIA" utilise pour orchestrer
+    l'admin BoxIA depuis la conversation utilisateur. Permet de lister
+    les ressources (connecteurs, workflows, agents, MCP, healthcheck) et
+    d'installer des workflows / templates en 1 clic — sans que l'utilisateur
+    final ait à naviguer dans les pages admin techniques.
+
+servers:
+  - url: http://host.docker.internal:3100/api/agents-tools
+    description: |
+      aibox-app tourne en network_mode:host sur l'hôte Docker. Les
+      Custom Tools Dify (qui tournent dans le container dify-api sur
+      aibox_net) accèdent via `host.docker.internal:host-gateway`
+      configuré dans le compose Dify (extra_hosts).
+
+paths:
+  /list_connectors:
+    get:
+      operationId: listConnectors
+      summary: Liste les connecteurs disponibles avec leur statut.
+      description: |
+        Retourne le catalogue complet des connecteurs (Outlook, Drive,
+        Pennylane, Odoo, GLPI, NAS, etc.) avec leur état (actif/inactif).
+        Utiliser quand l'utilisateur demande "qu'est-ce que je peux
+        connecter ?", "est-ce que mon Pennylane est branché ?", etc.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /list_workflows:
+    get:
+      operationId: listWorkflows
+      summary: Liste les workflows n8n installés (actifs ou non).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /list_marketplace_workflows:
+    get:
+      operationId: listMarketplaceWorkflows
+      summary: Liste les workflows marketplace (BoxIA + communauté n8n.io).
+      description: |
+        Utiliser quand l'utilisateur demande "tu peux automatiser X ?"
+        ou "ajoute un workflow pour Y". Retourne la liste des templates
+        avec leur slug `file` à passer à installWorkflow.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /list_agents:
+    get:
+      operationId: listAgents
+      summary: Liste les assistants IA installés.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /list_marketplace_agents_fr:
+    get:
+      operationId: listMarketplaceAgentsFr
+      summary: Liste les templates d'assistants BoxIA-FR (compta, RH, juridique, BTP, etc.).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /list_mcp_catalog:
+    get:
+      operationId: listMcpCatalog
+      summary: Liste les serveurs MCP du catalogue (officiels Anthropic + communautaires).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /system_health:
+    get:
+      operationId: systemHealth
+      summary: État des services BoxIA (up/down + latence).
+      description: |
+        Utiliser quand l'utilisateur demande "tout va bien ?", "qu'est-ce
+        qui est down ?", "comment va la box ?". Retourne le résultat de
+        /api/system/health (services Authentik, Dify, n8n, Qdrant, etc.).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /install_workflow:
+    post:
+      operationId: installWorkflow
+      summary: Installe un workflow marketplace (toujours désactivé).
+      description: |
+        Action SENSIBLE. Demande TOUJOURS confirmation à l'utilisateur
+        AVANT d'appeler ce tool — annonce ce que tu vas installer et
+        attends "oui" / "ok" / confirme. Le workflow est créé désactivé
+        ; l'utilisateur l'activera depuis /workflows après config des
+        credentials externes éventuels.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  description: |
+                    Slug du workflow (ex: "qdrant_snapshot_weekly.json"
+                    pour les officiels, "community/6270.json" pour
+                    communauté). Visible dans listMarketplaceWorkflows.
+      responses:
+        "200": { description: OK }
+
+  /install_agent_fr:
+    post:
+      operationId: installAgentFr
+      summary: Installe un template d'assistant BoxIA-FR.
+      description: |
+        Action SENSIBLE. Confirme avec l'utilisateur AVANT.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug:
+                  type: string
+                  description: |
+                    Slug du template (ex: "compta-tva-fr",
+                    "rh-droit-travail-fr", "btp-devis-chantier",
+                    "commerce-fiches-produits", "juridique-cgv-rgpd-fr",
+                    "helpdesk-n1-fr"). Visible dans listMarketplaceAgentsFr.
+      responses:
+        "200": { description: OK }
+
+  /deep_link:
+    get:
+      operationId: deepLink
+      summary: Génère un lien profond vers une page admin (pour actions manuelles).
+      description: |
+        Retourne l'URL d'une page admin BoxIA pour que l'utilisateur
+        puisse y aller manuellement (par ex. configurer un connecteur
+        avec ses credentials, qui requiert une saisie sécurisée).
+        Targets : connectors, workflows, marketplace_n8n,
+        marketplace_agents, mcp, settings, audit, system, agents.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: target
+          schema:
+            type: string
+            enum: [connectors, workflows, marketplace_n8n, marketplace_agents, mcp, settings, audit, system, agents]
+      responses:
+        "200": { description: OK }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

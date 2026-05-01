@@ -135,6 +135,13 @@ services:
       MARKETPLACE_API_URL: https://marketplace.dify.ai
     volumes:
       - dify_api_storage:/app/api/storage
+    # `host.docker.internal` route vers l'hôte Docker, où aibox-app
+    # tourne en network_mode: host. Permet aux Custom Tools Dify (ex:
+    # « BoxIA Concierge Tools ») de joindre /api/agents-tools/* sur
+    # http://host.docker.internal:3100. host-gateway = adresse standard
+    # depuis Docker 20.10+.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       dify-db:
         condition: service_healthy

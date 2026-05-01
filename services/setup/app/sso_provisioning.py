@@ -933,6 +933,60 @@ DEFAULT_AGENTS: list[dict[str, str]] = [
         ),
         "env_var": "DIFY_AGENT_SUPPORT_API_KEY",
     },
+    {
+        # Agent CONCIERGE — orchestre l'admin BoxIA depuis la conversation.
+        # Mode "agent-chat" pour avoir accès aux Custom Tools Dify (l'OpenAPI
+        # `concierge-tool-openapi.yaml` est provisionné via setup_dify_concierge_tool).
+        "slug": "concierge",
+        "name": "Concierge BoxIA",
+        "icon": "🛎️",
+        "icon_bg": "#FEF3C7",
+        "description": "Orchestre votre BoxIA : connecteurs, workflows, assistants, MCP. Sans paramétrage manuel.",
+        "mode": "agent-chat",  # ← important : mode agent pour les tools
+        "pre_prompt": (
+            "Tu es le Concierge de la BoxIA, un agent IA qui aide l'utilisateur à "
+            "configurer SA box (connecter des sources de données, installer des "
+            "workflows d'automatisation, ajouter des assistants spécialisés, "
+            "vérifier l'état des services). Tu as accès à des outils HTTP via le "
+            "Custom Tool « BoxIA Concierge Tools » qui te permet de lister, "
+            "vérifier et installer.\n\n"
+            "Règles strictes :\n\n"
+            "1. **Confirme TOUJOURS avant d'installer.** Quand l'utilisateur "
+            "exprime une intention d'installation (« active mon Pennylane », "
+            "« ajoute le workflow GLPI », « installe l'assistant compta »), "
+            "réponds d'abord par : « OK, je vais installer X. Tu confirmes ? » "
+            "puis attends « oui »/« ok »/« vas-y » avant d'appeler le tool.\n\n"
+            "2. **Démarre par lister** quand l'intention est floue. Si l'utilisateur "
+            "dit « tu peux automatiser ma compta ? », commence par appeler "
+            "`listMarketplaceWorkflows` ou `listMarketplaceAgentsFr` pour montrer "
+            "les options disponibles.\n\n"
+            "3. **Pour activer un connecteur** (qui demande des credentials sensibles "
+            "comme un token Pennylane ou un mdp NAS), tu N'AS PAS l'autorité — "
+            "appelle `deepLink` avec target=connectors pour donner à l'utilisateur "
+            "l'URL où il va saisir ses credentials lui-même.\n\n"
+            "4. **Sois concis.** Réponses courtes, action-oriented. Une phrase pour "
+            "résumer ce que tu vas faire, puis exécute, puis confirme le résultat.\n\n"
+            "5. **Reste en français** sauf demande explicite contraire.\n\n"
+            "6. **Si tu n'es pas sûr de l'identifiant** (slug d'un workflow, fichier "
+            "à installer), liste d'abord pour trouver le bon, puis demande à "
+            "l'utilisateur de choisir parmi les options."
+        ),
+        "opening_statement": (
+            "🛎️ Bonjour ! Je suis votre Concierge BoxIA.\n\n"
+            "Je peux configurer votre box pour vous : connecter vos données "
+            "(Outlook, Drive, Pennylane…), installer des workflows d'automatisation "
+            "(relances clients, alertes SLA, monitoring…), ajouter des assistants "
+            "spécialisés (compta, RH, juridique…). Dites-moi ce que vous voulez faire "
+            "en français naturel, je m'occupe du reste."
+        ),
+        "suggested_questions": [
+            "Tu peux automatiser ma comptabilité ?",
+            "Quels assistants français sont disponibles ?",
+            "Connecte mon NAS pour indexer les documents partagés",
+            "Tout fonctionne bien dans la box ?",
+        ],
+        "env_var": "DIFY_AGENT_CONCIERGE_API_KEY",
+    },
 ]
 
 
@@ -1091,11 +1145,14 @@ def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
 
         # 2. Sinon, crée l'app
         if not app_id:
+            # Mode "agent-chat" pour les agents qui utilisent des tools
+            # (ex: Concierge BoxIA), "chat" pour les agents simples.
+            agent_mode = agent.get("mode", "chat")
             r = c.post(
                 f"{base}/console/api/apps",
                 json={
                     "name": name,
-                    "mode": "chat",
+                    "mode": agent_mode,
                     "icon_type": "emoji",
                     "icon": agent["icon"],
                     "icon_background": agent["icon_bg"],
@@ -1578,6 +1635,128 @@ def setup_dify_agents_tool(env: dict[str, str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Dify : provisioning du Custom Tool « BoxIA Concierge Tools »
+# ---------------------------------------------------------------------------
+# Le concierge orchestre l'admin BoxIA depuis le chat (active connecteurs,
+# installe workflows/agents, vérifie le healthcheck). Le Custom Tool
+# pointe vers /api/agents-tools/* sur aibox-app via host.docker.internal.
+
+_CONCIERGE_TOOL_OPENAPI_PATHS = [
+    "/srv/ai-stack/templates/dify/concierge-tool-openapi.yaml",
+    "/app/static/concierge-tool-openapi.yaml",
+]
+_CONCIERGE_TOOL_PROVIDER_NAME = "BoxIA Concierge Tools"
+
+
+def _load_concierge_openapi_schema() -> str:
+    """Lit le YAML concierge tool depuis le repo monté."""
+    import os
+    for p in _CONCIERGE_TOOL_OPENAPI_PATHS:
+        if os.path.isfile(p):
+            try:
+                return open(p, encoding="utf-8").read()
+            except OSError:
+                continue
+    log.warning("YAML OpenAPI Concierge introuvable dans %s",
+                _CONCIERGE_TOOL_OPENAPI_PATHS)
+    return ""
+
+
+def setup_dify_concierge_tool(env: dict[str, str]) -> dict[str, Any]:
+    """Provisionne le Custom API Tool « BoxIA Concierge Tools » dans Dify.
+
+    L'agent Concierge BoxIA (`DEFAULT_AGENTS[concierge]`) utilisera ce
+    tool pour appeler /api/agents-tools/* sur aibox-app via
+    `host.docker.internal:3100`. Auth = Bearer AGENTS_API_KEY.
+
+    Idempotent : si le provider existe → update.
+    """
+    base = "http://aibox-dify-nginx:80"
+    admin_email = env.get("ADMIN_EMAIL", "")
+    admin_password = env.get("ADMIN_PASSWORD", "")
+    agents_api_key = env.get("AGENTS_API_KEY", "")
+
+    if not admin_email or not admin_password:
+        return {"ok": False, "error": "ADMIN_EMAIL/ADMIN_PASSWORD manquants"}
+    if not agents_api_key:
+        return {"ok": False, "error": "AGENTS_API_KEY non défini dans .env"}
+
+    schema_text = _load_concierge_openapi_schema()
+    if not schema_text:
+        return {"ok": False, "error": "OpenAPI YAML concierge introuvable"}
+
+    c = _dify_console_client(base, admin_email, admin_password)
+    if c is None:
+        return {"ok": False, "error": "Login Dify console échoué"}
+
+    try:
+        # Idempotence : check si le provider existe déjà
+        get_url = (
+            f"{base}/console/api/workspaces/current/tool-provider/api/get"
+            f"?provider={_CONCIERGE_TOOL_PROVIDER_NAME}"
+        )
+        existing: dict | None = None
+        try:
+            r = c.get(get_url)
+            if r.status_code == 200:
+                existing = r.json()
+        except Exception:
+            existing = None
+
+        credentials = {
+            "auth_type": "api_key",
+            "api_key_header": "Authorization",
+            "api_key_value": f"Bearer {agents_api_key}",
+            "api_key_header_prefix": "no_prefix",
+        }
+        payload = {
+            "provider": _CONCIERGE_TOOL_PROVIDER_NAME,
+            "original_provider": _CONCIERGE_TOOL_PROVIDER_NAME,
+            "icon": {"background": "#FEF3C7", "content": "🛎️"},
+            "credentials": credentials,
+            "schema_type": "openapi",
+            "schema": schema_text,
+            "privacy_policy": "",
+            "custom_disclaimer":
+                "Outils internes BoxIA. Permet à l'agent Concierge de "
+                "lister/installer connecteurs, workflows, agents et MCP.",
+            "labels": ["concierge", "aibox", "admin"],
+        }
+
+        if existing:
+            ep = "/console/api/workspaces/current/tool-provider/api/update"
+            payload["original_provider"] = (
+                existing.get("original_provider")
+                or existing.get("provider")
+                or _CONCIERGE_TOOL_PROVIDER_NAME
+            )
+            action = "update"
+        else:
+            ep = "/console/api/workspaces/current/tool-provider/api/add"
+            action = "create"
+
+        try:
+            r = c.post(f"{base}{ep}", json=payload)
+            if r.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "action": action,
+                    "provider": _CONCIERGE_TOOL_PROVIDER_NAME,
+                    "endpoint": ep,
+                }
+            return {
+                "ok": False,
+                "action": action,
+                "endpoint": ep,
+                "error": f"HTTP {r.status_code} : {r.text[:300]}",
+            }
+        except Exception as e:
+            return {"ok": False, "action": action, "endpoint": ep, "error": str(e)}
+    finally:
+        c.close()
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
@@ -1587,17 +1766,21 @@ def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
     # (sinon le login console échouerait).
     dify_agent: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
     dify_tool: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
+    dify_concierge_tool: dict[str, Any] = {"ok": False, "error": "skipped"}
     if dify_admin.get("ok"):
         dify_agent = setup_dify_default_agent(env)
         # Le tool ne dépend pas des agents — on peut le provisionner même si
         # un des 4 agents a foiré. Mais on a besoin d'un workspace existant.
         dify_tool = setup_dify_agents_tool(env)
+        # Tool concierge — utilisé par l'agent « Concierge BoxIA »
+        dify_concierge_tool = setup_dify_concierge_tool(env)
 
     return {
         "aibox_app":   setup_aibox_app_oidc(env, host),
         "open_webui":  setup_owui_oidc(env, host),
         "dify":        dify_admin,
         "dify_agent":  dify_agent,
+        "dify_concierge_tool": dify_concierge_tool,
         "dify_agents_tool": dify_tool,
         # Phase D : token + groupes pour la gestion users depuis aibox-app
         "ak_management": setup_authentik_management(env),
