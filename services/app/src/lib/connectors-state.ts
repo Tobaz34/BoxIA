@@ -20,6 +20,9 @@ const STATE_FILE = path.join(STATE_DIR, "connectors.json");
 
 export type ConnectorStatus = "active" | "inactive" | "hidden";
 
+/** Rôles BoxIA (alignés avec Authentik groups + installed-agents.ts). */
+export type ConnectorRole = "admin" | "manager" | "employee";
+
 export interface ConnectorState {
   /** Slug du connecteur (clé). */
   slug: string;
@@ -38,6 +41,26 @@ export interface ConnectorState {
     last_objects_added?: number;
     last_objects_removed?: number;
   };
+  /**
+   * RBAC Phase 1 : restriction d'accès par rôle BoxIA.
+   *
+   * - `undefined` ou `[]`  → accès ouvert à tous les rôles (default)
+   * - `["admin"]`          → admin only
+   * - `["admin","manager"]` → admin + manager (pas employee)
+   * - `["admin","manager","employee"]` → équivalent à ouvert
+   *
+   * Filtré côté API GET /api/connectors et appliqué au retrieval RAG :
+   * un agent qui interroge la KB ne récupère que les chunks issus des
+   * connecteurs où le rôle de l'utilisateur courant est autorisé.
+   */
+  allowed_roles?: ConnectorRole[];
+  /**
+   * RBAC Phase 1 : permissions individuelles par email (override fin
+   * sur le filtre `allowed_roles`). Vide = pas de surrestrictions.
+   */
+  allowed_users?: string[];
+  /** Timestamp dernière modification des permissions (audit). */
+  permissions_updated_at?: number | null;
 }
 
 interface StateFile {
@@ -202,6 +225,62 @@ export async function recordSyncError(slug: string, error: string): Promise<void
   });
 }
 
+/**
+ * Met à jour les permissions RBAC d'un connecteur (admin only — vérifié
+ * côté API). Pas de validation des rôles côté lib (l'API check).
+ */
+export async function setConnectorPermissions(
+  slug: string,
+  allowed_roles: ConnectorRole[],
+  allowed_users: string[] = [],
+): Promise<ConnectorState> {
+  const next = await mutate((cur) => {
+    const existing = cur.states[slug] || emptyStateFor(slug);
+    cur.states[slug] = {
+      ...existing,
+      allowed_roles: allowed_roles.length > 0 ? [...new Set(allowed_roles)] : undefined,
+      allowed_users: allowed_users.length > 0 ? [...new Set(allowed_users)] : undefined,
+      permissions_updated_at: Date.now(),
+    };
+    return cur;
+  });
+  return next.states[slug];
+}
+
+/**
+ * Vérifie si un user (rôle + email) a accès à un connecteur.
+ *
+ * Règle : `allowed_users` (whitelist par email) > `allowed_roles` (par
+ * rôle) > ouvert par défaut. Un user est admissible s'il :
+ *   - figure dans `allowed_users` (cas où la liste existe)
+ *   - SINON son rôle figure dans `allowed_roles` (cas où la liste existe)
+ *   - SINON pas de restrictions => accessible.
+ *
+ * Les admins ont TOUJOURS accès (bypass). Évite qu'un admin se mette en
+ * dehors d'un connecteur par accident et ne puisse plus le modifier.
+ */
+export function userCanAccessConnector(
+  state: ConnectorState,
+  user: { role: ConnectorRole; email?: string },
+): boolean {
+  // Bypass admin (jamais lock-out)
+  if (user.role === "admin") return true;
+
+  // Whitelist par email — prioritaire si définie
+  if (state.allowed_users && state.allowed_users.length > 0) {
+    if (user.email && state.allowed_users.includes(user.email)) return true;
+    // Pas dans whitelist email → on tombe sur les rôles
+  }
+
+  // Restriction par rôles
+  if (state.allowed_roles && state.allowed_roles.length > 0) {
+    return state.allowed_roles.includes(user.role);
+  }
+
+  // Pas de restriction → accessible à tous
+  return true;
+}
+
 /** Vue publique d'un état (sans les valeurs des champs marqués secret). */
 export function publicState(slug: string, st: ConnectorState): {
   slug: string;
@@ -212,6 +291,9 @@ export function publicState(slug: string, st: ConnectorState): {
   last_error: string | null;
   activated_at: number | null;
   stats?: ConnectorState["stats"];
+  allowed_roles?: ConnectorRole[];
+  allowed_users?: string[];
+  permissions_updated_at?: number | null;
 } {
   const spec = getConnector(slug);
   const secretKeys = new Set(spec?.fields.filter((f) => f.secret).map((f) => f.key));
@@ -224,6 +306,9 @@ export function publicState(slug: string, st: ConnectorState): {
     last_error: st.last_error,
     activated_at: st.activated_at,
     stats: st.stats,
+    allowed_roles: st.allowed_roles,
+    allowed_users: st.allowed_users,
+    permissions_updated_at: st.permissions_updated_at,
   };
 }
 

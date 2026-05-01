@@ -24,6 +24,7 @@ export type AuditAction =
   | "connector.hide"
   | "connector.unhide"
   | "connector.sync"
+  | "connector.permissions_change"
   | "document.upload"
   | "document.delete"
   | "rgpd.export"

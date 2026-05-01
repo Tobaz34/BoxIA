@@ -56,6 +56,8 @@ const APP_ACTION_LABEL: Record<string, { label: string; icon: typeof Activity; c
   "connector.hide":       { label: "Connecteur masqué",      icon: EyeOff,      color: "text-muted" },
   "connector.unhide":     { label: "Connecteur restauré",    icon: Eye,         color: "text-muted" },
   "connector.sync":       { label: "Sync connecteur",        icon: RotateCcw,   color: "text-primary" },
+  "connector.permissions_change":
+                          { label: "Permissions connecteur", icon: Shield,      color: "text-primary" },
   "document.upload":      { label: "Document uploadé",       icon: FileText,    color: "text-accent" },
   "document.delete":      { label: "Document supprimé",      icon: Trash2,      color: "text-red-400" },
   "rgpd.export":          { label: "Export RGPD",            icon: ShieldCheck, color: "text-primary" },
