@@ -25,7 +25,13 @@ export const dynamic = "force-dynamic";
 const AUTHENTIK_BROWSER_URL =
   // URL côté navigateur (HTTPS via Caddy edge, ou IP:port en fallback).
   // Issuer NextAuth contient déjà l'URL public-facing → on la dérive.
-  (process.env.AUTHENTIK_APP_ISSUER || process.env.AUTHENTIK_API_URL || "")
+  // Note: docker-compose mappe AUTHENTIK_APP_ISSUER (.env) → AUTHENTIK_ISSUER
+  // (env aibox-app). On lit les deux pour être robuste, et on garde
+  // AUTHENTIK_API_URL en dernier ressort (mais c'est en interne donc pas
+  // utilisable côté navigateur — mieux vaut "" que localhost:9000).
+  (process.env.AUTHENTIK_ISSUER
+    || process.env.AUTHENTIK_APP_ISSUER
+    || "")
     .replace(/\/application\/o\/[^/]+\/?$/, "")  // strip /application/o/<slug>/
     .replace(/\/$/, "");
 
