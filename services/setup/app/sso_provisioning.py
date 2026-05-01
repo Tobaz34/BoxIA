@@ -276,21 +276,35 @@ def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
 
     prod_url, prod_dns = _service_url("app", domain) if has_real_domain else ("", "")
     lan_url = f"http://{host}:3100"
-    # `.local` : on fait confiance à mDNS+Caddy au lieu de tester le DNS
-    # (mDNS n'est pas forcément encore up au moment du provisioning).
-    prod_resolves = is_lan_mdns or (bool(prod_dns) and _dns_resolves(prod_dns))
+    # En mode `.local`, on fait confiance à mDNS+Caddy AU NIVEAU des
+    # redirect_uris (on enregistre les 2). Mais pour le NEXTAUTH_URL
+    # (= URL active utilisée pour construire les callbacks), on PRÉFÈRE
+    # l'IP LAN — plus universellement accessible (Windows corporate sans
+    # Bonjour, terminaux mobiles, etc.). Le client Bonjour-compatible
+    # accédera quand même au site via mDNS, et NextAuth tolère le hop.
+    prod_resolves_dns = bool(prod_dns) and _dns_resolves(prod_dns)
 
+    # On enregistre TOUJOURS les 2 redirect_uris dans Authentik :
+    #   - http://<ip>:3100/api/auth/callback/authentik  (LAN, universel)
+    #   - https://aibox.local/api/auth/callback/authentik  (mDNS, .local)
+    #   - https://app.<domaine.fr>/api/auth/callback/authentik  (prod)
     redirect_uris: list[str] = [f"{lan_url}/api/auth/callback/authentik"]
     if prod_url:
         redirect_uris.append(f"{prod_url}/api/auth/callback/authentik")
 
-    # URL utilisée par le navigateur pour les redirects login
-    if prod_resolves and prod_url:
+    # URL active pour NEXTAUTH_URL :
+    #   - mode prod (.fr/.com etc. avec DNS résolvant) → prod_url
+    #   - mode .local OU mode IP brute → lan_url (IP LAN détectée)
+    # Cette stratégie corrige l'ancien comportement où `.local` choisissait
+    # `https://aibox.local` même quand le client n'avait pas Bonjour mDNS.
+    if has_real_domain and not is_lan_mdns and prod_resolves_dns and prod_url:
         active_app_url = prod_url
         ak_url_browser, _ = _service_url("auth", domain)
+        prod_resolves = True
     else:
         active_app_url = lan_url
         ak_url_browser = f"http://{host}:9000"
+        prod_resolves = False
 
     creds = _ak_upsert_oidc_app(
         token,
