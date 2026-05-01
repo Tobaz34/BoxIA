@@ -289,8 +289,15 @@ HW_PROFILE=${HW_PROFILE}
 GPU_VRAM_GB=${GPU_VRAM_GB}
 
 # ----- MODÈLES OLLAMA -----
-LLM_MAIN=qwen2.5:7b
+# Modèle principal — qwen2.5:14b (~9 GB VRAM, MMLU ~78%, function calling
+# propre via Ollama, moins de biais multilingue qu'en 7B). Compromis :
+# nécessite 12 GB VRAM (RTX 4070 Super OK). Si GPU plus petit (8 GB max),
+# changer en qwen2.5:7b dans .env post-install.
+LLM_MAIN=qwen2.5:14b
 LLM_EMBED=bge-m3
+# Modèle vision — utilisé pour les agents avec vision:true (analyse
+# d'images, captures d'écran, photos). qwen2.5vl:7b est multimodal natif.
+LLM_VISION=qwen2.5vl:7b
 LLM_CODE=
 
 # ----- TECHNOS DU CLIENT -----

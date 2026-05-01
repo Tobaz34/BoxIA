@@ -955,11 +955,26 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "score_threshold": 0.5,
             "score_threshold_enabled": False,
         },
-        # Image upload activé : si le LLM courant n'est pas vision,
-        # Dify renverra une erreur lisible — sinon l'utilisateur peut
-        # joindre une image et l'agent la voit.
+        # File upload : images ET documents activés.
+        # - Images : nécessite un LLM vision (qwen2.5vl:7b). Pour les
+        #   modèles text-only (qwen2.5:7b), Dify renverra une erreur
+        #   lisible mais l'upload UI reste dispo.
+        # - Documents : Dify les parse en texte (pdfplumber pour PDF,
+        #   python-docx pour DOCX, etc.) et les ajoute au contexte LLM.
+        # Sans `allowed_file_types` qui inclut "document", les PDFs
+        # restent visibles dans le chat mais ne sont PAS injectés dans
+        # le contexte → bug observé : « ce doc est un contexte pour moi
+        # mais il n'est pas utilisé dans ma réponse précédente ».
         "file_upload": {
             "enabled": True,
+            "allowed_file_types": ["image", "document"],
+            "allowed_file_extensions": [
+                ".jpg", ".jpeg", ".png", ".webp", ".gif",
+                ".pdf", ".txt", ".md", ".csv", ".html",
+                ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ],
+            "allowed_file_upload_methods": ["local_file"],
+            "number_limits": 5,
             "image": {
                 "enabled": True,
                 "number_limits": 3,
@@ -982,17 +997,23 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
 # pre_prompt → ton et expertise différents. La clé API est écrite dans .env
 # sous le nom env_var (consommée par services/app/docker-compose.yml).
 # ---------------------------------------------------------------------------
-DEFAULT_AGENTS: list[dict[str, str]] = [
+DEFAULT_AGENTS: list[dict[str, Any]] = [
     {
         "slug": "general",
         "name": "Assistant général",
         "icon": "🤖",
         "icon_bg": "#FFEAD5",
         "description": "Assistant polyvalent, par défaut de l'AI Box.",
+        # Vision activée — utilise qwen2.5vl:7b (multimodal) au lieu de
+        # qwen2.5:14b text-only. L'utilisateur peut joindre une capture
+        # d'écran (Ctrl+V) ou un PDF avec images et l'agent les analyse.
+        "vision": True,
         "pre_prompt": (
             "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
             "de façon concise et précise. Quand on te demande de générer du code, "
-            "fournis des blocs ```lang``` correctement formatés."
+            "fournis des blocs ```lang``` correctement formatés. Si l'utilisateur "
+            "joint une image ou un document, analyse-le directement et réponds "
+            "en t'appuyant sur son contenu."
         ),
         "opening_statement": (
             "Bonjour ! Je suis votre assistant IA local. "
@@ -1372,7 +1393,8 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     if not email or not pwd:
         return {"ok": False, "error": "ADMIN_EMAIL / ADMIN_PASSWORD requis"}
 
-    model_name = env.get("LLM_MAIN", "qwen2.5:7b")
+    model_name = env.get("LLM_MAIN", "qwen2.5:14b")
+    vision_model_name = env.get("LLM_VISION", "qwen2.5vl:7b")
     embed_name = env.get("LLM_EMBED", "bge-m3:latest")
 
     c = _dify_console_client(base, email, pwd)
@@ -1388,6 +1410,13 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         report["ollama_model"] = _add_ollama_model(c, base, model_name)
         if not report["ollama_model"].get("ok"):
             return {"ok": False, "step": "ollama_model", **report}
+
+        # Modèle vision (multimodal) — utilisé pour les agents avec
+        # `vision: true` dans DEFAULT_AGENTS / AGENTS lib. Best-effort :
+        # si l'ajout échoue, les agents vision seront downgradés vers le
+        # modèle text-only (ils peuvent toujours discuter, juste pas
+        # analyser d'image).
+        report["ollama_vision"] = _add_ollama_model(c, base, vision_model_name)
 
         # ---- Embedding + dataset (Phase C : RAG) ----
         # Best-effort : si une étape échoue, on continue sans datasets pour
@@ -1414,7 +1443,11 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         agents_report: dict[str, Any] = {}
         any_ok = False
         for spec in DEFAULT_AGENTS:
-            res = _setup_one_dify_agent(c, base, spec, model_name,
+            # Si l'agent supporte la vision (analyse d'images), on le
+            # configure sur le modèle multimodal qwen2.5vl. Sinon → modèle
+            # text-only par défaut (qwen2.5:14b).
+            agent_model = vision_model_name if spec.get("vision") else model_name
+            res = _setup_one_dify_agent(c, base, spec, agent_model,
                                         dataset_ids=dataset_ids)
             agents_report[spec["slug"]] = res
             if res.get("ok"):
