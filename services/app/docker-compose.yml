@@ -51,6 +51,11 @@ services:
       # Utilisé par /api/workflows/import-templates pour push les
       # workflows pré-écrits dans n8n en 1 clic depuis /workflows.
       - /srv/ai-stack/templates:/templates:ro
+      # CHANGELOG.md du repo bind-mounté pour /api/version qui l'expose
+      # à la carte « Version & mises à jour » de /settings. Avantage par
+      # rapport à un COPY au build : le changelog peut être mis à jour
+      # sans rebuilder l'image.
+      - /srv/ai-stack/CHANGELOG.md:/CHANGELOG.md:ro
     environment:
       # En host mode, on doit dire à Next.js d'écouter sur le port custom
       PORT: "${APP_PORT:-3100}"
@@ -97,11 +102,57 @@ services:
       DIFY_AGENT_ACCOUNTANT_API_KEY:   ${DIFY_AGENT_ACCOUNTANT_API_KEY:-}
       DIFY_AGENT_HR_API_KEY:           ${DIFY_AGENT_HR_API_KEY:-}
       DIFY_AGENT_SUPPORT_API_KEY:      ${DIFY_AGENT_SUPPORT_API_KEY:-}
+      DIFY_AGENT_VISION_API_KEY:       ${DIFY_AGENT_VISION_API_KEY:-}
+      # Concierge BoxIA — agent orchestrateur qui pilote l'admin via
+      # /api/agents-tools/* (Custom Tool Dify « BoxIA Concierge Tools »
+      # attaché auto via setup_dify_default_agent).
+      DIFY_AGENT_CONCIERGE_API_KEY:    ${DIFY_AGENT_CONCIERGE_API_KEY:-}
 
       # Knowledge Base (Phase C — documents partagés + RAG).
       # Service API Dataset (Bearer dataset-...) — différent des app keys.
       DIFY_KB_API_KEY:                 ${DIFY_KB_API_KEY:-}
       DIFY_DEFAULT_DATASET_ID:         ${DIFY_DEFAULT_DATASET_ID:-}
+
+      # ---- Mémoire long-terme (mem0 sidecar, optionnel) ----
+      # Si MEM0_API_KEY défini : injecte les facts dans le 1er prompt de
+      # chaque conversation + sauvegarde l'échange en background.
+      # Si vide : feature désactivée silencieusement (pas d'erreur).
+      MEM0_API_KEY:                    ${MEM0_API_KEY:-}
+      MEM0_BASE_URL:                   ${MEM0_BASE_URL:-http://aibox-mem0:8000}
+
+      # ---- Observability Langfuse (optionnel) ----
+      # Si LANGFUSE_PUBLIC_KEY défini : trace chaque message du chat
+      # (input, output, latence, user, agent) vers Langfuse en
+      # fire-and-forget. Si vide : no-op silencieux.
+      LANGFUSE_BASE_URL:               ${LANGFUSE_BASE_URL:-}
+      LANGFUSE_PUBLIC_KEY:             ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY:             ${LANGFUSE_SECRET_KEY:-}
+
+      # ---- TTS Piper (optionnel) ----
+      # Si TTS_BACKEND_URL défini : useTTS bascule sur le backend serveur
+      # (qualité supérieure à Web Speech API). Sinon : fallback Web Speech.
+      TTS_BACKEND_URL:                 ${TTS_BACKEND_URL:-}
+      TTS_DEFAULT_VOICE:               ${TTS_DEFAULT_VOICE:-larynx:siwis-glow_tts}
+
+      # ---- SearXNG web search (optionnel, tool Concierge) ----
+      # Si SEARXNG_URL défini : le tool /api/agents-tools/web_search
+      # devient fonctionnel. Sinon : retourne 503 search_disabled.
+      SEARXNG_URL:                     ${SEARXNG_URL:-}
+
+      # ---- Agents autonomes sidecar (optionnel) ----
+      AGENTS_API_KEY:                  ${AGENTS_API_KEY:-}
+      AGENTS_BASE_URL:                 ${AGENTS_BASE_URL:-http://aibox-agents:8000}
+
+      # ---- n8n owner password ----
+      # n8n exige password fort (8+ chars, 1 maj, 1 chiffre). Le ADMIN_PASSWORD
+      # principal ne respecte pas toujours la règle (cf. install.sh gen_secret).
+      # On utilise un password dédié, généré par install.sh / setup_n8n_owner.
+      # lib/n8n.ts lit N8N_PASSWORD en priorité, fallback ADMIN_PASSWORD.
+      N8N_PASSWORD:                    ${N8N_PASSWORD:-}
+
+      # ---- Connecteurs sidecars (URLs) ----
+      PENNYLANE_TOOL_URL:              ${PENNYLANE_TOOL_URL:-http://127.0.0.1:8090}
+      FEC_TOOL_URL:                    ${FEC_TOOL_URL:-http://127.0.0.1:8091}
 
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}

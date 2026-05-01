@@ -1,0 +1,94 @@
+# =============================================================================
+# AI Box — vLLM optionnel (tier pme/pme-plus)
+# =============================================================================
+# DÉSACTIVÉ PAR DÉFAUT. À activer uniquement si :
+#   - HW_PROFILE in {pme, pme-plus}
+#   - GPU >= 16 Go VRAM (RTX 4080/4090, A5000+)
+#   - Plus de 5 utilisateurs concurrents attendus
+#
+# vLLM apporte le continuous batching → 5x users concurrents par rapport
+# à Ollama, mais consomme plus de VRAM en idle (~7 Go pour 14B AWQ).
+#
+# Coexiste avec Ollama (qui sert toujours les embeddings bge-m3).
+#
+# Activation :
+#   cd services/inference-vllm
+#   docker compose --env-file ../../.env up -d
+#
+# Désactivation (rollback safe, pas de perte de data) :
+#   docker compose down
+#
+# Bench attendu (RTX 4090 24 Go) :
+#   - 1 user  : 60-80 tokens/s (vs 50 t/s Ollama)
+#   - 5 users : 250+ tokens/s cumulé (Ollama : ~50 t/s, file d'attente)
+#   - 10 users : 400+ tokens/s cumulé
+# =============================================================================
+
+name: aibox-inference-vllm
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.6.4.post1
+    container_name: aibox-vllm
+    restart: unless-stopped
+
+    # Bind 127.0.0.1 uniquement — accès via réseau Docker aibox_net
+    # Pour exposer en LAN, retirer 127.0.0.1: et passer par Caddy avec auth.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    volumes:
+      - vllm_cache:/root/.cache/huggingface
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    environment:
+      # Token HF si modèle gated (ex: Llama 3.x). Pour Qwen2.5 AWQ : pas requis.
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+      # Logging
+      VLLM_LOGGING_LEVEL: INFO
+
+    command: >
+      --model ${VLLM_MODEL:-Qwen/Qwen2.5-14B-Instruct-AWQ}
+      --quantization awq
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
+      --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.55}
+      --served-model-name ${LLM_MAIN:-qwen2.5-14b}
+      --dtype auto
+      --enforce-eager
+      --port 8000
+      --host 0.0.0.0
+      --tensor-parallel-size 1
+      --enable-auto-tool-choice
+      --tool-call-parser hermes
+
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/v1/models\", timeout=5)' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 300s   # le download HF + compile peut prendre 3-5 min au 1er boot
+
+    networks:
+      - aibox_net
+
+    # Nécessaire pour shared memory (vLLM utilise CUDA IPC)
+    shm_size: '2gb'
+
+    mem_limit: 24g
+    mem_reservation: 8g
+
+volumes:
+  vllm_cache:
+    name: aibox_vllm_hf_cache    # ~7 Go pour Qwen2.5-14B AWQ, à conserver
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

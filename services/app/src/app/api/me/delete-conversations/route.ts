@@ -10,6 +10,7 @@ import { authOptions } from "@/lib/auth";
 import { listAvailableAgents, getAgentKey } from "@/lib/agents";
 import { difyFetch } from "@/lib/dify";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
+import { deleteUserMemory, isMemoryEnabled } from "@/lib/memory";
 
 export const dynamic = "force-dynamic";
 
@@ -57,13 +58,23 @@ export async function POST(req: Request) {
     report[meta.slug] = { count, deleted, errors };
   }
 
+  // Suppression mémoire long-terme (mem0) — RGPD complet
+  let memoryReport: { facts_deleted?: number; error?: string } = {};
+  if (isMemoryEnabled()) {
+    const m = await deleteUserMemory(email);
+    memoryReport = m.ok
+      ? { facts_deleted: m.facts_deleted }
+      : { error: m.error };
+  }
+
   // Calcule le total supprimé pour le log
   const totalDeleted = Object.values(report).reduce(
     (a, r) => a + r.deleted, 0,
   );
   await logAction("rgpd.delete_conversations", email, {
     total_deleted: totalDeleted,
+    memory_facts_deleted: memoryReport.facts_deleted,
   }, ipFromHeaders(req));
 
-  return NextResponse.json({ ok: true, report });
+  return NextResponse.json({ ok: true, report, memory: memoryReport });
 }

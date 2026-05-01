@@ -41,6 +41,20 @@ gen_secret() {
   tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c "$len"
 }
 
+# Génère un password "strong" garantissant au moins 1 majuscule, 1 minuscule,
+# 1 chiffre et 1 caractère spécial. Requis par certains services (n8n, GLPI…)
+# qui rejettent les mots de passe faibles. Préfixe "Aa1!" puis remplit avec
+# de l'aléatoire — l'ordre est mélangé pour éviter le pattern statique.
+gen_strong_pass() {
+  local len="${1:-24}"
+  if [[ $len -lt 8 ]]; then len=8; fi
+  local fixed="Aa1!"  # garantit les 4 classes
+  local rest_len=$((len - 4))
+  local rest
+  rest=$(tr -dc 'A-Za-z0-9!#$%*+-=?@_' </dev/urandom | head -c "$rest_len")
+  echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n'
+}
+
 # ---- Fonction de déploiement (réutilisable depuis CLI ou wizard web) -------
 prepare_app_data_dirs() {
   # Permissions des dossiers persistants montés en bind dans les containers.
@@ -118,6 +132,47 @@ deploy_stack() {
   # DCGM nécessite GPU NVIDIA — démarre quand même sans pour Prometheus seul.
   ( cd services/monitoring && docker compose --env-file "$env_file" up -d ) || \
       c_yellow "    (Monitoring partiellement démarré — métriques /system page peuvent être vides)"
+
+  # ---- Agents autonomes (LangGraph sidecar : triage email, devis, facture) -
+  c_blue "  → Démarrage Agents autonomes (LangGraph)..."
+  if [[ -d services/agents-autonomous ]]; then
+    ( cd services/agents-autonomous && docker compose --env-file "$env_file" up -d --build ) || \
+        c_yellow "    (Agents non démarrés — vérifier AGENTS_API_KEY dans .env)"
+  fi
+
+  # ---- Mémoire long-terme (mem0-style sur Qdrant) --------------------------
+  c_blue "  → Démarrage Memory (mem0)..."
+  if [[ -d services/memory ]]; then
+    ( cd services/memory && docker compose --env-file "$env_file" up -d --build ) || \
+        c_yellow "    (Memory non démarré — vérifier MEM0_API_KEY dans .env)"
+  fi
+
+  # ---- vLLM (optionnel, tier pme/+ uniquement) ------------------------------
+  if [[ "${HW_PROFILE:-tpe}" =~ ^pme ]] && [[ -d services/inference-vllm ]]; then
+    c_blue "  → Démarrage vLLM (tier ${HW_PROFILE})..."
+    ( cd services/inference-vllm && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (vLLM non démarré — vérifier GPU 16+ Go VRAM disponibles)"
+  fi
+
+  # ---- Services post-sprint 2026-05 (best-effort) ---------------------------
+  # Langfuse (observability LLM), TTS Piper (voix neural FR), SearXNG (web
+  # search). Démarrés best-effort : si l'image n'est pas encore pull et
+  # l'admin n'a pas la bande passante, on continue sans bloquer.
+  if [[ -d services/observability ]]; then
+    c_blue "  → Démarrage Langfuse (observability)..."
+    ( cd services/observability && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (Langfuse non démarré — relancer manuellement plus tard)"
+  fi
+  if [[ -d services/tts ]]; then
+    c_blue "  → Démarrage TTS Piper (synthèse vocale FR)..."
+    ( cd services/tts && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (TTS non démarré — useTTS fallback Web Speech API)"
+  fi
+  if [[ -d services/search ]]; then
+    c_blue "  → Démarrage SearXNG (web search métamoteur)..."
+    ( cd services/search && docker compose --env-file "$env_file" up -d ) || \
+        c_yellow "    (SearXNG non démarré — tool web_search inactif)"
+  fi
 
   # Démarre la stack héritée (n8n, Portainer, Uptime Kuma, NPM, Duplicati, Dashy)
   # si elle existe sur l'hôte. Important pour que le provisioning des comptes
@@ -241,6 +296,35 @@ PG_AUTHENTIK_PASSWORD=$(gen_secret 32)
 AUTHENTIK_SECRET_KEY=$(gen_secret 60)
 DIFY_SECRET_KEY=$(gen_secret 50)
 QDRANT_API_KEY=$(gen_secret 32)
+# ---- Sidecars & connecteurs : auto-génération obligatoire ----
+# Principe produit : aucun secret ne doit être saisi à la main par l'admin
+# client (cf. memory/product_appliance_principle.md). Ces valeurs sont
+# utilisées uniquement entre nos services internes ; les credentials vers
+# des SaaS externes (Pennylane, MS Graph...) sont saisis via UI /connectors.
+AGENTS_API_KEY=$(gen_secret 48)
+MEM0_API_KEY=$(gen_secret 48)
+FEC_TOOL_API_KEY=$(gen_secret 48)
+PENNYLANE_TOOL_API_KEY=$(gen_secret 48)
+GLPI_TOOL_API_KEY=$(gen_secret 48)
+ODOO_TOOL_API_KEY=$(gen_secret 48)
+TEXT2SQL_TOOL_API_KEY=$(gen_secret 48)
+# n8n exige un password fort (8+ chars, 1 maj, 1 chiffre). On génère un
+# password dédié plutôt que réutiliser ADMIN_PASSWORD qui peut ne pas
+# respecter ces règles. Le wizard provisionne n8n owner avec celui-ci.
+N8N_PASSWORD=$(gen_strong_pass 24)
+
+# Services optionnels post-sprint 2026-05 (Langfuse, TTS Piper, SearXNG).
+# Vars auto-générées : si l'admin ne déploie pas le compose correspondant,
+# elles restent dormantes (no-op côté aibox-app). Pour activer :
+#   - Langfuse :   cd services/observability && docker compose up -d
+#   - TTS Piper :  cd services/tts && docker compose up -d
+#   - SearXNG :    cd services/search && docker compose up -d
+LANGFUSE_DB_PASSWORD=$(gen_secret 32)
+LANGFUSE_SALT=$(gen_secret 32)
+LANGFUSE_NEXTAUTH_SECRET=$(gen_secret 64)
+LANGFUSE_PUBLIC_KEY="pk-lf-aibox-$(gen_secret 24)"
+LANGFUSE_SECRET_KEY="sk-lf-aibox-$(gen_secret 32)"
+SEARXNG_SECRET=$(gen_secret 64)
 
 cat > .env <<EOF
 # Généré par install.sh le $(date -Iseconds)
@@ -264,8 +348,20 @@ HW_PROFILE=${HW_PROFILE}
 GPU_VRAM_GB=${GPU_VRAM_GB}
 
 # ----- MODÈLES OLLAMA -----
-LLM_MAIN=qwen2.5:7b
+# Modèle principal — qwen3:14b (~9 GB VRAM, drop-in remplaçant qwen2.5:14b).
+# Avantages mesurés vs qwen2.5:14b (audit BentoML 2026-05-01) :
+#   - Multilingue FR natif (119 langues vs ~10 chez qwen2.5)
+#   - Function calling natif (résout la lenteur Concierge sur ReAct)
+#   - Mode thinking/non-thinking switchable au runtime
+#   - Qwen3-14B base ≈ Qwen2.5-32B base sur MMLU
+# Compromis : 12 GB VRAM (RTX 4070 Super OK). Si GPU plus petit (8 GB),
+# changer en qwen3:8b dans .env post-install (gain latence + Phi-4 battu).
+LLM_MAIN=qwen3:14b
 LLM_EMBED=bge-m3
+# Modèle vision — utilisé pour les agents avec vision:true (analyse
+# d'images, captures d'écran, photos). qwen2.5vl:7b est multimodal natif
+# (qwen3vl pas encore stable sur Ollama au 2026-05-01 — switch quand dispo).
+LLM_VISION=qwen2.5vl:7b
 LLM_CODE=
 
 # ----- TECHNOS DU CLIENT -----
@@ -290,6 +386,24 @@ AUTHENTIK_SECRET_KEY=${AUTHENTIK_SECRET_KEY}
 DIFY_SECRET_KEY=${DIFY_SECRET_KEY}
 QDRANT_API_KEY=${QDRANT_API_KEY}
 
+# ----- SIDECARS & CONNECTEURS (auto-générés, ne PAS modifier) -----
+AGENTS_API_KEY=${AGENTS_API_KEY}
+MEM0_API_KEY=${MEM0_API_KEY}
+FEC_TOOL_API_KEY=${FEC_TOOL_API_KEY}
+PENNYLANE_TOOL_API_KEY=${PENNYLANE_TOOL_API_KEY}
+GLPI_TOOL_API_KEY=${GLPI_TOOL_API_KEY}
+ODOO_TOOL_API_KEY=${ODOO_TOOL_API_KEY}
+TEXT2SQL_TOOL_API_KEY=${TEXT2SQL_TOOL_API_KEY}
+N8N_PASSWORD=${N8N_PASSWORD}
+
+# ----- HOST URLS sidecars (network_mode: host) -----
+INFERENCE_BACKEND=ollama
+CHECKPOINTER_MODE=postgres
+MEM0_BASE_URL=http://127.0.0.1:8087
+AGENTS_BASE_URL=http://127.0.0.1:8085
+PENNYLANE_TOOL_URL=http://127.0.0.1:8090
+FEC_TOOL_URL=http://127.0.0.1:8091
+
 # ----- VERSIONS (épinglage reproductibilité) -----
 QDRANT_VERSION=v1.13.4
 DIFY_VERSION=1.10.1
@@ -297,6 +411,23 @@ AUTHENTIK_VERSION=2025.10.0
 
 # ----- RÉSEAU DOCKER -----
 NETWORK_NAME=aibox_net
+
+# ----- LANGFUSE (observability, optionnel) -----
+LANGFUSE_DB_PASSWORD=${LANGFUSE_DB_PASSWORD}
+LANGFUSE_SALT=${LANGFUSE_SALT}
+LANGFUSE_NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET}
+LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+LANGFUSE_BASE_URL=http://127.0.0.1:3001
+LANGFUSE_PUBLIC_URL=http://localhost:3001
+
+# ----- TTS Piper (voix neural FR, optionnel) -----
+TTS_BACKEND_URL=http://127.0.0.1:5500
+TTS_DEFAULT_VOICE=larynx:siwis-glow_tts
+
+# ----- SearXNG (web search, optionnel) -----
+SEARXNG_SECRET=${SEARXNG_SECRET}
+SEARXNG_URL=http://127.0.0.1:8888
 EOF
 
 # Génération client_config.yaml (consommable par le futur portail)

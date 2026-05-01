@@ -59,8 +59,16 @@ out/
 dist/
 build/
 
-# Memory (interne Claude, pas du repo produit)
+# Memory (interne Claude, pas du repo produit) — exception pour services/memory/
 memory/
+!services/memory/
+!services/memory/**
 
-# Research / audits externes (gros clones de repos tiers, hors scope BoxIA)
-research/
+# Exception : exclure pycache de services/memory
+services/memory/**/__pycache__/
+services/memory/**/*.pyc
+
+# pycache des nouveaux connecteurs
+services/connectors/**/__pycache__/
+services/connectors/**/*.pyc
+services/connectors/**/.pytest_cache/

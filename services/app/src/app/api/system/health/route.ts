@@ -33,6 +33,8 @@ interface HealthResult {
   error?: string;
   /** Version du service si exposée par le probe (ex. Ollama). */
   version?: string;
+  /** Service optionnel (sidecar feature-flag) : un down ne casse pas l'overall. */
+  optional?: boolean;
 }
 
 interface ProbeSpec {
@@ -43,6 +45,9 @@ interface ProbeSpec {
   okCodes?: number[];
   /** Si la réponse est du JSON, extraire un champ « version ». */
   versionField?: string;
+  /** Si true et probe down → ne casse pas l'overall (service activable
+   *  selon HW_PROFILE et features). */
+  optional?: boolean;
 }
 
 const TIMEOUT_MS = 2500;
@@ -76,6 +81,7 @@ async function probe(spec: ProbeSpec): Promise<HealthResult> {
       status: r.status,
       error: ok ? undefined : `HTTP ${r.status}`,
       version,
+      optional: spec.optional || false,
     };
   } catch (e: unknown) {
     return {
@@ -84,6 +90,7 @@ async function probe(spec: ProbeSpec): Promise<HealthResult> {
       ok: false,
       latency_ms: null,
       error: errorMessage(e),
+      optional: spec.optional || false,
     };
   }
 }
@@ -112,6 +119,12 @@ export async function GET() {
   // Ollama : pas de var dédiée pour l'app (Dify lui parle directement),
   // mais on peut le sonder via l'URL host par défaut.
   const OLLAMA = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+  // Sidecars optionnels (services activés selon HW_PROFILE et features)
+  const QDRANT = process.env.QDRANT_URL || "http://localhost:6333";
+  const AGENTS = process.env.AGENTS_BASE_URL || "http://localhost:8085";
+  const MEM0 = process.env.MEM0_BASE_URL || "http://localhost:8087";
+  const PENNYLANE = process.env.PENNYLANE_TOOL_URL || "http://localhost:8090";
+  const FEC = process.env.FEC_TOOL_URL || "http://localhost:8091";
 
   const probes: ProbeSpec[] = [
     {
@@ -144,13 +157,47 @@ export async function GET() {
       // /-/healthy renvoie « Prometheus Server is Healthy. »
       url: `${PROM}/-/healthy`,
     },
+    {
+      key: "qdrant",
+      name: "Qdrant",
+      // /readyz vs /healthz selon version. /readyz est stable depuis 1.7.
+      url: `${QDRANT}/readyz`,
+    },
+    {
+      key: "agents",
+      name: "Agents Autonomes",
+      url: `${AGENTS}/healthz`,
+      optional: true,
+    },
+    {
+      key: "memory",
+      name: "Mémoire long-terme",
+      url: `${MEM0}/healthz`,
+      optional: true,
+    },
+    {
+      key: "pennylane",
+      name: "Connecteur Pennylane",
+      url: `${PENNYLANE}/healthz`,
+      optional: true,
+    },
+    {
+      key: "fec",
+      name: "Import FEC",
+      url: `${FEC}/healthz`,
+      optional: true,
+    },
   ];
 
   const results = await Promise.all(probes.map(probe));
+  // Pour le summary/overall, on ne compte QUE les services core (non optionnels).
+  // Les sidecars (agents/mem0/pennylane/fec) sont visibles dans la liste mais
+  // ne font pas passer l'overall en degraded s'ils sont down (feature off).
+  const core = results.filter((r) => !r.optional);
   const summary = {
-    total: results.length,
-    up: results.filter((r) => r.ok).length,
-    down: results.filter((r) => !r.ok).length,
+    total: core.length,
+    up: core.filter((r) => r.ok).length,
+    down: core.filter((r) => !r.ok).length,
   };
   const overall: "ok" | "degraded" | "down" =
     summary.down === 0 ? "ok"

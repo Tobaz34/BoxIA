@@ -15,6 +15,7 @@
 import {
   Plug, Plus, Trash2, EyeOff, Eye, RefreshCw, AlertCircle,
   CheckCircle2, X, Settings as SettingsIcon, Search, Clock,
+  Shield, Lock,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -57,8 +58,19 @@ interface ConnectorItem {
       objects_indexed?: number;
       last_objects_added?: number;
     };
+    allowed_roles?: ("admin" | "manager" | "employee")[];
+    allowed_users?: string[];
+    permissions_updated_at?: number | null;
   } | null;
+  accessible?: boolean;
 }
+
+type Role = "admin" | "manager" | "employee";
+const ROLE_LABELS: Record<Role, string> = {
+  admin: "Admin",
+  manager: "Manager",
+  employee: "Employé",
+};
 
 interface ApiResponse {
   connectors: ConnectorItem[];
@@ -99,9 +111,18 @@ export function ConnectorsManager() {
   const [editConfig, setEditConfig] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
+  // Modal RBAC permissions (admin only)
+  const [permsTarget, setPermsTarget] = useState<ConnectorItem | null>(null);
+  const [permsRoles, setPermsRoles] = useState<Role[]>([]);
+  const [permsUsersText, setPermsUsersText] = useState(""); // textarea, 1 email/ligne
+  const [permsSaving, setPermsSaving] = useState(false);
+
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch("/api/connectors", { cache: "no-store" });
+      // Admin : on demande TOUS les connecteurs même restrictés (l'écran
+      // /connectors doit montrer toutes les permissions). L'API filtre
+      // automatiquement pour les non-admins.
+      const r = await fetch("/api/connectors?include_restricted=1", { cache: "no-store" });
       if (!r.ok) {
         setError("Erreur de chargement");
         return;
@@ -111,6 +132,57 @@ export function ConnectorsManager() {
       setLoading(false);
     }
   }, []);
+
+  function openPermissions(c: ConnectorItem) {
+    setPermsTarget(c);
+    // Pré-remplit avec l'état actuel (allowed_roles défini = restreint,
+    // sinon les 3 rôles cochés = ouvert à tous).
+    const cur = c.state?.allowed_roles;
+    setPermsRoles(cur && cur.length > 0 ? cur : ["admin", "manager", "employee"]);
+    setPermsUsersText((c.state?.allowed_users || []).join("\n"));
+  }
+
+  async function savePermissions() {
+    if (!permsTarget) return;
+    setPermsSaving(true);
+    try {
+      // Si les 3 rôles sont cochés, c'est équivalent à "ouvert" → on envoie []
+      // pour clarifier l'intention côté serveur (allowed_roles undefined).
+      const allRolesChecked =
+        permsRoles.length === 3 &&
+        permsRoles.includes("admin") &&
+        permsRoles.includes("manager") &&
+        permsRoles.includes("employee");
+      const allowed_roles = allRolesChecked ? [] : permsRoles;
+      const allowed_users = permsUsersText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s && s.includes("@"));
+      const r = await fetch(
+        `/api/connectors/${permsTarget.slug}/permissions`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ allowed_roles, allowed_users }),
+        },
+      );
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert("Échec : " + (j.detail || j.error || `HTTP ${r.status}`));
+        return;
+      }
+      setPermsTarget(null);
+      await refresh();
+    } finally {
+      setPermsSaving(false);
+    }
+  }
+
+  function togglePermsRole(role: Role) {
+    setPermsRoles((prev) =>
+      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
+    );
+  }
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -262,6 +334,7 @@ export function ConnectorsManager() {
                   c={c}
                   onSync={() => syncNow(c.slug)}
                   onConfig={() => openActivate(c)}
+                  onPermissions={() => openPermissions(c)}
                   onDeactivate={() => deactivate(c.slug)}
                 />
               ))}
@@ -425,6 +498,108 @@ export function ConnectorsManager() {
           </div>
         </div>
       )}
+
+      {/* Modal Permissions RBAC */}
+      {permsTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => !permsSaving && setPermsTarget(null)}
+        >
+          <div
+            className="bg-card border border-border rounded-lg w-full max-w-lg p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-2xl">{permsTarget.icon}</span>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <Shield size={16} className="text-amber-400" />
+                    Permissions
+                  </h2>
+                  <p className="text-xs text-muted">{permsTarget.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPermsTarget(null)}
+                disabled={permsSaving}
+                className="p-1 rounded hover:bg-muted/30 shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="text-xs text-muted mb-4">
+              Choisissez les rôles autorisés à utiliser ce connecteur (recherche
+              RAG, contenus indexés). Les <strong>admins ont toujours accès</strong>{" "}
+              (impossible de se lock-out). Si vous cochez les 3 rôles, le connecteur
+              est ouvert à tous.
+            </div>
+
+            {/* Cases à cocher rôles */}
+            <div className="space-y-2 mb-4">
+              {(["admin", "manager", "employee"] as Role[]).map((role) => (
+                <label
+                  key={role}
+                  className="flex items-center gap-2.5 p-2 rounded-md border border-border cursor-pointer hover:bg-muted/15 transition-default"
+                >
+                  <input
+                    type="checkbox"
+                    checked={permsRoles.includes(role)}
+                    disabled={role === "admin"} // admin toujours coché (bypass)
+                    onChange={() => togglePermsRole(role)}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm font-medium">{ROLE_LABELS[role]}</span>
+                  {role === "admin" && (
+                    <span className="text-[10px] text-muted ml-auto">
+                      (toujours autorisé)
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+
+            {/* Whitelist users (avancé) */}
+            <details className="mb-4">
+              <summary className="text-xs text-muted cursor-pointer hover:text-foreground">
+                Whitelist par email (avancé)
+              </summary>
+              <div className="mt-2">
+                <textarea
+                  value={permsUsersText}
+                  onChange={(e) => setPermsUsersText(e.target.value)}
+                  placeholder="alice@boite.fr&#10;bob@boite.fr"
+                  rows={3}
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary resize-none"
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  Si défini, seuls ces emails (en plus du filtre par rôle) auront accès.
+                  1 email par ligne.
+                </p>
+              </div>
+            </details>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPermsTarget(null)}
+                disabled={permsSaving}
+                className="px-3 py-2 text-sm rounded-md border border-border hover:bg-muted/20 disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={savePermissions}
+                disabled={permsSaving}
+                className="px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {permsSaving ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                {permsSaving ? "Enregistrement…" : "Enregistrer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -448,13 +623,17 @@ function Section({
 }
 
 function ActiveRow({
-  c, onSync, onConfig, onDeactivate,
+  c, onSync, onConfig, onPermissions, onDeactivate,
 }: {
   c: ConnectorItem;
   onSync: () => void;
   onConfig: () => void;
+  onPermissions: () => void;
   onDeactivate: () => void;
 }) {
+  const restricted =
+    (c.state?.allowed_roles && c.state.allowed_roles.length > 0) ||
+    (c.state?.allowed_users && c.state.allowed_users.length > 0);
   return (
     <div className="px-4 py-3 grid grid-cols-[auto_1fr_auto] gap-4 items-center border-b border-border last:border-0">
       <span className="text-2xl">{c.icon}</span>
@@ -464,6 +643,19 @@ function ActiveRow({
           <span className={"text-[10px] px-1.5 py-0.5 rounded-full " + IMPL_BADGE[c.implStatus].cls}>
             {IMPL_BADGE[c.implStatus].label}
           </span>
+          {restricted && (
+            <span
+              className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400"
+              title={
+                "Restreint à : " +
+                ((c.state?.allowed_roles || []).map((r) => ROLE_LABELS[r]).join(", ") ||
+                  (c.state?.allowed_users || []).join(", "))
+              }
+            >
+              <Lock size={9} />
+              Restreint
+            </span>
+          )}
         </div>
         <div className="text-xs text-muted flex items-center gap-3 flex-wrap">
           <span className="inline-flex items-center gap-1">
@@ -481,10 +673,20 @@ function ActiveRow({
       <div className="flex items-center gap-1">
         <button
           onClick={onSync}
-          title="Sync now"
+          title="Synchroniser maintenant"
           className="p-2 rounded hover:bg-muted/30 text-muted hover:text-foreground transition-default"
         >
           <RefreshCw size={14} />
+        </button>
+        <button
+          onClick={onPermissions}
+          title="Permissions (RBAC)"
+          className={
+            "p-2 rounded hover:bg-muted/30 transition-default " +
+            (restricted ? "text-amber-400 hover:text-amber-300" : "text-muted hover:text-foreground")
+          }
+        >
+          <Shield size={14} />
         </button>
         <button
           onClick={onConfig}

@@ -8,8 +8,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import {
-  getAgentKeyAsync, defaultAgentSlug, AGENTS, resolveAgentMeta, roleFromGroups,
+  getAgentKey, getAgentKeyAny, defaultAgentSlug, AGENTS,
+  canUseAgent, canUseAgentStatic, roleFromGroups,
 } from "@/lib/agents";
+import { getInstalledAgent } from "@/lib/installed-agents";
 import { isUserActive } from "@/lib/user-cache";
 
 export const DIFY_BASE_URL =
@@ -48,36 +50,48 @@ export async function requireDifyContext(
       { status: 503 },
     );
   }
-  // Résout le meta (builtin OU custom)
-  const meta = await resolveAgentMeta(slug);
-  if (!meta) {
-    return NextResponse.json(
-      { error: "unknown_agent", agent: slug },
-      { status: 400 },
-    );
+  // Vérifie l'existence : statique d'abord, puis installé via marketplace
+  const isStatic = !!AGENTS[slug];
+  let dynamicAgent: Awaited<ReturnType<typeof getInstalledAgent>> = null;
+  if (!isStatic) {
+    dynamicAgent = await getInstalledAgent(slug);
+    if (!dynamicAgent) {
+      return NextResponse.json(
+        { error: "unknown_agent", agent: slug },
+        { status: 400 },
+      );
+    }
   }
 
   // Vérifie le rôle vs allowedRoles de l'agent
   const groups = (session.user as { groups?: string[] }).groups || [];
   const role = roleFromGroups(groups);
-  if (meta.allowedRoles.length > 0 && !meta.allowedRoles.includes(role)) {
+  const allowed = isStatic
+    ? canUseAgentStatic(slug, role)
+    : await canUseAgent(slug, role);
+  if (!allowed) {
+    const agentName = isStatic ? AGENTS[slug].name : (dynamicAgent?.name || slug);
+    const agentRoles = isStatic
+      ? AGENTS[slug].allowedRoles
+      : dynamicAgent?.allowed_roles;
     return NextResponse.json(
       {
         error: "agent_forbidden",
         message:
-          `L'agent « ${meta.name} » est réservé aux ` +
-          meta.allowedRoles.join(" / ") + ".",
+          `L'agent « ${agentName} » est réservé aux ` +
+          (agentRoles?.join(" / ") || "rôles autorisés") + ".",
         agent: slug,
       },
       { status: 403 },
     );
   }
 
-  const key = await getAgentKeyAsync(slug);
+  const key = isStatic ? getAgentKey(slug) : await getAgentKeyAny(slug);
   if (!key) {
+    const agentName = isStatic ? AGENTS[slug].name : (dynamicAgent?.name || slug);
     return NextResponse.json(
       { error: "agent_unavailable",
-        message: `L'agent « ${meta.name} » n'est pas configuré.`,
+        message: `L'agent « ${agentName} » n'est pas configuré.`,
         agent: slug },
       { status: 503 },
     );

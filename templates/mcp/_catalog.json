@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "_comment": "AI Box — Catalogue marketplace MCP (Model Context Protocol). Sources : github.com/modelcontextprotocol/servers (officiel Anthropic) + serveurs communautaires populaires curés. Chaque entrée décrit le serveur MCP que l'admin peut attacher à Dify (mode Agent) en 1 clic. La connexion réelle se fait via la console Dify (Outils → MCP Server).",
+  "categories": [
+    { "id": "official", "label": "Officiels Anthropic", "icon": "✅" },
+    { "id": "dev", "label": "Développement", "icon": "💻" },
+    { "id": "data", "label": "Données & SQL", "icon": "🗄️" },
+    { "id": "communication", "label": "Communication", "icon": "💬" },
+    { "id": "productivity", "label": "Productivité", "icon": "📅" },
+    { "id": "search", "label": "Recherche web", "icon": "🔎" },
+    { "id": "monitoring", "label": "Monitoring", "icon": "📊" }
+  ],
+  "servers": [
+    {
+      "slug": "filesystem",
+      "name": "Filesystem",
+      "icon": "📁",
+      "category": "official",
+      "description": "Accès lecture/écriture sécurisé à un dossier local du serveur. L'IA peut lister, lire, créer, modifier des fichiers dans le dossier autorisé. Idéal pour analyser des documents internes ou générer des rapports.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "<DIRECTORY_PATH>"],
+      "config_required": [
+        { "key": "DIRECTORY_PATH", "label": "Dossier autorisé (ex: /data/shared)", "type": "string" }
+      ],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+      "use_cases": ["Analyser des PDF locaux", "Générer des rapports", "Indexer des dossiers métier"]
+    },
+    {
+      "slug": "github",
+      "name": "GitHub",
+      "icon": "🐙",
+      "category": "dev",
+      "description": "Lit/crée des issues, PRs, commits, branches sur n'importe quel repo GitHub où le token a accès. L'IA peut auditer du code, ouvrir des PRs, répondre à des issues.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "<GITHUB_TOKEN>"
+      },
+      "config_required": [
+        { "key": "GITHUB_TOKEN", "label": "Personal Access Token (scopes: repo, read:org)", "type": "secret" }
+      ],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+      "use_cases": ["Audit de code automatisé", "Réponse aux issues", "Monitoring d'activité dev"]
+    },
+    {
+      "slug": "git",
+      "name": "Git (local)",
+      "icon": "🌿",
+      "category": "dev",
+      "description": "Accès aux commandes git sur un repo local du serveur (log, diff, blame…). Pas de network — opère sur un dossier `.git` accessible.",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "<REPO_PATH>"],
+      "config_required": [
+        { "key": "REPO_PATH", "label": "Chemin du repo (ex: /data/repos/myproject)", "type": "string" }
+      ],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/git",
+      "use_cases": ["Historique de commits", "Diff entre branches", "Audit interne"]
+    },
+    {
+      "slug": "postgres",
+      "name": "PostgreSQL",
+      "icon": "🐘",
+      "category": "data",
+      "description": "Connexion à une base PostgreSQL en lecture seule. L'IA peut explorer le schéma, exécuter des SELECT, agréger des données. Pas d'écriture (sécurité).",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "<CONNECTION_STRING>"],
+      "config_required": [
+        { "key": "CONNECTION_STRING", "label": "URL connexion (postgresql://user:pwd@host:5432/db)", "type": "secret" }
+      ],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+      "use_cases": ["Analyse de données métier", "Reporting ad-hoc", "Q&R sur la base CRM"]
+    },
+    {
+      "slug": "sqlite",
+      "name": "SQLite",
+      "icon": "💾",
+      "category": "data",
+      "description": "Connexion à un fichier SQLite local. Lecture/écriture autorisées (à l'inverse de Postgres MCP qui est read-only). Utile pour des bases métier embarquées.",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-sqlite", "--db-path", "<DB_PATH>"],
+      "config_required": [
+        { "key": "DB_PATH", "label": "Chemin du fichier .db (ex: /data/metrics.db)", "type": "string" }
+      ],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/sqlite",
+      "use_cases": ["Reporting local", "Suivi de KPI métier", "Logs structurés"]
+    },
+    {
+      "slug": "brave-search",
+      "name": "Brave Search",
+      "icon": "🔍",
+      "category": "search",
+      "description": "Recherche web via l'API Brave Search (alternative privacy-friendly à Google). Permet aux agents de répondre avec des sources actualisées du web.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "<BRAVE_KEY>"
+      },
+      "config_required": [
+        { "key": "BRAVE_KEY", "label": "Brave Search API key (gratuit jusqu'à 2000 requêtes/mois)", "type": "secret" }
+      ],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search",
+      "use_cases": ["Réponses avec sources récentes", "Veille concurrentielle", "Recherche actualités"]
+    },
+    {
+      "slug": "fetch",
+      "name": "Fetch (HTTP)",
+      "icon": "🌐",
+      "category": "search",
+      "description": "Récupère et convertit le contenu d'une URL en markdown propre. Pas de credentials nécessaires. Utile pour scraper des pages publiques (docs, blogs, articles).",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "config_required": [],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
+      "use_cases": ["Lire un article web", "Aspirer une doc publique", "Q&R sur un site"]
+    },
+    {
+      "slug": "memory",
+      "name": "Memory (graph)",
+      "icon": "🧠",
+      "category": "official",
+      "description": "Mémoire persistante structurée en graph (entités + relations). L'IA mémorise les faits importants entre conversations. Stockage local en JSON.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": { "MEMORY_FILE_PATH": "<MEMORY_PATH>" },
+      "config_required": [
+        { "key": "MEMORY_PATH", "label": "Fichier mémoire (ex: /data/mcp-memory.json)", "type": "string" }
+      ],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory",
+      "use_cases": ["Mémoire long-terme inter-sessions", "Cartographie des entités client"]
+    },
+    {
+      "slug": "sequentialthinking",
+      "name": "Sequential Thinking",
+      "icon": "🤔",
+      "category": "official",
+      "description": "Aide l'IA à structurer son raisonnement en étapes successives, avec révisions et branchements. Améliore la qualité des réponses sur les problèmes complexes (planification, debug, analyse).",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "config_required": [],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
+      "use_cases": ["Tâches complexes multi-étapes", "Debug logique", "Planification"]
+    },
+    {
+      "slug": "everything",
+      "name": "Everything (demo)",
+      "icon": "🧪",
+      "category": "official",
+      "description": "Serveur de démonstration officiel : expose UN exemple de chaque type de feature MCP (tools, prompts, resources). Utile pour tester votre setup MCP.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "config_required": [],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/everything",
+      "use_cases": ["Test/sandbox MCP", "Démo des capacités"]
+    },
+    {
+      "slug": "slack",
+      "name": "Slack",
+      "icon": "💬",
+      "category": "communication",
+      "description": "Lecture des messages, channels, users d'un workspace Slack + envoi de messages. Nécessite un Slack bot token (xoxb-).",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "env": {
+        "SLACK_BOT_TOKEN": "<SLACK_TOKEN>",
+        "SLACK_TEAM_ID": "<SLACK_TEAM_ID>"
+      },
+      "config_required": [
+        { "key": "SLACK_TOKEN", "label": "Bot User OAuth Token (xoxb-…)", "type": "secret" },
+        { "key": "SLACK_TEAM_ID", "label": "Team ID Slack (T0XXXX)", "type": "string" }
+      ],
+      "official": false,
+      "source_url": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/slack",
+      "use_cases": ["Résumer les channels actifs", "Répondre aux mentions", "Extraire les décisions"]
+    },
+    {
+      "slug": "google-drive",
+      "name": "Google Drive",
+      "icon": "📂",
+      "category": "productivity",
+      "description": "Recherche et lecture de fichiers Google Drive (Docs, Sheets, Slides). Nécessite un compte de service Google Cloud avec Drive API activée.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-gdrive"],
+      "env": {
+        "GDRIVE_CREDENTIALS_PATH": "<GDRIVE_CREDS>"
+      },
+      "config_required": [
+        { "key": "GDRIVE_CREDS", "label": "Chemin credentials.json (compte de service)", "type": "string" }
+      ],
+      "official": false,
+      "source_url": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gdrive",
+      "use_cases": ["Q&R sur les Google Docs", "Audit des Sheets de reporting"]
+    },
+    {
+      "slug": "puppeteer",
+      "name": "Puppeteer (headless browser)",
+      "icon": "🎭",
+      "category": "search",
+      "description": "Pilote un navigateur Chrome headless pour scraper du contenu JS-rendered, prendre des screenshots, remplir des formulaires. Lourd mais puissant.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "config_required": [],
+      "official": false,
+      "source_url": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/puppeteer",
+      "use_cases": ["Scraping de SPA modernes", "Tests E2E automatisés", "Captures pour reporting"]
+    },
+    {
+      "slug": "sentry",
+      "name": "Sentry",
+      "icon": "🚨",
+      "category": "monitoring",
+      "description": "Lit les issues et events d'un projet Sentry. L'IA peut investiguer une erreur en cours, suggérer des fix, prioriser par fréquence.",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-sentry", "--auth-token", "<SENTRY_TOKEN>"],
+      "config_required": [
+        { "key": "SENTRY_TOKEN", "label": "Sentry auth token (User → Auth Tokens)", "type": "secret" }
+      ],
+      "official": false,
+      "source_url": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sentry",
+      "use_cases": ["Triage d'erreurs prod", "Diagnostic automatisé", "Suivi de la qualité release"]
+    },
+    {
+      "slug": "time",
+      "name": "Time (timezone)",
+      "icon": "🕐",
+      "category": "official",
+      "description": "Donne à l'IA accès à l'heure courante et conversions de timezone. Trivial mais utile pour les agents qui doivent réfléchir aux dates relatives.",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-time"],
+      "config_required": [],
+      "official": true,
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/time",
+      "use_cases": ["Planification de réunions multi-fuseaux", "Calculs de délais"]
+    }
+  ]
+}

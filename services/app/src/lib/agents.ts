@@ -54,15 +54,38 @@ export const AGENTS: Record<string, AgentConfig> = {
     description: "Pour toutes vos questions du quotidien",
     envVar: "DIFY_DEFAULT_APP_API_KEY",
     isDefault: true,
-    vision: true,  // qwen2.5vl:7b — comprend les images
+    // CHANGÉ 2026-05-01 : passé sur qwen3:14b text-only (vs qwen2.5vl
+    // historique). qwen2.5vl répond ultra-sec sur prompts factuels
+    // simples ("Capitale FR ?" → "Paris" en 5 chars). Pour l'analyse
+    // d'images, utiliser l'« Assistant vision » dédié ci-dessous.
+    vision: false,
     openingStatement:
       "Bonjour ! Je suis votre assistant général. Posez-moi une question, " +
-      "joignez un document, ou utilisez le micro pour me dicter.",
+      "joignez un document texte (PDF, DOCX), ou utilisez le micro pour me dicter. " +
+      "Pour analyser une image, choisissez plutôt l'Assistant vision.",
     suggestedQuestions: [
       "Résume-moi les derniers documents ajoutés",
       "Aide-moi à rédiger un email professionnel",
       "Explique-moi le bilan d'une entreprise en 5 points",
       "Quelle est la procédure de demande de congés ?",
+    ],
+  },
+  vision: {
+    slug: "vision",
+    name: "Assistant vision",
+    icon: "👁",
+    description: "Analyse d'images, captures, schémas",
+    envVar: "DIFY_AGENT_VISION_API_KEY",
+    vision: true,  // qwen2.5vl:7b — comprend les images
+    openingStatement:
+      "👁 Salut ! Je suis spécialisé dans l'analyse d'images et de documents " +
+      "visuels. Joins une capture d'écran (Ctrl+V), une photo, ou un PDF avec " +
+      "schémas, et je l'analyse pour toi.",
+    suggestedQuestions: [
+      "Décris cette image et ses éléments clés",
+      "Extrais le texte de cette capture (OCR)",
+      "Convertis ce tableau visuel en données structurées",
+      "Analyse ce schéma d'architecture",
     ],
   },
   accountant: {
@@ -115,12 +138,42 @@ export const AGENTS: Record<string, AgentConfig> = {
       "Réponds à un avis Google négatif (3 étoiles, livraison)",
     ],
   },
+  // Concierge BoxIA — agent IA orchestrateur qui pilote l'admin (active
+  // connecteurs, installe workflows/agents, vérifie healthcheck) via le
+  // Custom Tool « BoxIA Concierge Tools » attaché côté Dify. Le client
+  // utilise ce concierge pour configurer SA box en langage naturel,
+  // sans avoir à naviguer dans /connectors, /workflows, /integrations/mcp.
+  concierge: {
+    slug: "concierge",
+    name: "Concierge BoxIA",
+    icon: "🛎️",
+    description: "Configure votre BoxIA en langage naturel — connecteurs, workflows, MCP, sans paramétrage manuel",
+    envVar: "DIFY_AGENT_CONCIERGE_API_KEY",
+    openingStatement:
+      "🛎️ Bonjour ! Je suis votre Concierge BoxIA. Je peux configurer votre " +
+      "box pour vous : connecter vos données (Outlook, Drive, Pennylane…), " +
+      "installer des workflows d'automatisation, ajouter des assistants " +
+      "spécialisés. Dites-moi ce que vous voulez faire en français naturel.",
+    suggestedQuestions: [
+      "Tu peux automatiser ma comptabilité ?",
+      "Quels assistants français sont disponibles ?",
+      "Connecte mon NAS pour indexer les documents partagés",
+      "Tout fonctionne bien dans la box ?",
+    ],
+    // Concierge réservé aux admins — il peut INSTALLER des workflows et
+    // des agents, donc seul l'admin doit pouvoir l'utiliser.
+    allowedRoles: ["admin"],
+  },
 };
 
 /** Métadonnées publiques (sans clé API) — sûr à exposer côté client. */
-export type PublicAgentMeta = Omit<AgentConfig, "envVar"> & { available: boolean };
+export type PublicAgentMeta = Omit<AgentConfig, "envVar"> & {
+  available: boolean;
+  /** True si l'agent provient de la marketplace (installé dynamiquement). */
+  installed?: boolean;
+};
 
-/** Liste les agents disponibles (clé env définie) — filtrés par rôle si fourni. */
+/** Liste les agents STATIQUES (hardcodés) — synchrone, sans IO. */
 export function listAvailableAgents(role?: AgentRole | null): PublicAgentMeta[] {
   const items: PublicAgentMeta[] = [];
   for (const a of Object.values(AGENTS)) {
@@ -138,8 +191,49 @@ export function listAvailableAgents(role?: AgentRole | null): PublicAgentMeta[] 
   return items;
 }
 
-/** Vérifie qu'un rôle a le droit d'utiliser un agent. */
-export function canUseAgent(slug: string, role: AgentRole): boolean {
+/** Liste TOUS les agents disponibles : statiques + installés via marketplace.
+ *  Async car lit le fichier JSON. À utiliser dans les API routes. */
+export async function listAllAvailableAgents(role?: AgentRole | null): Promise<PublicAgentMeta[]> {
+  const staticAgents = listAvailableAgents(role);
+  // Lazy import — installed-agents lit le filesystem
+  const { listInstalledAgents } = await import("@/lib/installed-agents");
+  const installed = await listInstalledAgents();
+  const dyn: PublicAgentMeta[] = installed
+    .filter((a) => {
+      if (!a.allowed_roles || a.allowed_roles.length === 0) return true;
+      if (!role) return true;
+      return a.allowed_roles.includes(role);
+    })
+    .map((a) => ({
+      slug: a.slug,
+      name: a.name,
+      icon: a.icon,
+      description: a.description || "Agent installé depuis la marketplace",
+      isDefault: false,
+      vision: false,
+      allowedRoles: a.allowed_roles,
+      installed: true,
+      available: true,
+    }));
+  return [...staticAgents, ...dyn];
+}
+
+/** Vérifie qu'un rôle a le droit d'utiliser un agent (statique ou dynamique). */
+export async function canUseAgent(slug: string, role: AgentRole): Promise<boolean> {
+  const a = AGENTS[slug];
+  if (a) {
+    if (!a.allowedRoles || a.allowedRoles.length === 0) return true;
+    return a.allowedRoles.includes(role);
+  }
+  const { getInstalledAgent } = await import("@/lib/installed-agents");
+  const dyn = await getInstalledAgent(slug);
+  if (!dyn) return false;
+  if (!dyn.allowed_roles || dyn.allowed_roles.length === 0) return true;
+  return dyn.allowed_roles.includes(role);
+}
+
+/** Synchrone : check rôle pour agents statiques uniquement (compat). */
+export function canUseAgentStatic(slug: string, role: AgentRole): boolean {
   const a = AGENTS[slug];
   if (!a) return false;
   if (!a.allowedRoles || a.allowedRoles.length === 0) return true;
@@ -156,45 +250,20 @@ export function roleFromGroups(groups: string[]): AgentRole {
   return "employee";
 }
 
-/** Récupère la clé API d'un agent par slug. Retourne null si indisponible.
- *  ATTENTION : ne gère que les agents builtin. Pour inclure les agents custom,
- *  utiliser getAgentKeyAsync(). */
+/** Récupère la clé API d'un agent statique par slug (synchrone). */
 export function getAgentKey(slug: string): string | null {
   const a = AGENTS[slug];
   if (!a) return null;
   return process.env[a.envVar] || null;
 }
 
-/** Version async qui résout aussi les agents custom (depuis /data/custom-agents.json). */
-export async function getAgentKeyAsync(slug: string): Promise<string | null> {
-  const builtin = getAgentKey(slug);
-  if (builtin) return builtin;
-  // Lazy import pour éviter une dépendance cyclique
-  const { getCustomAgent } = await import("@/lib/custom-agents");
-  const c = await getCustomAgent(slug);
-  return c?.api_key || null;
-}
-
-/** Métadonnées d'un agent (builtin ou custom) résolues async. */
-export async function resolveAgentMeta(slug: string): Promise<{
-  name: string;
-  allowedRoles: AgentRole[];
-  source: "builtin" | "custom";
-} | null> {
-  const builtin = AGENTS[slug];
-  if (builtin) {
-    return {
-      name: builtin.name,
-      allowedRoles: builtin.allowedRoles || [],
-      source: "builtin",
-    };
-  }
-  const { getCustomAgent } = await import("@/lib/custom-agents");
-  const c = await getCustomAgent(slug);
-  if (c) {
-    return { name: c.name, allowedRoles: c.allowedRoles, source: "custom" };
-  }
-  return null;
+/** Récupère la clé API d'un agent — statique OU installé via marketplace. */
+export async function getAgentKeyAny(slug: string): Promise<string | null> {
+  const staticKey = getAgentKey(slug);
+  if (staticKey) return staticKey;
+  const { getInstalledAgent } = await import("@/lib/installed-agents");
+  const dyn = await getInstalledAgent(slug);
+  return dyn?.api_key || null;
 }
 
 /** Retourne le slug par défaut (le 1er disponible avec isDefault=true,

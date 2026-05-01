@@ -9,6 +9,8 @@
  */
 import {
   Workflow, ExternalLink, Power, RefreshCw, AlertCircle, Tag, Zap,
+  Play, CheckCircle2, XCircle, Clock, ChevronDown, ChevronRight,
+  KeyRound,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -22,6 +24,10 @@ interface N8nWorkflow {
   tags?: { id: string; name: string }[];
   nodes?: { type: string; name: string }[];
   triggerCount?: number;
+  // Enrichissement marketplace : si le workflow vient d'un template,
+  // liste des credentials externes que l'admin doit configurer dans n8n.
+  credentials_required?: string[];
+  marketplace_file?: string | null;
 }
 
 /** URL publique de n8n. Calculée dynamiquement en fonction du host
@@ -72,6 +78,27 @@ function relTime(iso: string): string {
 export function WorkflowsManager() {
   const { data: session } = useSession();
   const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
+
+  const toggleExpand = (id: string) => setExpanded((prev) => (prev === id ? null : id));
+
+  const runManual = async (id: string) => {
+    setRunningId(id);
+    try {
+      const r = await fetch(`/api/workflows/${id}/run`, { method: "POST" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert("Échec exécution : " + (j.detail || j.error || `HTTP ${r.status}`));
+      } else {
+        // Pas d'alert : on attend que l'utilisateur déplie pour voir l'exécution.
+        setExpanded(id);
+      }
+    } finally {
+      setRunningId(null);
+    }
+  };
 
   const [workflows, setWorkflows] = useState<N8nWorkflow[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,6 +160,9 @@ export function WorkflowsManager() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto pb-12">
+      {/* Section Workflows IA (apps Dify mode=workflow) — compact */}
+      <DifyWorkflowsSection isAdmin={isAdmin} />
+
       <header className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-md bg-primary/15 text-primary flex items-center justify-center">
@@ -156,15 +186,28 @@ export function WorkflowsManager() {
           >
             <RefreshCw size={16} />
           </button>
-          <a
-            href={n8nUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-default"
-          >
-            <ExternalLink size={14} />
-            Ouvrir n8n
-          </a>
+          {isAdmin ? (
+            <a
+              href="/api/sso/n8n"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-default"
+              title="Ouvre n8n avec auto-login (vous êtes admin)"
+            >
+              <ExternalLink size={14} />
+              Ouvrir n8n
+            </a>
+          ) : (
+            <a
+              href={n8nUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-default"
+            >
+              <ExternalLink size={14} />
+              Ouvrir n8n
+            </a>
+          )}
         </div>
       </header>
 
@@ -211,10 +254,11 @@ export function WorkflowsManager() {
               {importing ? "Import en cours…" : "📦 Importer les templates par défaut"}
             </button>
             <a
-              href={n8nUrl}
+              href={isAdmin ? "/api/sso/n8n" : n8nUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-muted/15 transition-default"
+              title={isAdmin ? "Ouvre n8n avec auto-login (admin)" : undefined}
             >
               <ExternalLink size={14} />
               Ouvrir n8n pour créer le mien
@@ -228,6 +272,41 @@ export function WorkflowsManager() {
           )}
         </div>
       ) : workflows && workflows.length > 0 ? (
+        <>
+          {/* Banner global : alerte si N workflows actifs ont des creds requis
+              non configurés. On utilise la liste `credentials_required` du
+              catalogue marketplace ; on ne peut pas vérifier si l'admin a
+              VRAIMENT créé les creds côté n8n (info pas exposée par l'API
+              workflows), donc on alerte tant qu'au moins un workflow concerné
+              est actif — l'admin clique pour aller sur la page n8n credentials. */}
+          {(() => {
+            const needCreds = workflows.filter(
+              (w) => w.active && (w.credentials_required?.length || 0) > 0,
+            );
+            if (needCreds.length === 0 || !isAdmin) return null;
+            return (
+              <div className="mb-4 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm px-3 py-2.5 flex items-start gap-2">
+                <KeyRound size={14} className="shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <strong>Credentials à configurer.</strong>{" "}
+                  {needCreds.length} workflow{needCreds.length > 1 ? "s" : ""} actif{needCreds.length > 1 ? "s" : ""}{" "}
+                  attend{needCreds.length === 1 ? "" : "ent"} encore{" "}
+                  des credentials externes pour fonctionner :{" "}
+                  {Array.from(new Set(needCreds.flatMap((w) => w.credentials_required || []))).join(", ")}.
+                </div>
+                <a
+                  href="/api/sso/n8n?to=/home/credentials"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-amber-500 text-amber-950 hover:bg-amber-400 transition-default font-medium"
+                >
+                  <ExternalLink size={11} />
+                  Configurer dans n8n
+                </a>
+              </div>
+            );
+          })()}
+
         <div className="rounded-lg border border-border bg-card divide-y divide-border">
           {workflows.map((w) => (
             <div
@@ -267,22 +346,43 @@ export function WorkflowsManager() {
               </div>
               <div className="flex items-center gap-1">
                 {isAdmin && (
-                  <button
-                    onClick={() => toggle(w.id, !w.active)}
-                    disabled={toggling === w.id}
-                    className={
-                      "p-2 rounded transition-default " +
-                      (w.active
-                        ? "text-accent hover:bg-accent/10"
-                        : "text-muted hover:bg-muted/30 hover:text-foreground")
-                    }
-                    title={w.active ? "Désactiver" : "Activer"}
-                  >
-                    <Power size={14} />
-                  </button>
+                  <>
+                    <button
+                      onClick={() => runManual(w.id)}
+                      disabled={runningId === w.id}
+                      className="p-2 rounded text-muted hover:text-primary hover:bg-primary/10 transition-default disabled:opacity-50"
+                      title="Exécuter maintenant"
+                    >
+                      <Play size={14} className={runningId === w.id ? "animate-pulse" : ""} />
+                    </button>
+                    <button
+                      onClick={() => toggle(w.id, !w.active)}
+                      disabled={toggling === w.id}
+                      className={
+                        "p-2 rounded transition-default " +
+                        (w.active
+                          ? "text-accent hover:bg-accent/10"
+                          : "text-muted hover:bg-muted/30 hover:text-foreground")
+                      }
+                      title={w.active ? "Désactiver" : "Activer"}
+                    >
+                      <Power size={14} />
+                    </button>
+                  </>
                 )}
+                <button
+                  onClick={() => toggleExpand(w.id)}
+                  className="p-2 rounded text-muted hover:text-foreground hover:bg-muted/30 transition-default"
+                  title="Voir les exécutions"
+                >
+                  {expanded === w.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
                 <a
-                  href={`${n8nUrl}/workflow/${w.id}`}
+                  href={
+                    isAdmin
+                      ? `/api/sso/n8n?to=${encodeURIComponent("/workflow/" + w.id)}`
+                      : `${n8nUrl}/workflow/${w.id}`
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-2 rounded text-muted hover:text-foreground hover:bg-muted/30 transition-default"
@@ -291,9 +391,15 @@ export function WorkflowsManager() {
                   <ExternalLink size={14} />
                 </a>
               </div>
+              {expanded === w.id && (
+                <div className="col-span-3 mt-2 pt-3 border-t border-border">
+                  <ExecutionsPanel workflowId={w.id} />
+                </div>
+              )}
             </div>
           ))}
         </div>
+        </>
       ) : null}
 
       <div className="mt-6 rounded-lg bg-muted/5 border border-border p-4">
@@ -307,6 +413,182 @@ export function WorkflowsManager() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// =========================================================================
+// Section Workflows IA (apps Dify mode=workflow)
+// =========================================================================
+
+interface DifyWorkflow {
+  slug: string;
+  app_id: string;
+  name: string;
+  description: string;
+  icon: string;
+  icon_background: string;
+  mode: string;
+  installed_at: string;
+}
+
+function DifyWorkflowsSection({ isAdmin }: { isAdmin: boolean }) {
+  const [workflows, setWorkflows] = useState<DifyWorkflow[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/dify/workflows", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : { workflows: [] })
+      .then((j) => setWorkflows(j.workflows || []))
+      .catch(() => setWorkflows([]));
+  }, []);
+
+  if (!workflows || workflows.length === 0) return null;
+
+  return (
+    <section className="mb-8">
+      <h2 className="text-xs font-semibold uppercase tracking-wide mb-2 text-muted">
+        Workflows IA ({workflows.length})
+      </h2>
+      <p className="text-xs text-muted mb-3">
+        Pipelines IA déterministes (résumé de PDF, traduction, transcription…) installés via la marketplace.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {workflows.map((w) => (
+          <div key={w.slug} className="rounded-lg border border-border bg-card p-3 flex items-start gap-3">
+            <div
+              className="w-10 h-10 rounded-md flex items-center justify-center text-xl shrink-0"
+              style={{ background: w.icon_background }}
+            >
+              {w.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-sm truncate">{w.name}</div>
+              <p className="text-xs text-muted line-clamp-2 mt-0.5">{w.description || "—"}</p>
+              <div className="mt-2">
+                {isAdmin ? (
+                  <a
+                    href={`/api/sso/dify?to=${encodeURIComponent("/app/" + w.app_id + "/workflow")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:opacity-90"
+                  >
+                    <ExternalLink size={11} />
+                    Ouvrir l'éditeur
+                  </a>
+                ) : (
+                  <span className="text-[10px] text-muted">Workflow IA installé</span>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface N8nExecution {
+  id: string;
+  finished?: boolean;
+  status?: string;
+  mode?: string;
+  startedAt?: string;
+  stoppedAt?: string;
+}
+
+interface ExecutionsResponse {
+  executions: N8nExecution[];
+  stats: { success: number; error: number; running: number; total: number };
+}
+
+function ExecutionsPanel({ workflowId }: { workflowId: string }) {
+  const [data, setData] = useState<ExecutionsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/workflows/${workflowId}/executions`, { cache: "no-store" });
+      if (r.ok) setData(await r.json());
+    } finally {
+      setLoading(false);
+    }
+  }, [workflowId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const statusIcon = (status?: string, finished?: boolean) => {
+    if (status === "success" || (finished && !status)) {
+      return <CheckCircle2 size={12} className="text-accent" />;
+    }
+    if (status === "error" || status === "crashed") {
+      return <XCircle size={12} className="text-red-400" />;
+    }
+    if (status === "running" || status === "waiting" || status === "new") {
+      return <Clock size={12} className="text-yellow-400 animate-pulse" />;
+    }
+    return <Clock size={12} className="text-muted" />;
+  };
+
+  const dur = (e: N8nExecution) => {
+    if (!e.startedAt) return "—";
+    const start = new Date(e.startedAt).getTime();
+    const end = e.stoppedAt ? new Date(e.stoppedAt).getTime() : Date.now();
+    const sec = Math.max(0, Math.round((end - start) / 1000));
+    if (sec < 60) return `${sec}s`;
+    return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  };
+
+  return (
+    <div className="space-y-2">
+      {data && (
+        <div className="flex items-center gap-3 text-xs">
+          <span className="font-medium text-muted">Sur 7 jours :</span>
+          <span className="inline-flex items-center gap-1 text-accent">
+            <CheckCircle2 size={11} />
+            {data.stats.success} succès
+          </span>
+          <span className="inline-flex items-center gap-1 text-red-400">
+            <XCircle size={11} />
+            {data.stats.error} échec{data.stats.error > 1 ? "s" : ""}
+          </span>
+          {data.stats.running > 0 && (
+            <span className="inline-flex items-center gap-1 text-yellow-400">
+              <Clock size={11} />
+              {data.stats.running} en cours
+            </span>
+          )}
+          <span className="ml-auto">
+            <button onClick={load} disabled={loading} className="text-muted hover:text-foreground" title="Rafraîchir">
+              <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+            </button>
+          </span>
+        </div>
+      )}
+      {loading ? (
+        <div className="text-xs text-muted py-2">Chargement…</div>
+      ) : !data?.executions || data.executions.length === 0 ? (
+        <div className="text-xs text-muted py-2">
+          Aucune exécution récente. Cliquez sur ▶ pour déclencher une exécution manuelle.
+        </div>
+      ) : (
+        <div className="rounded-md border border-border divide-y divide-border max-h-60 overflow-y-auto">
+          {data.executions.slice(0, 10).map((e) => (
+            <div key={e.id} className="px-3 py-1.5 flex items-center gap-2 text-xs">
+              {statusIcon(e.status, e.finished)}
+              <span className="font-mono text-muted text-[10px]">#{e.id}</span>
+              <span className="text-muted">{e.mode || "manual"}</span>
+              <span className="flex-1" />
+              <span className="text-[10px] text-muted">{dur(e)}</span>
+              <span className="text-[10px] text-muted">
+                {e.startedAt ? new Date(e.startedAt).toLocaleString("fr-FR", {
+                  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                }) : "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

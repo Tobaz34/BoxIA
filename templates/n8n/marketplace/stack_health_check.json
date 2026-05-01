@@ -1,0 +1,67 @@
+{
+  "name": "AI Box — Healthcheck stack (5 min)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 5 }]
+        }
+      },
+      "id": "trigger_5min",
+      "name": "Toutes les 5 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:3100/api/system/health",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ping_health",
+      "name": "Ping /api/system/health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nif (!r || !r.summary) {\n  return [{ json: { alert: true, body: '⚠ /api/system/health injoignable depuis n8n' } }];\n}\nif (r.summary.down === 0) return [];\nconst down = (r.services || []).filter(s => !s.ok && !s.optional).map(s => `- ${s.name} : ${s.error || 'down'}`).join('\\n');\nif (!down) return [];\nreturn [{ json: { alert: true, body: `🚨 ${r.summary.down} service(s) core down :\\n\\n${down}\\n\\nVérifie immédiatement.` } }];"
+      },
+      "id": "check_down",
+      "name": "Filtre services down",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ai-box@aibox.local",
+        "toEmail": "={{$env.ADMIN_EMAIL}}",
+        "subject": "🚨 AI Box — Service down détecté",
+        "emailFormat": "text",
+        "text": "={{$json.body}}",
+        "options": {}
+      },
+      "id": "send_alert",
+      "name": "Email alerte admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Toutes les 5 min": { "main": [[{ "node": "Ping /api/system/health", "type": "main", "index": 0 }]] },
+    "Ping /api/system/health": { "main": [[{ "node": "Filtre services down", "type": "main", "index": 0 }]] },
+    "Filtre services down": { "main": [[{ "node": "Email alerte admin", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "AI Box" }, { "name": "Monitoring" }, { "name": "Marketplace" }]
+}

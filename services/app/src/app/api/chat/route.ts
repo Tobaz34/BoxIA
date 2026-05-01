@@ -14,7 +14,18 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, difyFetch, DIFY_BASE_URL } from "@/lib/dify";
-import { FileDetector } from "@/lib/chat-stream-files";
+import {
+  addUserMemory,
+  formatMemoryContext,
+  isMemoryEnabled,
+  searchUserMemory,
+} from "@/lib/memory";
+import {
+  isLangfuseEnabled,
+  startTrace,
+  updateTrace,
+} from "@/lib/langfuse";
+import { stripThinkFromSSE } from "@/lib/strip-think";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +57,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "empty_query" }, { status: 400 });
   }
 
+  // ----- Mémoire long-terme (mem0) — best-effort, n'échoue jamais -----
+  // Au 1er message d'une nouvelle conversation, on injecte les faits connus
+  // sur le user. Sur les suivants, Dify a déjà le contexte conversationnel.
+  let memoryPrefix = "";
+  if (isMemoryEnabled() && ctx.user && !body.conversation_id) {
+    const facts = await searchUserMemory(ctx.user, query, {
+      agentId: body.agent || "default",
+    });
+    memoryPrefix = formatMemoryContext(facts);
+  }
+  const augmentedQuery = memoryPrefix ? `${memoryPrefix}---\n\n${query}` : query;
+
+  // ----- Langfuse trace (best-effort, fire-and-forget) -----
+  // Une trace par message user, groupée par sessionId = conversation_id
+  // Dify (côté UI Langfuse → toutes les traces d'une conversation s'affichent
+  // groupées). Si LANGFUSE_BASE_URL absent → no-op silencieux.
+  const traceId = isLangfuseEnabled()
+    ? startTrace({
+        name: `chat:${body.agent || "default"}`,
+        userId: ctx.user,
+        sessionId: body.conversation_id || undefined,
+        input: query,
+        tags: [body.agent || "default", memoryPrefix ? "with-memory" : "no-memory"],
+        metadata: {
+          memory_prefix_chars: memoryPrefix.length,
+          files_count: Array.isArray(body.files) ? body.files.length : 0,
+        },
+      })
+    : "";
+
   const upstream = await fetch(`${DIFY_BASE_URL}/v1/chat-messages`, {
     method: "POST",
     headers: {
@@ -54,7 +95,7 @@ export async function POST(req: NextRequest) {
     },
     body: JSON.stringify({
       inputs: {},
-      query,
+      query: augmentedQuery,
       response_mode: "streaming",
       conversation_id: body.conversation_id || "",
       user: ctx.user,
@@ -73,58 +114,46 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Transforme le stream SSE pour intercepter les blocs [FILE:...] dans
-  // chaque event de type `message`/`agent_message`. On parse SSE
-  // ligne-par-ligne et on n'altère que la valeur `answer` des events JSON.
-  const detector = new FileDetector({
-    ownerEmail: ctx.user,
-    conversationId: body.conversation_id || undefined,
-  });
+  // Filtre proxy : strip <think>...</think> exposés par qwen3 (mode CoT
+  // activé par défaut, le `/no_think` dans le pre_prompt est ignoré
+  // par Ollama). Defense-in-depth : même si un agent n'a pas /no_think,
+  // l'utilisateur ne verra jamais le raisonnement intermédiaire.
+  const filteredUpstream = stripThinkFromSSE(upstream.body);
 
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let lineBuffer = "";
-
-  const transform = new TransformStream<Uint8Array, Uint8Array>({
-    async transform(chunk, controller) {
-      lineBuffer += decoder.decode(chunk, { stream: true });
-      // SSE : événements séparés par \n\n, chaque ligne `data: {json}`.
-      // On boucle sur les lignes complètes.
-      let nlIdx: number;
-      while ((nlIdx = lineBuffer.indexOf("\n")) >= 0) {
-        const line = lineBuffer.slice(0, nlIdx);
-        lineBuffer = lineBuffer.slice(nlIdx + 1);
-        const out = await processLine(line, detector);
-        if (out !== null) {
-          controller.enqueue(encoder.encode(out + "\n"));
-        }
+  // Tee le stream pour : (1) client SSE, (2) capture pour mémorisation
+  // mem0 ET update de trace Langfuse avec l'output final. On utilise un
+  // SEUL tee même si une seule des 2 features est active, pour ne pas
+  // dupliquer le code.
+  const needsCapture =
+    (isMemoryEnabled() && ctx.user) || (isLangfuseEnabled() && traceId);
+  if (needsCapture) {
+    const [clientStream, captureStream] = filteredUpstream.tee();
+    void captureAssistantReply(captureStream).then((assistantText) => {
+      if (assistantText && isMemoryEnabled() && ctx.user) {
+        addUserMemory(ctx.user, body.agent || "default", [
+          { role: "user", content: query },
+          { role: "assistant", content: assistantText },
+        ], { conversation_id: body.conversation_id });
       }
-    },
-    async flush(controller) {
-      // Reste à traiter
-      if (lineBuffer.length > 0) {
-        const out = await processLine(lineBuffer, detector);
-        if (out !== null) controller.enqueue(encoder.encode(out));
-        lineBuffer = "";
+      if (assistantText && isLangfuseEnabled() && traceId) {
+        updateTrace(traceId, {
+          output: assistantText,
+          metadata: { output_chars: assistantText.length },
+        });
       }
-      // Flush du file detector (cas d'un [FILE:...] non fermé en fin de stream)
-      const tail = await detector.flush();
-      if (tail) {
-        // Émet un event spécial avec le marker comme `answer`
-        const evt = {
-          event: "message",
-          answer: tail,
-        };
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
-      }
-    },
-  });
+    });
+    return new Response(clientStream, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
 
-  upstream.body.pipeTo(transform.writable).catch((e) => {
-    console.warn("[/api/chat] transform pipe error:", e);
-  });
-
-  return new Response(transform.readable, {
+  return new Response(filteredUpstream, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -135,38 +164,41 @@ export async function POST(req: NextRequest) {
   });
 }
 
-/** Traite une ligne SSE :
- *  - "data: {json}" avec event message/agent_message → réécrit `answer`
- *  - autres lignes → passthrough
- *  Retourne la ligne à émettre (peut être identique à l'entrée) ou null
- *  pour drop.
+/**
+ * Lit le stream SSE Dify et reconstitue le texte de la réponse assistant
+ * (concat des `event: message`).
  */
-async function processLine(line: string, detector: FileDetector): Promise<string | null> {
-  // Lignes vides (séparateurs SSE) → passthrough
-  if (!line || !line.startsWith("data:")) return line;
-  const payload = line.slice(5).trim();
-  if (!payload || payload === "[DONE]") return line;
-
+async function captureAssistantReply(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let answer = "";
   try {
-    const evt = JSON.parse(payload);
-    if (
-      (evt.event === "message" || evt.event === "agent_message")
-      && typeof evt.answer === "string" && evt.answer.length > 0
-    ) {
-      const replaced = await detector.push(evt.answer);
-      if (replaced === evt.answer) return line;  // pas de modif → passthrough
-      // Sinon on réémet l'event avec answer modifié.
-      // Si replaced est vide, on émet quand même un event vide (les events
-      // sans answer ne brisent rien côté client) — ça maintient le rythme
-      // SSE et permet aux keep-alive de fonctionner.
-      const newEvt = { ...evt, answer: replaced };
-      return `data: ${JSON.stringify(newEvt)}`;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const evt = JSON.parse(payload);
+          if (evt.event === "message" && typeof evt.answer === "string") {
+            answer += evt.answer;
+          }
+        } catch {
+          // ignore malformed
+        }
+      }
     }
-    return line;
   } catch {
-    // JSON invalide : passthrough silencieux
-    return line;
+    // best-effort
   }
+  return answer.trim();
 }
 
 // Reference imports to satisfy the linter (difyFetch isn't used here but

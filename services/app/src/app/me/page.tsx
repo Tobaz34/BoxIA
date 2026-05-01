@@ -12,15 +12,69 @@
  * /users) — on respecte le principe que le user ne peut pas se faire
  * disparaître de la base sans intervention de l'admin (audit trail).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Download, Trash2, ShieldCheck, AlertTriangle, FileJson } from "lucide-react";
+import {
+  Download, Trash2, ShieldCheck, AlertTriangle, FileJson,
+  Brain, RefreshCw,
+} from "lucide-react";
+
+interface MemoryFact {
+  id: string;
+  fact: string;
+  agent_id: string;
+  created_at: string;
+  score: number | null;
+}
 
 export default function MePage() {
   const { data: session } = useSession();
   const [deleting, setDeleting] = useState(false);
   const [report, setReport] = useState<Record<string, { count: number; deleted: number; errors: number }> | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Mémoire long-terme (mem0) — best effort : si désactivé, section masquée
+  const [memEnabled, setMemEnabled] = useState<boolean | null>(null);
+  const [memFacts, setMemFacts] = useState<MemoryFact[]>([]);
+  const [memLoading, setMemLoading] = useState(true);
+  const [memDeleting, setMemDeleting] = useState(false);
+
+  const loadMemory = async () => {
+    setMemLoading(true);
+    try {
+      const r = await fetch("/api/me/memory", { cache: "no-store" });
+      if (r.ok) {
+        const j = await r.json();
+        setMemEnabled(j.enabled === true);
+        setMemFacts(Array.isArray(j.facts) ? j.facts : []);
+      } else {
+        setMemEnabled(false);
+      }
+    } catch {
+      setMemEnabled(false);
+    } finally {
+      setMemLoading(false);
+    }
+  };
+
+  useEffect(() => { loadMemory(); }, []);
+
+  const deleteMemory = async () => {
+    if (!confirm(
+      "Supprimer DÉFINITIVEMENT toute votre mémoire long-terme ? " +
+      "L'assistant oubliera tout ce qu'il sait de vous (préférences, " +
+      "contexte, etc.). Action irréversible — RGPD art. 17."
+    )) return;
+    setMemDeleting(true);
+    try {
+      const r = await fetch("/api/me/memory", { method: "DELETE" });
+      if (r.ok) {
+        setMemFacts([]);
+      }
+    } finally {
+      setMemDeleting(false);
+    }
+  };
 
   const groups = (session?.user as { groups?: string[] })?.groups || [];
   const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
@@ -150,6 +204,76 @@ export default function MePage() {
           </div>
         )}
       </section>
+
+      {/* Mémoire long-terme (mem0) — masqué si feature désactivée serveur */}
+      {memEnabled !== false && (
+        <section className="bg-card border border-border rounded-lg p-5 mb-4">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Brain size={16} className="text-primary" />
+              Mémoire long-terme
+            </h2>
+            <button
+              onClick={loadMemory}
+              disabled={memLoading}
+              className="p-1.5 rounded hover:bg-muted/20 text-muted hover:text-foreground transition-default"
+              title="Rafraîchir"
+            >
+              <RefreshCw size={14} className={memLoading ? "animate-spin" : ""} />
+            </button>
+          </div>
+          <p className="text-sm text-muted mb-3">
+            Liste des informations que la AI Box a mémorisées sur vous au fil
+            des conversations (préférences, contexte professionnel, faits durables).
+            Ces données sont utilisées pour personnaliser les réponses sans
+            avoir à tout réexpliquer à chaque fois. Vous gardez le contrôle :
+            consultation et suppression à tout moment (RGPD art. 15 et 17).
+          </p>
+
+          {memLoading ? (
+            <div className="text-sm text-muted py-4">Chargement…</div>
+          ) : memFacts.length === 0 ? (
+            <div className="text-sm text-muted bg-muted/10 rounded-md px-3 py-3 border border-border">
+              Aucune information mémorisée pour le moment. Discutez avec un
+              assistant et partagez votre contexte (entreprise, préférences) :
+              les faits durables seront extraits automatiquement.
+            </div>
+          ) : (
+            <>
+              <div className="rounded-md border border-border divide-y divide-border max-h-72 overflow-y-auto mb-3">
+                {memFacts.map((f) => (
+                  <div key={f.id} className="px-3 py-2 text-sm flex items-start gap-2">
+                    <span className="text-primary mt-0.5">•</span>
+                    <div className="flex-1 min-w-0">
+                      <div>{f.fact}</div>
+                      <div className="text-[10px] text-muted mt-0.5">
+                        Agent : <code className="bg-muted/15 px-1 py-0.5 rounded">{f.agent_id}</code>
+                        {" · "}
+                        {new Date(f.created_at).toLocaleDateString("fr-FR", {
+                          day: "2-digit", month: "short", year: "numeric",
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-muted">
+                  {memFacts.length} fait{memFacts.length > 1 ? "s" : ""} mémorisé{memFacts.length > 1 ? "s" : ""}
+                </span>
+                <button
+                  onClick={deleteMemory}
+                  disabled={memDeleting}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-500/15 text-red-400 text-xs font-medium hover:bg-red-500/25 transition-default disabled:opacity-50"
+                >
+                  <Trash2 size={12} />
+                  {memDeleting ? "Suppression…" : "Tout effacer"}
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       {/* Suppression compte = admin */}
       <section className="rounded-lg border border-border bg-muted/5 p-5">

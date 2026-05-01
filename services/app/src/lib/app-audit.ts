@@ -24,17 +24,25 @@ export type AuditAction =
   | "connector.hide"
   | "connector.unhide"
   | "connector.sync"
+  | "connector.permissions_change"
   | "document.upload"
   | "document.delete"
   | "rgpd.export"
   | "rgpd.delete_conversations"
+  | "rgpd.delete_memory"
+  | "agent.install_template"
+  | "agent.uninstall"
+  | "workflow.run_manual"
+  | "workflow.upload"
+  | "workflow.install_template"
   | "user.invite"
   | "user.role_change"
   | "user.toggle_active"
   | "user.recovery_link"
   | "agent.chat"             // optionnel, peut spammer
   | "settings.update"
-  | "audit.access";          // l'admin a consulté l'audit
+  | "audit.access"           // l'admin a consulté l'audit
+  | "concierge.approval";    // l'admin a approuvé/refusé une action Concierge
 
 export interface AuditEntry {
   ts: number;                              // ms epoch

@@ -13,6 +13,18 @@ RUN npm install --ignore-scripts --no-audit --no-fund
 FROM node:22-alpine AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+# Build-args pour version.json (cf. scripts/gen-version.mjs)
+# Si .git n'est pas accessible (cas COPY . . sans le dossier .git),
+# on utilise ces vars d'env comme fallback. Le compose passe ces args
+# via build.args : BUILD_COMMIT_SHA, BUILD_COMMIT_DATE, BUILD_BRANCH.
+ARG BUILD_COMMIT_SHA=""
+ARG BUILD_COMMIT_DATE=""
+ARG BUILD_COMMIT_MESSAGE=""
+ARG BUILD_BRANCH=""
+ENV BUILD_COMMIT_SHA=$BUILD_COMMIT_SHA
+ENV BUILD_COMMIT_DATE=$BUILD_COMMIT_DATE
+ENV BUILD_COMMIT_MESSAGE=$BUILD_COMMIT_MESSAGE
+ENV BUILD_BRANCH=$BUILD_BRANCH
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

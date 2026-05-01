@@ -1,0 +1,53 @@
+# SearXNG settings.yml — version minimale BoxIA.
+# Le secret est injecté via env SEARXNG_SECRET au boot (cf. compose).
+# Modifié uniquement pour activer engines FR + format JSON public.
+
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "AI Box Search"
+  privacypolicy_url: false
+  contact_url: false
+  enable_metrics: false
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  # Le secret réel vient de l'env SEARXNG_SECRET (override automatique
+  # via use_default_settings: true). Mettre une valeur de fallback non
+  # critique pour que YAML parse même si l'env n'est pas injectée.
+  secret_key: "boxia_dev_change_me_via_env_SEARXNG_SECRET"
+  base_url: false
+  image_proxy: false
+  http_protocol_version: "1.0"
+  method: "GET"
+
+ui:
+  static_use_hash: true
+  default_locale: "fr"
+  query_in_title: false
+  infinite_scroll: false
+  center_alignment: false
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  default_lang: "fr"
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  formats:
+    - html
+    - json   # IMPORTANT : sinon GET /search?format=json → 403
+
+# Pas de redis pour MVP (rate-limit en mémoire process)
+redis:
+  url: false
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 10.0
+  pool_connections: 100
+  pool_maxsize: 10
+  enable_http2: true
+  useragent_suffix: "BoxIA"

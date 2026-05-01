@@ -1,0 +1,66 @@
+{
+  "name": "AI Box — Alerte tickets GLPI SLA",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 4 }]
+        }
+      },
+      "id": "trigger_4h",
+      "name": "Toutes les 4h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "=http://aibox-conn-glpi:8000/tickets/sla_overdue?days=7",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.GLPI_TOOL_API_KEY}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http_glpi",
+      "name": "GLPI tickets retard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const tickets = $input.first().json;\nif (!Array.isArray(tickets) || tickets.length === 0) return [{ json: { skip: true } }];\nconst lines = tickets.slice(0, 15).map(t =>\n  `- #${t.id || t['2'] || '?'} | ${t.name || t['1'] || '(sans titre)'} | priorité ${t.priority || t['3'] || '?'}`\n).join('\\n');\nreturn [{ json: {\n  count: tickets.length,\n  body: `${tickets.length} ticket(s) GLPI ouvert(s) depuis +7j :\\n\\n${lines}\\n\\nMerci de vérifier dans la console GLPI.`\n}}];"
+      },
+      "id": "format_alert",
+      "name": "Format alerte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ai-box@aibox.local",
+        "toEmail": "={{$env.ADMIN_EMAIL}}",
+        "subject": "=🎫 AI Box — {{$json.count}} ticket(s) GLPI en retard SLA",
+        "emailFormat": "text",
+        "text": "={{$json.body}}",
+        "options": {}
+      },
+      "id": "send_alert",
+      "name": "Email alerte",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Toutes les 4h": { "main": [[{ "node": "GLPI tickets retard", "type": "main", "index": 0 }]] },
+    "GLPI tickets retard": { "main": [[{ "node": "Format alerte", "type": "main", "index": 0 }]] },
+    "Format alerte": { "main": [[{ "node": "Email alerte", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "AI Box" }, { "name": "Helpdesk" }, { "name": "Marketplace" }]
+}

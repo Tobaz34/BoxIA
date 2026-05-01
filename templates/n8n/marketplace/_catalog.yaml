@@ -1,0 +1,142 @@
+# =============================================================================
+# AI Box — Catalogue marketplace n8n workflows TPE/PME
+# =============================================================================
+# Catalogue de workflows n8n pré-écrits, prêts à importer en 1 clic depuis
+# /workflows/marketplace côté UX.
+#
+# Chaque entrée :
+#   - file       : nom du fichier JSON dans ce dossier (workflow complet n8n)
+#   - name       : nom affiché côté UI
+#   - icon       : emoji
+#   - category   : finance | email | rag | helpdesk | backup | monitoring | sales | misc
+#   - description: 1-2 phrases en français
+#   - difficulty : facile | moyen | avance
+#   - credentials_required : [] ou liste de noms de credentials externes à configurer
+#                            (le client devra les ajouter dans n8n console après import)
+#   - boxia_services: [] ou liste de services BoxIA requis (pennylane, fec, glpi,
+#                       agents, mem0, dify, qdrant). Permet de filtrer par config client.
+#   - default_active : true|false — si true, activé automatiquement à l'import.
+#                       Pour les workflows avec credentials_required ≠ [], TOUJOURS
+#                       false (l'admin doit configurer les creds AVANT d'activer).
+#
+# IMPORTANT : tous les workflows ici doivent être inactifs au moment du JSON
+# (active: false). L'activation se fait après config par l'admin via l'UI.
+# =============================================================================
+
+version: 1
+
+workflows:
+  # ---------- FINANCE ----------
+  - file: pennylane_unpaid_digest.json
+    name: "Digest factures impayées (Pennylane)"
+    icon: "💰"
+    category: finance
+    description: |
+      Tous les matins à 8h, récupère les factures impayées de Pennylane (>30j de retard) et envoie un résumé
+      email à l'admin. Utilise le service BoxIA Pennylane (lecture seule, sans saisie de credentials).
+    difficulty: facile
+    credentials_required: []
+    boxia_services: [pennylane]
+    default_active: false
+
+  - file: invoice_alert_threshold.json
+    name: "Alerte facture > 5k€ détectée"
+    icon: "🚨"
+    category: finance
+    description: |
+      Surveille les nouvelles factures Pennylane et déclenche une notification email si une facture
+      dépasse 5 000 €. Utile pour les artisans avec facturation occasionnelle gros chantier.
+    difficulty: facile
+    credentials_required: []
+    boxia_services: [pennylane]
+    default_active: false
+
+  # ---------- EMAIL ----------
+  - file: imap_daily_triage.json
+    name: "Tri email quotidien (IMAP + IA)"
+    icon: "📧"
+    category: email
+    description: |
+      Toutes les heures, lit les nouveaux emails IMAP, les classe via l'agent IA triage
+      (commercial/support/admin/spam), génère un brouillon de réponse pour les "à répondre"
+      et stocke le digest dans /data.
+    difficulty: facile
+    credentials_required: ["IMAP (host, port, user, mdp)"]
+    boxia_services: [agents]
+    default_active: false
+
+  - file: smtp_invoice_reminder.json
+    name: "Relance email factures impayées"
+    icon: "✉️"
+    category: finance
+    description: |
+      Tous les lundis, prend les factures impayées (Pennylane) > 30j et envoie automatiquement
+      un email de relance courtois au client. Brouillon généré par agent IA "support clients".
+    difficulty: moyen
+    credentials_required: ["SMTP (envoi email)"]
+    boxia_services: [pennylane, agents]
+    default_active: false
+
+  # ---------- RAG / KB ----------
+  - file: rag_smb_resync.json
+    name: "Sync SMB/NAS → KB Dify (horaire)"
+    icon: "📁"
+    category: rag
+    description: |
+      Toutes les heures, déclenche le worker rag-smb pour synchroniser un partage SMB
+      (NAS Synology, Windows) avec la base de connaissance Dify. Indexe les nouveaux PDF/DOCX.
+    difficulty: facile
+    credentials_required: []
+    boxia_services: [qdrant, dify]
+    default_active: false
+
+  # ---------- HELPDESK ----------
+  - file: glpi_sla_alert.json
+    name: "Alerte tickets GLPI en retard SLA"
+    icon: "🎫"
+    category: helpdesk
+    description: |
+      Toutes les 4h, récupère les tickets GLPI ouverts depuis +7j et envoie un résumé
+      par email à l'admin. Évite que des tickets dorment dans la queue.
+    difficulty: facile
+    credentials_required: []
+    boxia_services: [glpi]
+    default_active: false
+
+  # ---------- BACKUP ----------
+  - file: qdrant_snapshot_weekly.json
+    name: "Snapshot Qdrant hebdomadaire"
+    icon: "💾"
+    category: backup
+    description: |
+      Tous les dimanches à 2h, déclenche un snapshot Qdrant via son API (sauvegarde
+      des collections RAG). Le snapshot est stocké dans le volume Docker dédié.
+    difficulty: facile
+    credentials_required: []
+    boxia_services: [qdrant]
+    default_active: true   # Backup essentiel : activé d'office
+
+  # ---------- MONITORING ----------
+  - file: stack_health_check.json
+    name: "Healthcheck stack BoxIA (5 min)"
+    icon: "🩺"
+    category: monitoring
+    description: |
+      Toutes les 5 minutes, ping /api/system/health de aibox-app. Si un service core est
+      down ≥ 2 cycles consécutifs, envoie une alerte email à l'admin.
+    difficulty: facile
+    credentials_required: []
+    boxia_services: []
+    default_active: true   # Healthcheck essentiel : activé d'office
+
+  - file: weekly_activity_report.json
+    name: "Rapport hebdo activité IA"
+    icon: "📊"
+    category: monitoring
+    description: |
+      Tous les vendredis à 17h, génère un rapport d'activité (conversations, agents
+      les plus utilisés, workflows déclenchés) et l'envoie à l'admin par email.
+    difficulty: moyen
+    credentials_required: ["SMTP"]
+    boxia_services: []
+    default_active: false

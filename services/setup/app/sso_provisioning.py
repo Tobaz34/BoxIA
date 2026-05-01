@@ -276,21 +276,35 @@ def setup_aibox_app_oidc(env: dict[str, str], host: str) -> dict[str, Any]:
 
     prod_url, prod_dns = _service_url("app", domain) if has_real_domain else ("", "")
     lan_url = f"http://{host}:3100"
-    # `.local` : on fait confiance à mDNS+Caddy au lieu de tester le DNS
-    # (mDNS n'est pas forcément encore up au moment du provisioning).
-    prod_resolves = is_lan_mdns or (bool(prod_dns) and _dns_resolves(prod_dns))
+    # En mode `.local`, on fait confiance à mDNS+Caddy AU NIVEAU des
+    # redirect_uris (on enregistre les 2). Mais pour le NEXTAUTH_URL
+    # (= URL active utilisée pour construire les callbacks), on PRÉFÈRE
+    # l'IP LAN — plus universellement accessible (Windows corporate sans
+    # Bonjour, terminaux mobiles, etc.). Le client Bonjour-compatible
+    # accédera quand même au site via mDNS, et NextAuth tolère le hop.
+    prod_resolves_dns = bool(prod_dns) and _dns_resolves(prod_dns)
 
+    # On enregistre TOUJOURS les 2 redirect_uris dans Authentik :
+    #   - http://<ip>:3100/api/auth/callback/authentik  (LAN, universel)
+    #   - https://aibox.local/api/auth/callback/authentik  (mDNS, .local)
+    #   - https://app.<domaine.fr>/api/auth/callback/authentik  (prod)
     redirect_uris: list[str] = [f"{lan_url}/api/auth/callback/authentik"]
     if prod_url:
         redirect_uris.append(f"{prod_url}/api/auth/callback/authentik")
 
-    # URL utilisée par le navigateur pour les redirects login
-    if prod_resolves and prod_url:
+    # URL active pour NEXTAUTH_URL :
+    #   - mode prod (.fr/.com etc. avec DNS résolvant) → prod_url
+    #   - mode .local OU mode IP brute → lan_url (IP LAN détectée)
+    # Cette stratégie corrige l'ancien comportement où `.local` choisissait
+    # `https://aibox.local` même quand le client n'avait pas Bonjour mDNS.
+    if has_real_domain and not is_lan_mdns and prod_resolves_dns and prod_url:
         active_app_url = prod_url
         ak_url_browser, _ = _service_url("auth", domain)
+        prod_resolves = True
     else:
         active_app_url = lan_url
         ak_url_browser = f"http://{host}:9000"
+        prod_resolves = False
 
     creds = _ak_upsert_oidc_app(
         token,
@@ -721,6 +735,43 @@ def _ensure_dataset_api_key(c: httpx.Client, base: str,
         return {"ok": False, "error": str(e)}
 
 
+def _ensure_ollama_model_pulled(model_name: str,
+                                 ollama_url: str = "http://ollama:11434") -> dict[str, Any]:
+    """S'assure que le modèle est physiquement présent dans Ollama.
+
+    Sans ça, Dify pense qu'il a le modèle (ajouté via /models/credentials)
+    mais Ollama ne l'a pas téléchargé → toute inférence renvoie une erreur
+    silencieuse, le concierge reste bloqué sur « Je structure la réponse… ».
+
+    Bug observé sur cycle 2 reset : le volume Ollama survit (4 modèles
+    présents : qwen2.5-coder:7b, qwen2.5:14b, qwen2.5vl:7b, llama-guard3:8b),
+    mais qwen2.5:7b spécifique manque car jamais pull explicitement par
+    le wizard. Ce fix appelle POST /api/pull pour télécharger si absent.
+
+    Idempotent : 200 et stream rapide si déjà présent.
+    """
+    try:
+        # Liste les modèles présents
+        with httpx.Client(timeout=30) as cc:
+            r = cc.get(f"{ollama_url}/api/tags")
+            if r.status_code == 200:
+                tags = r.json().get("models", [])
+                names = {m.get("name", "").split(":")[0]: m.get("name") for m in tags}
+                # Match exact ou prefixe (qwen2.5:7b vs qwen2.5)
+                for n in tags:
+                    if n.get("name") == model_name:
+                        return {"ok": True, "already": True, "model": model_name}
+        # Pull (long — peut prendre 5-10 min sur ADSL si modèle 4-9 GB)
+        with httpx.Client(timeout=900) as cc:
+            r = cc.post(f"{ollama_url}/api/pull",
+                        json={"model": model_name, "stream": False})
+            if r.status_code in (200, 201):
+                return {"ok": True, "pulled": True, "model": model_name}
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
                       ollama_url: str = "http://ollama:11434") -> dict[str, Any]:
     """Ajoute un modèle Ollama (LLM) dans Dify pour le workspace courant.
@@ -729,7 +780,15 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
     Note : l'endpoint qui PERSISTE est /models/credentials (pas /models qui
     renvoie 200 mais ne stocke rien). La validation des creds se fait côté
     plugin (timeout possible si Ollama lent à répondre).
+
+    AVANT d'ajouter dans Dify, on s'assure que le modèle est physiquement
+    téléchargé dans Ollama (cf. _ensure_ollama_model_pulled).
     """
+    # 0. Pull du modèle si absent
+    pull_res = _ensure_ollama_model_pulled(model_name, ollama_url)
+    if not pull_res.get("ok"):
+        return {"ok": False, "step": "pull", **pull_res}
+
     provider = "langgenius/ollama/ollama"
     try:
         # Liste des modèles déjà configurés pour ce provider
@@ -766,11 +825,67 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
         return {"ok": False, "error": str(e)}
 
 
+def _fetch_concierge_tools(c: httpx.Client, base: str) -> list[dict[str, Any]]:
+    """Récupère la liste des tools du provider 'BoxIA Concierge Tools' pour
+    pouvoir les attacher à l'agent concierge en mode agent-chat.
+
+    Endpoint Dify (capturé via console devtools) :
+        GET /console/api/workspaces/current/tool-provider/api/get?provider=NAME
+    Retourne {provider, tools: [{name, description, ...}], ...}.
+
+    Renvoie une liste prête à insérer dans `agent_mode.tools` du
+    model-config (format : provider_id, provider_name, provider_type=api,
+    tool_name, tool_label, tool_parameters, enabled).
+    """
+    try:
+        get_url = (
+            f"{base}/console/api/workspaces/current/tool-provider/api/get"
+            f"?provider=BoxIA Concierge Tools"
+        )
+        r = c.get(get_url)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        # Récupère aussi le provider_id depuis tool-providers (nécessaire
+        # pour le format agent_mode.tools)
+        provider_id = ""
+        try:
+            r2 = c.get(f"{base}/console/api/workspaces/current/tool-providers")
+            providers = r2.json() if isinstance(r2.json(), list) else r2.json().get("data", [])
+            for p in providers:
+                if isinstance(p, dict) and (p.get("name") == "BoxIA Concierge Tools"
+                                            or p.get("provider") == "BoxIA Concierge Tools"):
+                    provider_id = p.get("id", "")
+                    break
+        except Exception:
+            pass
+
+        tools = []
+        for t in data.get("tools", []):
+            name = t.get("name") or t.get("operation_id")
+            if not name:
+                continue
+            tools.append({
+                "provider_id": provider_id or "BoxIA Concierge Tools",
+                "provider_name": "BoxIA Concierge Tools",
+                "provider_type": "api",
+                "tool_name": name,
+                "tool_label": t.get("label", {}).get("en_US") if isinstance(t.get("label"), dict) else (t.get("description", "")[:60] or name),
+                "tool_parameters": {},
+                "enabled": True,
+            })
+        return tools
+    except Exception as e:
+        log.warning("fetch concierge tools failed: %s", e)
+        return []
+
+
 def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
                            model_name: str,
                            pre_prompt: str | None = None,
                            opening_statement: str | None = None,
-                           dataset_ids: list[str] | None = None) -> dict[str, Any]:
+                           dataset_ids: list[str] | None = None,
+                           agent_tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Configure le modèle par défaut sur une app Dify (mode chat).
 
     Le endpoint /console/api/apps/{id}/model-config attend toute la
@@ -794,12 +909,30 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "Que puis-je faire pour vous aujourd'hui ?"
         ),
         "suggested_questions": [],
-        "suggested_questions_after_answer": {"enabled": True},
+        # Désactivé : Qwen2.5:7b (Alibaba) génère les follow-ups dans sa
+        # langue native (chinois) malgré le pre_prompt en français. Le
+        # sub-prompt Dify pour générer les follow-up questions n'a pas
+        # de contrainte de langue forte → hallucinations CN. À ré-activer
+        # quand on aura un modèle francophone solide ou quand Dify expose
+        # un override de langue pour ces follow-ups.
+        "suggested_questions_after_answer": {"enabled": False},
         "speech_to_text": {"enabled": False},
         "text_to_speech": {"enabled": False, "voice": "", "language": "fr"},
         "retriever_resource": {"enabled": True},
         "sensitive_word_avoidance": {"enabled": False, "type": "", "configs": []},
-        "agent_mode": {"enabled": False, "tools": []},
+        # Mode agent : si on passe des tools (cas concierge), on active
+        # automatiquement le mode agent ReAct. Sinon mode chat.
+        # IMPORTANT — strategy="react" (au lieu de "function_call") :
+        # Ollama + Qwen2.5:7b ne supporte pas bien le function calling
+        # natif d'OpenAI, Dify reste bloqué. ReAct fait parser les
+        # appels d'outils via le texte généré (Thought→Action→Observation),
+        # ce qui marche avec tous les LLM même ceux sans tool API native.
+        "agent_mode": {
+            "enabled": bool(agent_tools),
+            "max_iteration": 5,
+            "strategy": "react",
+            "tools": agent_tools or [],
+        },
         "model": {
             "provider": "langgenius/ollama/ollama",
             "name": model_name,
@@ -807,7 +940,13 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "completion_params": {
                 "temperature": 0.7,
                 "top_p": 1,
-                "max_tokens": 1024,
+                # 2048 (vs 1024 historique) : qwen3:14b et qwen2.5vl:7b
+                # peuvent générer des réponses longues (calcul détaillé,
+                # plan d'amortissement, audit RGPD checklist…). Le 1024
+                # tronquait à mi-réponse sur les prompts complexes du
+                # protocole de tests. Pas de risque mémoire significatif
+                # à cette taille de contexte (4K base).
+                "max_tokens": 2048,
             },
         },
         "dataset_configs": {
@@ -822,11 +961,26 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "score_threshold": 0.5,
             "score_threshold_enabled": False,
         },
-        # Image upload activé : si le LLM courant n'est pas vision,
-        # Dify renverra une erreur lisible — sinon l'utilisateur peut
-        # joindre une image et l'agent la voit.
+        # File upload : images ET documents activés.
+        # - Images : nécessite un LLM vision (qwen2.5vl:7b). Pour les
+        #   modèles text-only (qwen2.5:7b), Dify renverra une erreur
+        #   lisible mais l'upload UI reste dispo.
+        # - Documents : Dify les parse en texte (pdfplumber pour PDF,
+        #   python-docx pour DOCX, etc.) et les ajoute au contexte LLM.
+        # Sans `allowed_file_types` qui inclut "document", les PDFs
+        # restent visibles dans le chat mais ne sont PAS injectés dans
+        # le contexte → bug observé : « ce doc est un contexte pour moi
+        # mais il n'est pas utilisé dans ma réponse précédente ».
         "file_upload": {
             "enabled": True,
+            "allowed_file_types": ["image", "document"],
+            "allowed_file_extensions": [
+                ".jpg", ".jpeg", ".png", ".webp", ".gif",
+                ".pdf", ".txt", ".md", ".csv", ".html",
+                ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ],
+            "allowed_file_upload_methods": ["local_file"],
+            "number_limits": 5,
             "image": {
                 "enabled": True,
                 "number_limits": 3,
@@ -849,23 +1003,63 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
 # pre_prompt → ton et expertise différents. La clé API est écrite dans .env
 # sous le nom env_var (consommée par services/app/docker-compose.yml).
 # ---------------------------------------------------------------------------
-DEFAULT_AGENTS: list[dict[str, str]] = [
+DEFAULT_AGENTS: list[dict[str, Any]] = [
     {
         "slug": "general",
         "name": "Assistant général",
         "icon": "🤖",
         "icon_bg": "#FFEAD5",
-        "description": "Assistant polyvalent, par défaut de l'AI Box.",
+        "description": "Assistant polyvalent FR, par défaut de l'AI Box.",
+        # CHANGEMENT 2026-05-01 (post run-3 protocole) : passé sur qwen3:14b
+        # text-only au lieu de qwen2.5vl:7b. Raison : qwen2.5vl répond en
+        # 3-5 chars sur prompts factuels simples ("Capitale FR ?" → "Paris"),
+        # même avec pre_prompt renforcé. Les vraies tâches multimodales
+        # (images) doivent passer par l'« Assistant vision » dédié ci-dessous.
+        # qwen3:14b est meilleur partout sauf pour la vision.
+        "vision": False,
         "pre_prompt": (
             "Tu es l'assistant IA local de l'AI Box. Réponds en français, "
-            "de façon concise et précise. Quand on te demande de générer du code, "
-            "fournis des blocs ```lang``` correctement formatés."
+            "de façon naturelle et conversationnelle. Réponds toujours avec "
+            "au moins une phrase complète, jamais en un seul mot ou un nombre "
+            "isolé — donne le contexte ou une justification courte. Quand on "
+            "te demande de générer du code, fournis des blocs ```lang``` "
+            "correctement formatés. Pour analyser une image, l'utilisateur "
+            "doit utiliser l'« Assistant vision » dédié."
         ),
         "opening_statement": (
             "Bonjour ! Je suis votre assistant IA local. "
             "Que puis-je faire pour vous aujourd'hui ?"
         ),
         "env_var": "DIFY_DEFAULT_APP_API_KEY",
+    },
+    {
+        "slug": "vision",
+        "name": "Assistant vision",
+        "icon": "👁",
+        "icon_bg": "#DBEAFE",
+        "description": "Analyse d'images, captures, PDF avec illustrations.",
+        # Multimodal qwen2.5vl:7b. Routing vision via flag ci-dessous
+        # (cf. _setup_one_dify_agent : agent_model = vision_model_name si
+        # spec.get("vision")). qwen3vl pas encore stable sur Ollama au
+        # 2026-05 — à switcher dès dispo.
+        "vision": True,
+        "pre_prompt": (
+            "Tu es l'assistant vision de l'AI Box, spécialisé dans l'analyse "
+            "d'images, captures d'écran, photos et documents avec illustrations. "
+            "Réponds en français. Quand l'utilisateur joint une image, "
+            "décris-la précisément, extrais le texte (OCR) si présent, "
+            "identifie les éléments visuels (graphiques, tableaux, schémas, "
+            "photos, captures d'écran), et réponds à sa question en t'appuyant "
+            "sur ce que tu vois. Si aucune image n'est jointe, demande "
+            "poliment à l'utilisateur d'en attacher une (l'Assistant général "
+            "est mieux pour les questions purement textuelles)."
+        ),
+        "opening_statement": (
+            "👁 Salut ! Je suis spécialisé dans l'analyse d'images et de "
+            "documents visuels. Joins une capture d'écran, une photo, "
+            "ou un PDF avec schémas, et je l'analyse pour toi."
+        ),
+        "env_var": "DIFY_AGENT_VISION_API_KEY",
     },
     {
         "slug": "accountant",
@@ -932,6 +1126,60 @@ DEFAULT_AGENTS: list[dict[str, str]] = [
             "Décrivez la situation et je vous propose un message."
         ),
         "env_var": "DIFY_AGENT_SUPPORT_API_KEY",
+    },
+    {
+        # Agent CONCIERGE — orchestre l'admin BoxIA depuis la conversation.
+        # Mode "agent-chat" pour avoir accès aux Custom Tools Dify (l'OpenAPI
+        # `concierge-tool-openapi.yaml` est provisionné via setup_dify_concierge_tool).
+        "slug": "concierge",
+        "name": "Concierge BoxIA",
+        "icon": "🛎️",
+        "icon_bg": "#FEF3C7",
+        "description": "Orchestre votre BoxIA : connecteurs, workflows, assistants, MCP. Sans paramétrage manuel.",
+        "mode": "agent-chat",  # ← important : mode agent pour les tools
+        "pre_prompt": (
+            "Tu es le Concierge de la BoxIA, un agent IA qui aide l'utilisateur à "
+            "configurer SA box (connecter des sources de données, installer des "
+            "workflows d'automatisation, ajouter des assistants spécialisés, "
+            "vérifier l'état des services). Tu as accès à des outils HTTP via le "
+            "Custom Tool « BoxIA Concierge Tools » qui te permet de lister, "
+            "vérifier et installer.\n\n"
+            "Règles strictes :\n\n"
+            "1. **Confirme TOUJOURS avant d'installer.** Quand l'utilisateur "
+            "exprime une intention d'installation (« active mon Pennylane », "
+            "« ajoute le workflow GLPI », « installe l'assistant compta »), "
+            "réponds d'abord par : « OK, je vais installer X. Tu confirmes ? » "
+            "puis attends « oui »/« ok »/« vas-y » avant d'appeler le tool.\n\n"
+            "2. **Démarre par lister** quand l'intention est floue. Si l'utilisateur "
+            "dit « tu peux automatiser ma compta ? », commence par appeler "
+            "`listMarketplaceWorkflows` ou `listMarketplaceAgentsFr` pour montrer "
+            "les options disponibles.\n\n"
+            "3. **Pour activer un connecteur** (qui demande des credentials sensibles "
+            "comme un token Pennylane ou un mdp NAS), tu N'AS PAS l'autorité — "
+            "appelle `deepLink` avec target=connectors pour donner à l'utilisateur "
+            "l'URL où il va saisir ses credentials lui-même.\n\n"
+            "4. **Sois concis.** Réponses courtes, action-oriented. Une phrase pour "
+            "résumer ce que tu vas faire, puis exécute, puis confirme le résultat.\n\n"
+            "5. **Reste en français** sauf demande explicite contraire.\n\n"
+            "6. **Si tu n'es pas sûr de l'identifiant** (slug d'un workflow, fichier "
+            "à installer), liste d'abord pour trouver le bon, puis demande à "
+            "l'utilisateur de choisir parmi les options."
+        ),
+        "opening_statement": (
+            "🛎️ Bonjour ! Je suis votre Concierge BoxIA.\n\n"
+            "Je peux configurer votre box pour vous : connecter vos données "
+            "(Outlook, Drive, Pennylane…), installer des workflows d'automatisation "
+            "(relances clients, alertes SLA, monitoring…), ajouter des assistants "
+            "spécialisés (compta, RH, juridique…). Dites-moi ce que vous voulez faire "
+            "en français naturel, je m'occupe du reste."
+        ),
+        "suggested_questions": [
+            "Tu peux automatiser ma comptabilité ?",
+            "Quels assistants français sont disponibles ?",
+            "Connecte mon NAS pour indexer les documents partagés",
+            "Tout fonctionne bien dans la box ?",
+        ],
+        "env_var": "DIFY_AGENT_CONCIERGE_API_KEY",
     },
 ]
 
@@ -1091,11 +1339,14 @@ def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
 
         # 2. Sinon, crée l'app
         if not app_id:
+            # Mode "agent-chat" pour les agents qui utilisent des tools
+            # (ex: Concierge BoxIA), "chat" pour les agents simples.
+            agent_mode = agent.get("mode", "chat")
             r = c.post(
                 f"{base}/console/api/apps",
                 json={
                     "name": name,
-                    "mode": "chat",
+                    "mode": agent_mode,
                     "icon_type": "emoji",
                     "icon": agent["icon"],
                     "icon_background": agent["icon_bg"],
@@ -1109,12 +1360,41 @@ def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
             if not app_id:
                 return {"ok": False, "error": "no app id returned"}
 
-        # 3. Configure le modèle + pre_prompt + opening_statement + datasets
+        # 3. Configure le modèle + pre_prompt + opening_statement + datasets.
+        # Pour le concierge (slug="concierge"), on attache aussi les tools
+        # du provider « BoxIA Concierge Tools » → l'agent peut directement
+        # appeler les endpoints /api/agents-tools/* sans setup manuel.
+        agent_tools: list[dict[str, Any]] | None = None
+        if agent.get("slug") == "concierge":
+            agent_tools = _fetch_concierge_tools(c, base)
+            if agent_tools:
+                log.info("Concierge: %d tools attachés depuis le provider",
+                         len(agent_tools))
+            else:
+                log.warning("Concierge: aucun tool trouvé dans le provider "
+                            "« BoxIA Concierge Tools » (vérifie qu'il a été "
+                            "provisionné AVANT cet appel)")
+
+        # qwen3 a un mode chain-of-thought activé par défaut qui expose
+        # son raisonnement en anglais entre <think>...</think>. Très moche
+        # côté UX. Solution officielle : ajouter `/no_think` à la fin du
+        # system prompt → désactive le mode CoT, réponse directe FR.
+        # On l'applique pour tous les agents text-only qwen* (pas qwen2.5vl
+        # qui n'a pas ce mode et serait perturbé).
+        pre_prompt = agent["pre_prompt"]
+        if "qwen3" in model_name.lower() or "qwen2.5:" in model_name.lower():
+            pre_prompt = pre_prompt.rstrip() + (
+                "\n\nIMPORTANT : réponds toujours en français, directement, "
+                "sans exposer ton raisonnement intermédiaire ni de balises "
+                "`<think>` ou `<thinking>`. /no_think"
+            )
+
         cfg = _set_app_default_model(
             c, base, app_id, model_name,
-            pre_prompt=agent["pre_prompt"],
+            pre_prompt=pre_prompt,
             opening_statement=agent["opening_statement"],
             dataset_ids=dataset_ids,
+            agent_tools=agent_tools,
         )
         # On continue même si la config échoue (l'app reste utilisable
         # mais avec le pre_prompt précédent)
@@ -1167,7 +1447,8 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     if not email or not pwd:
         return {"ok": False, "error": "ADMIN_EMAIL / ADMIN_PASSWORD requis"}
 
-    model_name = env.get("LLM_MAIN", "qwen2.5:7b")
+    model_name = env.get("LLM_MAIN", "qwen3:14b")
+    vision_model_name = env.get("LLM_VISION", "qwen2.5vl:7b")
     embed_name = env.get("LLM_EMBED", "bge-m3:latest")
 
     c = _dify_console_client(base, email, pwd)
@@ -1183,6 +1464,13 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         report["ollama_model"] = _add_ollama_model(c, base, model_name)
         if not report["ollama_model"].get("ok"):
             return {"ok": False, "step": "ollama_model", **report}
+
+        # Modèle vision (multimodal) — utilisé pour les agents avec
+        # `vision: true` dans DEFAULT_AGENTS / AGENTS lib. Best-effort :
+        # si l'ajout échoue, les agents vision seront downgradés vers le
+        # modèle text-only (ils peuvent toujours discuter, juste pas
+        # analyser d'image).
+        report["ollama_vision"] = _add_ollama_model(c, base, vision_model_name)
 
         # ---- Embedding + dataset (Phase C : RAG) ----
         # Best-effort : si une étape échoue, on continue sans datasets pour
@@ -1209,7 +1497,11 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         agents_report: dict[str, Any] = {}
         any_ok = False
         for spec in DEFAULT_AGENTS:
-            res = _setup_one_dify_agent(c, base, spec, model_name,
+            # Si l'agent supporte la vision (analyse d'images), on le
+            # configure sur le modèle multimodal qwen2.5vl. Sinon → modèle
+            # text-only par défaut (qwen2.5:14b).
+            agent_model = vision_model_name if spec.get("vision") else model_name
+            res = _setup_one_dify_agent(c, base, spec, agent_model,
                                         dataset_ids=dataset_ids)
             agents_report[spec["slug"]] = res
             if res.get("ok"):
@@ -1242,21 +1534,50 @@ def _resolve_n8n_url(host: str) -> list[str]:
     return candidates
 
 
+def _n8n_strong_password(n: int = 24) -> str:
+    """Génère un password fort respectant la policy n8n :
+    8+ chars + au moins 1 majuscule + 1 minuscule + 1 chiffre.
+    On ajoute aussi un caractère spécial pour robustesse.
+    """
+    import secrets
+    import string
+    pools = [
+        string.ascii_uppercase,
+        string.ascii_lowercase,
+        string.digits,
+        "!#$%*+-=?@_",
+    ]
+    pwd = [secrets.choice(p) for p in pools]
+    pwd += [secrets.choice("".join(pools)) for _ in range(max(0, n - 4))]
+    secrets.SystemRandom().shuffle(pwd)
+    return "".join(pwd)
+
+
 def setup_n8n_owner(env: dict[str, str], host: str = "") -> dict[str, Any]:
     """Crée le compte owner n8n (1er user) via leur API.
 
     n8n Community expose POST /rest/owner/setup pour le 1er compte.
     Essaye plusieurs URLs au cas où le DNS interne ne résoud pas (n8n peut
     être sur un réseau différent du nôtre, comme `stack_xefia_ollama_net`).
+
+    Le ADMIN_PASSWORD principal (généré par `gen_secret` dans install.sh) ne
+    respecte pas toujours la policy n8n (1 majuscule + 1 chiffre). On utilise
+    donc un N8N_PASSWORD dédié, auto-généré ici si absent, et persisté dans
+    .env par le caller (cf. provision_all → flow d'écriture .env). Le client
+    aibox-app lira N8N_PASSWORD en priorité (fallback ADMIN_PASSWORD).
     """
     full = env.get("ADMIN_FULLNAME", "Admin").split()
     first = full[0] if full else "Admin"
     last  = " ".join(full[1:]) or "User"
+
+    # Préfère un N8N_PASSWORD dédié (déjà fort), sinon génère-en un.
+    n8n_password = env.get("N8N_PASSWORD") or _n8n_strong_password(24)
+
     payload = {
         "email":     env.get("ADMIN_EMAIL", "admin@example.com"),
         "firstName": first,
         "lastName":  last,
-        "password":  env.get("ADMIN_PASSWORD", ""),
+        "password":  n8n_password,
     }
 
     last_err = "no candidate URL succeeded"
@@ -1265,8 +1586,50 @@ def setup_n8n_owner(env: dict[str, str], host: str = "") -> dict[str, Any]:
             with httpx.Client(timeout=10) as c:
                 r = c.post(f"{base}/rest/owner/setup", json=payload)
                 if r.status_code in (200, 201):
-                    return {"ok": True, "created": True, "via": base}
-                if r.status_code in (400, 403, 409):
+                    # SUCCÈS : on remonte le password généré pour que le caller
+                    # le persiste dans .env (env est passé par référence).
+                    env["N8N_PASSWORD"] = n8n_password
+                    return {
+                        "ok": True, "created": True, "via": base,
+                        "n8n_password_persisted": True,
+                    }
+                # 400 a 2 sens distincts côté n8n :
+                #   a) "password too weak" → on retry avec un mdp renforcé.
+                #   b) "Instance owner already setup" → idempotent OK
+                #      (cas ré-exécution de provision_all après un crash).
+                if r.status_code == 400:
+                    body_lower = r.text.lower()
+                    if "already" in body_lower or "instance owner" in body_lower:
+                        return {
+                            "ok": True, "created": False,
+                            "note": "déjà initialisé (400)", "via": base,
+                        }
+                    if "password" in body_lower:
+                        new_pwd = _n8n_strong_password(24)
+                        payload["password"] = new_pwd
+                        r2 = c.post(f"{base}/rest/owner/setup", json=payload)
+                        if r2.status_code in (200, 201):
+                            env["N8N_PASSWORD"] = new_pwd
+                            return {
+                                "ok": True, "created": True, "via": base,
+                                "note": "password renforcé après 400",
+                                "n8n_password_persisted": True,
+                            }
+                        # Le retry peut aussi tomber sur "already setup" si
+                        # la 1re requête a abouti côté DB mais renvoyé 400
+                        # (race rare mais observée en multi-replicas).
+                        if r2.status_code == 400 and (
+                            "already" in r2.text.lower()
+                            or "instance owner" in r2.text.lower()
+                        ):
+                            return {
+                                "ok": True, "created": False,
+                                "note": "déjà initialisé après retry password",
+                                "via": base,
+                            }
+                        last_err = f"retry status={r2.status_code} body={r2.text[:150]}"
+                        continue
+                if r.status_code in (403, 409):
                     return {"ok": True, "created": False, "note": "déjà initialisé", "via": base}
                 last_err = f"status={r.status_code} body={r.text[:150]}"
         except Exception as e:
@@ -1280,14 +1643,25 @@ def setup_n8n_owner(env: dict[str, str], host: str = "") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 def setup_portainer_admin(env: dict[str, str], host: str = "") -> dict[str, Any]:
     """Crée le compte admin Portainer via /api/users/admin/init.
-    Idempotent : 409 si déjà initialisé.
+
+    Portainer N'EST PAS dans la stack BoxIA core (cf. install.sh — il était
+    présent dans la stack héritée /srv/anythingllm/ uniquement). Pour un
+    client TPE/PME, la gestion Docker est invisible : tout passe par
+    aibox-app /system. Cette fonction reste pour rétro-compat sur xefia
+    qui a encore un Portainer démarré, mais elle skip silencieusement si
+    aucun container Portainer n'est joignable.
+
+    Idempotent : 409 si déjà initialisé. Skip propre si pas déployé.
     """
     payload = {
         "Username": env.get("ADMIN_USERNAME", "admin"),
         "Password": env.get("ADMIN_PASSWORD", ""),
     }
     if len(payload["Password"]) < 12:
-        return {"ok": False, "error": "Portainer exige un mdp ≥ 12 caractères"}
+        return {
+            "ok": True, "skipped": "portainer_password_too_short",
+            "note": "Portainer exige un mdp ≥ 12 chars (default password = 18 OK)",
+        }
 
     candidates = [
         "https://portainer:9443",
@@ -1309,26 +1683,420 @@ def setup_portainer_admin(env: dict[str, str], host: str = "") -> dict[str, Any]
         except Exception as e:
             last_err = str(e)
             continue
+    # Aucune URL n'a répondu (Portainer pas dans la stack) → skip propre
+    # plutôt qu'erreur. Le wizard ne doit pas déclarer le déploiement
+    # comme failed pour un service optionnel non déployé.
+    if "Connection refused" in last_err or "Name or service not known" in last_err:
+        return {"ok": True, "skipped": "portainer_not_deployed", "via": last_err}
     return {"ok": False, "error": last_err}
 
 
 # ---------------------------------------------------------------------------
-# Uptime Kuma : compte admin via Socket.IO (1er user à l'install)
+# (Uptime Kuma : retiré du produit BoxIA — remplacé par Prometheus +
+# Grafana + /system page + workflow healthcheck. Cf. memory/n8n_marketplace.)
 # ---------------------------------------------------------------------------
-def setup_uptime_kuma_admin(env: dict[str, str], host: str = "") -> dict[str, Any]:
-    """Uptime Kuma utilise Socket.IO (pas REST) pour le setup, pas trivial.
-    Pour le POC : on note que c'est manuel. À l'utilisateur de créer le compte
-    au 1er accès avec les mêmes credentials.
+# Dify : provisioning du custom tool "AI Box Agents" (sidecar LangGraph)
+# ---------------------------------------------------------------------------
+# Pourquoi : le sidecar `aibox-agents` expose 3 agents autonomes via HTTP
+# (triage email, génération devis, rapprochement facture). Pour qu'ils soient
+# utilisables dans les Workflows Dify, il faut enregistrer un Custom API Tool
+# dans la console Dify. Sinon le client devrait le faire à la main = violation
+# du principe produit (cf. memory/product_appliance_principle.md).
+#
+# Idempotent : si le tool existe déjà → update au lieu de create.
+
+# Path standard du YAML OpenAPI dans le repo monté en /srv/ai-stack
+_AGENTS_TOOL_OPENAPI_PATHS = [
+    "/srv/ai-stack/services/agents-autonomous/dify-integration/openapi-tool.yaml",
+    "/app/static/openapi-agents-tool.yaml",  # fallback si copié dans le container
+]
+
+# Fallback embedded — version minimale si aucun fichier YAML trouvé.
+# Suffit pour exposer les 3 endpoints, sans schemas détaillés.
+_AGENTS_TOOL_OPENAPI_FALLBACK = """openapi: 3.0.3
+info:
+  title: AI Box Agents
+  version: 0.1.0
+  description: Agents autonomes (triage email, devis, rapprochement facture)
+servers:
+  - url: http://aibox-agents:8000
+paths:
+  /v1/triage-email:
+    post:
+      operationId: triageEmail
+      summary: Trie un email entrant
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object}}}
+      responses: {"200": {description: OK}}
+  /v1/generate-quote:
+    post:
+      operationId: generateQuote
+      summary: Génère un devis depuis un brief client
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object}}}
+      responses: {"200": {description: OK}}
+  /v1/reconcile-invoice:
+    post:
+      operationId: reconcileInvoice
+      summary: Rapproche une facture avec ses candidats
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object}}}
+      responses: {"200": {description: OK}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+"""
+
+_AGENTS_TOOL_PROVIDER_NAME = "AI Box Agents"
+
+
+def _load_agents_openapi_schema() -> str:
+    """Lit le YAML depuis le repo monté, sinon utilise le fallback embedded."""
+    import os
+    for p in _AGENTS_TOOL_OPENAPI_PATHS:
+        if os.path.isfile(p):
+            try:
+                return open(p, encoding="utf-8").read()
+            except OSError:
+                continue
+    log.info("YAML OpenAPI agents introuvable dans %s — fallback embedded",
+             _AGENTS_TOOL_OPENAPI_PATHS)
+    return _AGENTS_TOOL_OPENAPI_FALLBACK
+
+
+def setup_dify_agents_tool(env: dict[str, str]) -> dict[str, Any]:
+    """Provisionne le Custom API Tool "AI Box Agents" dans Dify.
+
+    Idempotent : si le provider existe → update du schéma + credentials.
+    Réutilise `_dify_console_client()` qui gère access_token + csrf_token.
     """
-    return {
-        "ok": True,
-        "created": False,
-        "note": "à créer manuellement au 1er accès (Socket.IO setup, pas d'API REST)",
-        "credentials_to_use": {
-            "username": env.get("ADMIN_USERNAME", ""),
-            "password": "(celui du wizard)",
-        },
-    }
+    base = "http://aibox-dify-nginx:80"
+    admin_email = env.get("ADMIN_EMAIL", "")
+    admin_password = env.get("ADMIN_PASSWORD", "")
+    agents_api_key = env.get("AGENTS_API_KEY", "")
+
+    if not admin_email or not admin_password:
+        return {"ok": False, "error": "ADMIN_EMAIL/ADMIN_PASSWORD manquants"}
+    if not agents_api_key:
+        return {"ok": False, "error": "AGENTS_API_KEY non défini dans .env"}
+
+    schema_text = _load_agents_openapi_schema()
+
+    c = _dify_console_client(base, admin_email, admin_password)
+    if c is None:
+        return {"ok": False, "error": "Login Dify console échoué"}
+
+    try:
+        # 1. Vérifier si le provider existe déjà (idempotence).
+        # Endpoint capturé via Chrome devtools sur Dify 1.10 :
+        #   GET /console/api/workspaces/current/tool-provider/api/get?provider=NAME
+        # → 200 + {provider, credentials, schema_type, ...} si existe
+        # → 404 ou 400 sinon
+        get_url = (
+            f"{base}/console/api/workspaces/current/tool-provider/api/get"
+            f"?provider={_AGENTS_TOOL_PROVIDER_NAME}"
+        )
+        existing: dict | None = None
+        try:
+            r = c.get(get_url)
+            if r.status_code == 200:
+                try:
+                    existing = r.json()
+                except Exception:
+                    existing = None
+        except Exception:
+            existing = None
+
+        # 2. Construire le payload
+        credentials = {
+            "auth_type": "api_key",
+            "api_key_header": "Authorization",
+            "api_key_value": f"Bearer {agents_api_key}",
+            "api_key_header_prefix": "no_prefix",
+        }
+        payload = {
+            "provider": _AGENTS_TOOL_PROVIDER_NAME,
+            "original_provider": _AGENTS_TOOL_PROVIDER_NAME,
+            "icon": {"background": "#3b82f6", "content": "🤖"},
+            "credentials": credentials,
+            "schema_type": "openapi",
+            "schema": schema_text,
+            "privacy_policy": "",
+            "custom_disclaimer": "Service interne AI Box. Bearer token requis.",
+            "labels": ["agents", "aibox"],
+        }
+
+        # 3. POST sur l'endpoint correspondant.
+        # Endpoints capturés Dify 1.10 :
+        #   POST /console/api/workspaces/current/tool-provider/api/add
+        #   POST /console/api/workspaces/current/tool-provider/api/update
+        if existing:
+            ep = "/console/api/workspaces/current/tool-provider/api/update"
+            payload["original_provider"] = (
+                existing.get("original_provider")
+                or existing.get("provider")
+                or _AGENTS_TOOL_PROVIDER_NAME
+            )
+            action = "update"
+        else:
+            ep = "/console/api/workspaces/current/tool-provider/api/add"
+            action = "create"
+
+        try:
+            r = c.post(f"{base}{ep}", json=payload)
+            if r.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "action": action,
+                    "provider": _AGENTS_TOOL_PROVIDER_NAME,
+                    "endpoint": ep,
+                }
+            return {
+                "ok": False,
+                "action": action,
+                "endpoint": ep,
+                "error": f"HTTP {r.status_code} : {r.text[:300]}",
+            }
+        except Exception as e:
+            return {"ok": False, "action": action, "endpoint": ep, "error": str(e)}
+    finally:
+        c.close()
+
+
+# ---------------------------------------------------------------------------
+# Dify : provisioning du Custom Tool « BoxIA Concierge Tools »
+# ---------------------------------------------------------------------------
+# Le concierge orchestre l'admin BoxIA depuis le chat (active connecteurs,
+# installe workflows/agents, vérifie le healthcheck). Le Custom Tool
+# pointe vers /api/agents-tools/* sur aibox-app via host.docker.internal.
+
+_CONCIERGE_TOOL_OPENAPI_PATHS = [
+    "/srv/ai-stack/templates/dify/concierge-tool-openapi.yaml",
+    "/app/static/concierge-tool-openapi.yaml",
+]
+_CONCIERGE_TOOL_PROVIDER_NAME = "BoxIA Concierge Tools"
+
+
+def _load_concierge_openapi_schema() -> str:
+    """Lit le YAML concierge tool depuis le repo monté."""
+    import os
+    for p in _CONCIERGE_TOOL_OPENAPI_PATHS:
+        if os.path.isfile(p):
+            try:
+                return open(p, encoding="utf-8").read()
+            except OSError:
+                continue
+    log.warning("YAML OpenAPI Concierge introuvable dans %s",
+                _CONCIERGE_TOOL_OPENAPI_PATHS)
+    return ""
+
+
+def setup_dify_concierge_tool(env: dict[str, str]) -> dict[str, Any]:
+    """Provisionne le Custom API Tool « BoxIA Concierge Tools » dans Dify.
+
+    L'agent Concierge BoxIA (`DEFAULT_AGENTS[concierge]`) utilisera ce
+    tool pour appeler /api/agents-tools/* sur aibox-app via
+    `host.docker.internal:3100`. Auth = Bearer AGENTS_API_KEY.
+
+    Idempotent : si le provider existe → update.
+    """
+    base = "http://aibox-dify-nginx:80"
+    admin_email = env.get("ADMIN_EMAIL", "")
+    admin_password = env.get("ADMIN_PASSWORD", "")
+    agents_api_key = env.get("AGENTS_API_KEY", "")
+
+    if not admin_email or not admin_password:
+        return {"ok": False, "error": "ADMIN_EMAIL/ADMIN_PASSWORD manquants"}
+    if not agents_api_key:
+        return {"ok": False, "error": "AGENTS_API_KEY non défini dans .env"}
+
+    schema_text = _load_concierge_openapi_schema()
+    if not schema_text:
+        return {"ok": False, "error": "OpenAPI YAML concierge introuvable"}
+
+    c = _dify_console_client(base, admin_email, admin_password)
+    if c is None:
+        return {"ok": False, "error": "Login Dify console échoué"}
+
+    try:
+        # Idempotence : check si le provider existe déjà
+        get_url = (
+            f"{base}/console/api/workspaces/current/tool-provider/api/get"
+            f"?provider={_CONCIERGE_TOOL_PROVIDER_NAME}"
+        )
+        existing: dict | None = None
+        try:
+            r = c.get(get_url)
+            if r.status_code == 200:
+                existing = r.json()
+        except Exception:
+            existing = None
+
+        credentials = {
+            "auth_type": "api_key",
+            "api_key_header": "Authorization",
+            "api_key_value": f"Bearer {agents_api_key}",
+            "api_key_header_prefix": "no_prefix",
+        }
+        payload = {
+            "provider": _CONCIERGE_TOOL_PROVIDER_NAME,
+            "original_provider": _CONCIERGE_TOOL_PROVIDER_NAME,
+            "icon": {"background": "#FEF3C7", "content": "🛎️"},
+            "credentials": credentials,
+            "schema_type": "openapi",
+            "schema": schema_text,
+            "privacy_policy": "",
+            "custom_disclaimer":
+                "Outils internes BoxIA. Permet à l'agent Concierge de "
+                "lister/installer connecteurs, workflows, agents et MCP.",
+            "labels": ["concierge", "aibox", "admin"],
+        }
+
+        if existing:
+            ep = "/console/api/workspaces/current/tool-provider/api/update"
+            payload["original_provider"] = (
+                existing.get("original_provider")
+                or existing.get("provider")
+                or _CONCIERGE_TOOL_PROVIDER_NAME
+            )
+            action = "update"
+        else:
+            ep = "/console/api/workspaces/current/tool-provider/api/add"
+            action = "create"
+
+        try:
+            r = c.post(f"{base}{ep}", json=payload)
+            if r.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "action": action,
+                    "provider": _CONCIERGE_TOOL_PROVIDER_NAME,
+                    "endpoint": ep,
+                }
+            return {
+                "ok": False,
+                "action": action,
+                "endpoint": ep,
+                "error": f"HTTP {r.status_code} : {r.text[:300]}",
+            }
+        except Exception as e:
+            return {"ok": False, "action": action, "endpoint": ep, "error": str(e)}
+    finally:
+        c.close()
+
+
+# ---------------------------------------------------------------------------
+# Authentik : branding "AI Box" au lieu de "authentik" sur le login
+# ---------------------------------------------------------------------------
+def setup_authentik_branding(env: dict[str, str]) -> dict[str, Any]:
+    """Customise le brand Authentik pour cacher la marque "authentik"
+    et présenter "AI Box" au client (page de login OIDC).
+
+    PATCH le brand par défaut (`/api/v3/core/brands/<uuid>/`) avec :
+      - branding_title : "AI Box"
+      - branding_custom_css : cache le logo Authentik + remplace par
+        un titre "AI Box"
+      - (favicon / logo : on garde les SVG par défaut Authentik à défaut
+        d'avoir un asset client custom dans le repo)
+
+    Idempotent : si déjà patché, le PATCH retourne 200 sans rien changer.
+    """
+    token = _ak_admin_token(env)
+    if not token:
+        return {"ok": False, "reason": "Authentik admin token unavailable"}
+
+    base = "http://aibox-authentik-server:9000"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        with httpx.Client(timeout=10) as c:
+            # 1. Récupère le brand par défaut
+            r = c.get(f"{base}/api/v3/core/brands/", headers=headers)
+            if r.status_code != 200:
+                return {"ok": False, "step": "list",
+                        "status": r.status_code, "body": r.text[:200]}
+            brands = r.json().get("results", [])
+            default_brand = next((b for b in brands if b.get("default")), None)
+            if not default_brand:
+                return {"ok": False, "error": "no default brand found"}
+
+            brand_uuid = default_brand["brand_uuid"]
+
+            # 2. CSS custom pour masquer le logo Authentik et afficher "AI Box"
+            # On force le PATCH à chaque appel pour permettre les évolutions
+            # du CSS d'être propagées (Authentik PATCH est idempotent au sens
+            # « pas d'erreur si valeur identique »).
+            # à la place. On cible les éléments du flow par défaut.
+            custom_css = """
+/* AI Box branding override — remplace "Welcome to authentik!" + logo. */
+
+/* 1. Masque le logo Authentik dans le header de la page */
+img[alt="authentik"],
+.pf-c-brand img,
+ak-brand-link img {
+  display: none !important;
+}
+
+/* 2. Remplace le texte du H1 "Welcome to authentik!" : on cache le
+      contenu (font-size:0) puis on injecte le titre AI Box via ::before. */
+.pf-c-login__main-header h1,
+ak-flow-executor h1 {
+  font-size: 0 !important;        /* cache le contenu enfant */
+  line-height: 0 !important;
+}
+.pf-c-login__main-header h1::before,
+ak-flow-executor h1::before {
+  content: "Bienvenue sur AI Box";
+  display: block;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #2563eb;
+}
+
+/* 3. Remplace la marque dans le coin haut-gauche par "🤖 AI Box" */
+.pf-c-brand,
+ak-brand-link {
+  font-size: 0 !important;
+}
+.pf-c-brand::before,
+ak-brand-link::before {
+  content: "🤖 AI Box";
+  display: inline-block;
+  font-size: 28px;
+  font-weight: 700;
+  color: #2563eb;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+""".strip()
+
+            # 3. PATCH le brand
+            payload = {
+                "branding_title": "AI Box",
+                "branding_custom_css": custom_css,
+            }
+            r = c.patch(
+                f"{base}/api/v3/core/brands/{brand_uuid}/",
+                headers=headers,
+                json=payload,
+            )
+            if r.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "brand_uuid": brand_uuid,
+                    "branding_title": "AI Box",
+                    "css_injected": True,
+                }
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -1340,17 +2108,30 @@ def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
     # On ne provisionne l'agent par défaut que si l'admin Dify est OK
     # (sinon le login console échouerait).
     dify_agent: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
+    dify_tool: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
+    dify_concierge_tool: dict[str, Any] = {"ok": False, "error": "skipped"}
     if dify_admin.get("ok"):
+        # IMPORTANT — ordre des appels :
+        # 1. Tools (providers Dify) AVANT les agents qui les utilisent.
+        #    L'agent Concierge attache automatiquement les tools du provider
+        #    « BoxIA Concierge Tools » au moment de sa configuration ; il
+        #    faut donc que le provider existe déjà.
+        # 2. setup_dify_default_agent (crée tous les agents, dont concierge
+        #    qui récupère les tools du provider via _fetch_concierge_tools).
+        dify_tool = setup_dify_agents_tool(env)
+        dify_concierge_tool = setup_dify_concierge_tool(env)
         dify_agent = setup_dify_default_agent(env)
 
     return {
         "aibox_app":   setup_aibox_app_oidc(env, host),
         "open_webui":  setup_owui_oidc(env, host),
+        "authentik_branding": setup_authentik_branding(env),
         "dify":        dify_admin,
         "dify_agent":  dify_agent,
+        "dify_concierge_tool": dify_concierge_tool,
+        "dify_agents_tool": dify_tool,
         # Phase D : token + groupes pour la gestion users depuis aibox-app
         "ak_management": setup_authentik_management(env),
         "n8n":         setup_n8n_owner(env, host),
         "portainer":   setup_portainer_admin(env, host),
-        "uptime_kuma": setup_uptime_kuma_admin(env, host),
     }

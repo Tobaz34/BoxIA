@@ -1,0 +1,62 @@
+# =============================================================================
+# AI Box — Mémoire long-terme (mem0)
+# =============================================================================
+# Service Python qui expose une API REST de mémoire long-terme par user/agent.
+# Stocke les "faits" extraits des conversations dans Qdrant (collection dédiée
+# `mem0_${TENANT}`), avec embeddings via Ollama bge-m3.
+#
+# Use case AI Box :
+# - Différenciateur vs ChatGPT (qui n'a pas de mémoire persistante par défaut)
+# - L'assistant se souvient : "Tu m'avais dit la semaine dernière que..."
+# - Mémoire isolée par user (RGPD : effaçable au delete user)
+#
+# Architecture :
+#   POST /memory/add   → extrait les faits du dialogue + embed + upsert Qdrant
+#   GET  /memory/search?user_id=X&query=... → top-K facts pertinents pour le contexte
+#   DELETE /memory/user/X → wipe RGPD complet
+#
+# Désactivable : si pas dans le profil pme/+, ne pas démarrer.
+# =============================================================================
+
+name: aibox-memory
+
+services:
+  mem0:
+    image: aibox-mem0:0.1.0
+    build: .
+    container_name: aibox-mem0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8087:8000"
+    environment:
+      # Qdrant existant
+      QDRANT_URL: ${QDRANT_URL:-http://aibox-qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      # Ollama existant (pour embeddings + LLM extraction)
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      LLM_EMBED: ${LLM_EMBED:-bge-m3}
+      LLM_MAIN: ${LLM_MAIN:-qwen2.5:7b}
+      # Multi-tenant : 1 collection Qdrant par tenant
+      TENANT_ID: ${CLIENT_NAME:-default}
+      # Auth
+      MEM0_API_KEY: ${MEM0_API_KEY:?MEM0_API_KEY required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    networks:
+      - aibox_net
+      - ollama_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    mem_limit: 512m
+    mem_reservation: 128m
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  ollama_net:
+    name: ollama_net
+    external: true

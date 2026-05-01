@@ -8,7 +8,11 @@
  */
 const N8N_BASE = process.env.N8N_BASE_URL || "http://localhost:5678";
 const ADMIN_EMAIL    = process.env.ADMIN_EMAIL || "";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+// n8n exige un password 8+ chars + 1 majuscule + 1 chiffre. Le ADMIN_PASSWORD
+// historique (généré par `gen_secret`) ne respectait pas toujours la règle, on
+// stocke donc un mot de passe spécifique n8n dans .env (auto-provisionné par
+// le wizard first-run). Fallback sur ADMIN_PASSWORD pour rétro-compat.
+const ADMIN_PASSWORD = process.env.N8N_PASSWORD || process.env.ADMIN_PASSWORD || "";
 
 interface CachedAuth {
   cookieHeader: string;
@@ -112,13 +116,132 @@ export async function listWorkflows(): Promise<N8nWorkflow[]> {
 }
 
 export async function setWorkflowActive(id: string, active: boolean): Promise<boolean> {
+  // n8n 1.70+ : PATCH /rest/workflows/<id> body {"active":true|false}.
+  // n8n < 1.70 : POST /rest/workflows/<id>/(de)activate.
+  // On essaie PATCH d'abord, fallback POST /(de)activate sur 404.
   try {
-    const r = await n8nFetch(`/rest/workflows/${id}/${active ? "activate" : "deactivate"}`, {
-      method: "POST",
+    const pr = await n8nFetch(`/rest/workflows/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
     });
-    return r.ok;
+    if (pr.ok) return true;
+    if (pr.status === 404) {
+      const r = await n8nFetch(
+        `/rest/workflows/${id}/${active ? "activate" : "deactivate"}`,
+        { method: "POST" },
+      );
+      return r.ok;
+    }
+    return false;
   } catch {
     return false;
+  }
+}
+
+export interface N8nExecution {
+  id: string;
+  workflowId?: string;
+  finished?: boolean;
+  status?: "success" | "error" | "running" | "waiting" | "canceled" | "crashed" | "new";
+  mode?: string;
+  startedAt?: string;
+  stoppedAt?: string;
+  retryOf?: string | null;
+  retrySuccessId?: string | null;
+}
+
+interface N8nExecutionsResponse {
+  results?: N8nExecution[];
+  data?: N8nExecution[];
+  count?: number;
+  estimated?: boolean;
+}
+
+/** Liste les exécutions d'un workflow (ou globalement si workflowId omis). */
+export async function listExecutions(
+  workflowId?: string,
+  limit = 25,
+): Promise<N8nExecution[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (workflowId) {
+    // n8n attend une `filter` JSON-encoded
+    params.set("filter", JSON.stringify({ workflowId }));
+  }
+  try {
+    const r = await n8nFetch(`/rest/executions?${params}`);
+    if (!r.ok) return [];
+    const j = (await r.json()) as N8nExecutionsResponse;
+    return j.results || j.data || [];
+  } catch {
+    return [];
+  }
+}
+
+/** Stats globales : count par statut sur les N derniers jours.
+ *  N8n ne fournit pas d'endpoint d'agrégation — on liste et on compte. */
+export async function executionsStats(
+  workflowId?: string,
+  daysBack = 7,
+  limit = 200,
+): Promise<{ success: number; error: number; running: number; total: number }> {
+  const list = await listExecutions(workflowId, limit);
+  const cutoff = Date.now() - daysBack * 86400_000;
+  let success = 0, error = 0, running = 0, total = 0;
+  for (const e of list) {
+    if (e.startedAt && new Date(e.startedAt).getTime() < cutoff) continue;
+    total++;
+    if (e.status === "success" || (e.finished && !e.status)) success++;
+    else if (e.status === "error" || e.status === "crashed") error++;
+    else if (e.status === "running" || e.status === "waiting") running++;
+  }
+  return { success, error, running, total };
+}
+
+export interface N8nCredential {
+  id: string;
+  name: string;
+  type?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Liste les credentials configurés (lecture seule, sans secrets). */
+export async function listCredentials(): Promise<N8nCredential[]> {
+  try {
+    const r = await n8nFetch("/rest/credentials");
+    if (!r.ok) return [];
+    const j = await r.json();
+    const data = j.data || j;
+    return (Array.isArray(data) ? data : []).map((c: Record<string, unknown>) => ({
+      id: String(c.id),
+      name: String(c.name || "(sans nom)"),
+      type: c.type ? String(c.type) : undefined,
+      createdAt: c.createdAt ? String(c.createdAt) : undefined,
+      updatedAt: c.updatedAt ? String(c.updatedAt) : undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Déclenche manuellement un workflow via /rest/workflows/<id>/run.
+ *  n8n renvoie un `executionId` qu'on peut suivre via /rest/executions/<id>.
+ */
+export async function runWorkflow(
+  workflowId: string,
+): Promise<{ ok: boolean; executionId?: string; error?: string }> {
+  try {
+    const r = await n8nFetch(`/rest/workflows/${workflowId}/run`, {
+      method: "POST",
+      body: JSON.stringify({ workflowData: {} }),
+    });
+    if (!r.ok) {
+      return { ok: false, error: `HTTP ${r.status}` };
+    }
+    const j = await r.json();
+    return { ok: true, executionId: j.data?.executionId || j.executionId };
+  } catch (e) {
+    return { ok: false, error: String(e).slice(0, 200) };
   }
 }
 
@@ -133,15 +256,33 @@ export async function createWorkflow(
   template: Record<string, unknown>,
 ): Promise<N8nWorkflow | null> {
   try {
-    // Strip les champs read-only avant push
-    const { id: _id, createdAt: _ca, updatedAt: _ua, versionId: _vid,
-            ...payload } = template as Record<string, unknown>;
-    void _id; void _ca; void _ua; void _vid;
+    // Strip les champs read-only ET serveur-side avant push.
+    // n8n exige active NOT NULL côté DB SQLite (sinon SQLITE_CONSTRAINT 500).
+    // settings doit aussi exister (objet vide accepté).
+    const {
+      id: _id, createdAt: _ca, updatedAt: _ua, versionId: _vid,
+      active: _act, triggerCount: _tc, pinData: _pd,
+      staticData: _sd, meta: _meta, shared: _sh,
+      ...payload
+    } = template as Record<string, unknown>;
+    void _id; void _ca; void _ua; void _vid; void _act; void _tc;
+    void _pd; void _sd; void _meta; void _sh;
+
+    const finalPayload: Record<string, unknown> = {
+      ...payload,
+      active: false,                     // toujours désactivé à la création
+      settings: payload.settings || {},  // objet requis
+    };
+
     const r = await n8nFetch("/rest/workflows", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(finalPayload),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      const errBody = await r.text().catch(() => "");
+      console.warn("[n8n] createWorkflow non-ok:", r.status, errBody.slice(0, 200));
+      return null;
+    }
     const j = await r.json();
     return (j.data || j) as N8nWorkflow;
   } catch (e) {

@@ -96,6 +96,10 @@ STOP_LIST=(
     aibox-llama-guard
     # Apps héritées avec compte local (les comptes sont reprovisionnés ensuite)
     n8n uptime-kuma portainer
+    # Services post-sprint 2026-05 (Langfuse v2/v3, TTS Piper, SearXNG)
+    aibox-langfuse-web aibox-langfuse-worker aibox-langfuse-db
+    aibox-langfuse-clickhouse aibox-langfuse-redis aibox-langfuse-minio
+    aibox-tts aibox-searxng
     # Wizard (sera redémarré ensuite)
     aibox-setup-api aibox-setup-caddy
 )
@@ -148,6 +152,25 @@ DEL_VOLUMES=(
     stack_xefia_uptime-kuma
     anythingllm_portainer_data
     stack_xefia_portainer_data
+
+    # ----- n8n nouveau (services/n8n/docker-compose.yml v2026-05) -----
+    # Sinon le N8N_ENCRYPTION_KEY persiste dans /home/node/.n8n/config
+    # et au prochain boot n8n crashloop avec "Mismatching encryption keys".
+    # Bug constaté lors du reset cycle 3 (2026-05-01).
+    aibox_n8n_data
+    n8n_n8n_data
+
+    # ----- Services post-sprint 2026-05 -----
+    # Langfuse (observability), TTS (Piper), SearXNG (web search).
+    # Sans purge, les API keys / DBs précédentes persistent et créent
+    # des incohérences avec les nouvelles vars du .env régénéré.
+    observability_langfuse_db
+    observability_langfuse_ch_data
+    observability_langfuse_ch_logs
+    observability_langfuse_redis
+    observability_langfuse_minio
+    tts_tts_cache
+    search_searxng_data
 )
 [[ "$KEEP_OWUI" == "true" ]] || DEL_VOLUMES+=(anythingllm_open-webui stack_xefia_open-webui)
 

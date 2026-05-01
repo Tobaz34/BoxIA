@@ -78,6 +78,22 @@ def gen_secret(length: int = 32) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+def gen_strong_password(length: int = 24) -> str:
+    """Mot de passe fort avec garanties pour les services exigeants (n8n,
+    GLPI, Portainer) : ≥ 1 majuscule, ≥ 1 minuscule, ≥ 1 chiffre, ≥ 1 spécial.
+    Préfixe « Aa1! » puis remplit avec aléatoire, puis mélange les caractères.
+    """
+    if length < 8:
+        length = 8
+    fixed = "Aa1!"
+    rest_len = length - len(fixed)
+    rest_alphabet = string.ascii_letters + string.digits + "!#$%*+-=?@_"
+    rest = "".join(secrets.choice(rest_alphabet) for _ in range(rest_len))
+    chars = list(fixed + rest)
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
 # ---- Routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
@@ -198,6 +214,33 @@ async def configure(payload: WizardSubmit):
     # Dify 1.x : plugin daemon a besoin de 2 secrets partagés avec dify-api
     dify_plugin_key = gen_secret(50)
     dify_inner_key = gen_secret(50)
+    # Sidecars & connecteurs : auto-générées (jamais saisies par le client).
+    # Cf. memory/product_appliance_principle.md — zéro intervention humaine.
+    # Si on les omet, aibox-agents/mem0/connecteurs ne démarrent pas (les
+    # composes les exigent comme variables required, donc compose lève une
+    # erreur à `up`).
+    agents_api_key = gen_secret(48)
+    mem0_api_key = gen_secret(48)
+    fec_tool_api_key = gen_secret(48)
+    pennylane_tool_api_key = gen_secret(48)
+    glpi_tool_api_key = gen_secret(48)
+    odoo_tool_api_key = gen_secret(48)
+    text2sql_tool_api_key = gen_secret(48)
+    # n8n exige un mdp fort (8+ chars + 1 maj + 1 chiffre). gen_secret n'a
+    # pas cette garantie, on génère donc un mdp dédié. setup_n8n_owner sait
+    # le re-générer si besoin (rétry sur 400 password too weak).
+    n8n_password = gen_strong_password(24)
+
+    # ----- Services optionnels post-sprint 2026-05 -----
+    # Langfuse (observability), TTS Piper (voice), SearXNG (web search).
+    # Vars auto-générées : si l'admin ne déploie pas le compose, elles
+    # restent dans .env mais sans effet (no-op côté aibox-app).
+    langfuse_db_password = gen_secret(32)
+    langfuse_salt = gen_secret(32)
+    langfuse_nextauth_secret = gen_secret(64)
+    langfuse_public_key = "pk-lf-aibox-" + gen_secret(24)
+    langfuse_secret_key = "sk-lf-aibox-" + gen_secret(32)
+    searxng_secret = gen_secret(64)
 
     # Échappe les caractères spéciaux pour bash (.env est sourcé par scripts shell)
     def shell_escape(s: str) -> str:
@@ -237,7 +280,14 @@ async def configure(payload: WizardSubmit):
         f"ADMIN_EMAIL={payload.admin_email}",
         f"ADMIN_PASSWORD={shell_escape(payload.admin_password)}",
         f"HW_PROFILE={payload.hw_profile}",
-        "LLM_MAIN=qwen2.5:7b",
+        # Modèle principal : qwen3:14b (9 GB VRAM, drop-in qwen2.5:14b).
+        # Avantages 2026-05 (audit BentoML) : function calling natif,
+        # multilingue FR top-tier, thinking/non-thinking switchable.
+        # Repli qwen3:8b si GPU < 12 GB (override .env post-install).
+        "LLM_MAIN=qwen3:14b",
+        # Modèle vision pour les agents avec vision:true (qwen3vl pas
+        # encore stable sur Ollama au 2026-05 — on garde qwen2.5vl).
+        "LLM_VISION=qwen2.5vl:7b",
         "LLM_EMBED=bge-m3",
         f"PG_DIFY_PASSWORD={pg_dify}",
         f"PG_AUTHENTIK_PASSWORD={pg_ak}",
@@ -246,10 +296,54 @@ async def configure(payload: WizardSubmit):
         f"DIFY_PLUGIN_DAEMON_KEY={dify_plugin_key}",
         f"DIFY_INNER_API_KEY={dify_inner_key}",
         f"QDRANT_API_KEY={qdrant_key}",
+        # Sidecars & connecteurs — auto-générés ci-dessus
+        f"AGENTS_API_KEY={agents_api_key}",
+        f"MEM0_API_KEY={mem0_api_key}",
+        f"FEC_TOOL_API_KEY={fec_tool_api_key}",
+        f"PENNYLANE_TOOL_API_KEY={pennylane_tool_api_key}",
+        f"GLPI_TOOL_API_KEY={glpi_tool_api_key}",
+        f"ODOO_TOOL_API_KEY={odoo_tool_api_key}",
+        f"TEXT2SQL_TOOL_API_KEY={text2sql_tool_api_key}",
+        f"N8N_PASSWORD={shell_escape(n8n_password)}",
+        # URLs sidecars en network_mode: host (constants, pas de secret)
+        "INFERENCE_BACKEND=ollama",
+        "CHECKPOINTER_MODE=postgres",
+        "MEM0_BASE_URL=http://127.0.0.1:8087",
+        "AGENTS_BASE_URL=http://127.0.0.1:8085",
+        "PENNYLANE_TOOL_URL=http://127.0.0.1:8090",
+        "FEC_TOOL_URL=http://127.0.0.1:8091",
         "QDRANT_VERSION=v1.13.4",
         "DIFY_VERSION=1.10.1",
         "AUTHENTIK_VERSION=2025.10.0",
         "NETWORK_NAME=aibox_net",
+
+        # ----- Langfuse self-hosted (observability) -----
+        # Démarrer manuellement : cd services/observability && docker compose up -d
+        # Une fois UP, l'app aibox-app pousse les traces de chaque chat
+        # automatiquement (lib/langfuse.ts no-op si LANGFUSE_BASE_URL absent).
+        # URL admin pour explorer les traces : http://<box>:3001/
+        f"LANGFUSE_DB_PASSWORD={langfuse_db_password}",
+        f"LANGFUSE_SALT={langfuse_salt}",
+        f"LANGFUSE_NEXTAUTH_SECRET={langfuse_nextauth_secret}",
+        f"LANGFUSE_PUBLIC_KEY={langfuse_public_key}",
+        f"LANGFUSE_SECRET_KEY={langfuse_secret_key}",
+        # IMPORTANT : aibox-app tourne en network_mode: host → ne résout
+        # pas le DNS Docker. Donc on passe par localhost (port mappé).
+        "LANGFUSE_BASE_URL=http://127.0.0.1:3001",
+        "LANGFUSE_PUBLIC_URL=http://localhost:3001",
+
+        # ----- TTS Piper (voix neural FR via OpenTTS) -----
+        # Démarrer manuellement : cd services/tts && docker compose up -d
+        # Pulled image ~1.5 GB. Sans le service, useTTS fallback sur
+        # Web Speech API natif (qualité OS-dépendante).
+        "TTS_BACKEND_URL=http://127.0.0.1:5500",
+        "TTS_DEFAULT_VOICE=larynx:siwis-glow_tts",
+
+        # ----- SearXNG (web search métamoteur) -----
+        # Démarrer manuellement : cd services/search && docker compose up -d
+        # Tool /api/agents-tools/web_search consommable par le Concierge.
+        f"SEARXNG_SECRET={searxng_secret}",
+        "SEARXNG_URL=http://127.0.0.1:8888",
     ]
     for key, val in payload.technologies.items():
         if isinstance(val, bool):
@@ -259,7 +353,20 @@ async def configure(payload: WizardSubmit):
 
     env_path = AIBOX_ROOT / ".env"
     env_path.write_text("\n".join(env_lines) + "\n")
-    env_path.chmod(0o600)
+    # 0o640 (rw pour owner root, r pour groupe docker) au lieu de 0o600 :
+    # le user clikinfo (membre du groupe docker) doit pouvoir lire .env
+    # pour faire `docker compose --env-file .env up -d` sans sudo lors
+    # des opérations de maintenance post-deploy. Le wizard tourne en root
+    # donc l'écriture reste OK. Tester avec : `groups clikinfo | grep docker`.
+    env_path.chmod(0o640)
+    # Chown au groupe docker si présent (l'utilisateur du host est dans
+    # ce groupe par convention sur xefia).
+    try:
+        import grp, os as _os
+        gid = grp.getgrnam("docker").gr_gid
+        _os.chown(env_path, 0, gid)
+    except (KeyError, OSError):
+        pass  # Pas de groupe docker → on garde root:root, pas critique
 
     # client_config.yaml — sans le mot de passe (sécurité)
     config = {
@@ -321,7 +428,11 @@ async def create_admin_user():
     # update_or_create).
     import time as _t
     ready = False
-    for attempt in range(60):  # max ~180s (30 attempts × 3s + travail)
+    # En fresh deploy, install.sh peut être en train de puller les images
+    # (5-15 min sur connexion ADSL) → 600 tentatives × 3s = 30 min max.
+    # En cas de re-deploy (images déjà présentes), Authentik est ready en <60s
+    # donc on n'attendra réellement que ~30s grâce au break précoce.
+    for attempt in range(600):
         try:
             check = subprocess.run(
                 ["docker", "exec", "aibox-authentik-server", "ak", "shell", "-c",
@@ -337,10 +448,24 @@ async def create_admin_user():
             )
             if "READY" in check.stdout:
                 ready = True
+                print(f"[create-admin-user] Authentik ready after "
+                      f"{(attempt+1)*3}s", flush=True)
                 break
         except Exception:
             pass
         _t.sleep(3)
+    if not ready:
+        # 30 min sans Authentik = problème grave (images pas pull, GPU absent,
+        # etc.). On lève une 504 pour que le wizard affiche un message clair.
+        raise HTTPException(
+            504,
+            detail={
+                "error": "authentik_not_ready",
+                "message": "Authentik n'est pas devenu healthy après 30 minutes. "
+                           "Vérifier `docker logs aibox-authentik-server` et "
+                           "l'état du pull d'images (`docker pull` peut être lent).",
+            },
+        )
     # Marge supplémentaire pour laisser Authentik finir ses tasks de
     # bootstrap (création des outpost-users etc.) — sinon update_or_create
     # peut entrer en conflit avec la création concurrente d'un user.
@@ -504,7 +629,19 @@ def import_templates(request: Request):
             env[k] = v.strip("'\"")
 
     host = (request.headers.get("host") or "localhost").split(":")[0]
-    return template_importer.import_all_templates(env, host)
+    base_report = template_importer.import_all_templates(env, host)
+    # Marketplace n8n : workflows `default_active: true` du catalogue local.
+    # Indépendant de `client_config.yaml` (un healthcheck stack ou un snapshot
+    # Qdrant est utile à toutes les configs).
+    try:
+        marketplace_report = template_importer.import_n8n_marketplace_default_workflows(
+            env, host,
+        )
+    except Exception as e:
+        marketplace_report = {"ok": False, "error": str(e)[:300]}
+    if isinstance(base_report, dict):
+        base_report["n8n_marketplace_defaults"] = marketplace_report
+    return base_report
 
 
 @app.post("/api/deploy/start")

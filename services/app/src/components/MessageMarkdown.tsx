@@ -16,53 +16,26 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
+import { Check, Copy, Eye } from "lucide-react";
+import { useState, type ComponentProps } from "react";
+import { ArtifactPanel } from "./ArtifactPanel";
 import {
-  Check, Copy, Download, FileText, FileSpreadsheet, FileType,
-  FileCode, File as FileIcon, Loader2,
-} from "lucide-react";
-import { useMemo, useState, type ComponentProps } from "react";
+  artifactKindFromLang,
+  deriveArtifactTitle,
+  type ArtifactKind,
+} from "@/lib/artifacts";
 
-/** Map langage → extension de fichier proposée pour "Save as".
- *  null = pas de bouton save (langues non scriptables comme markdown ou plain text). */
-const SAVE_EXT_BY_LANG: Record<string, string | null> = {
-  powershell: "ps1",
-  ps1: "ps1",
-  ps: "ps1",
-  bash: "sh",
-  sh: "sh",
-  shell: "sh",
-  zsh: "sh",
-  python: "py",
-  py: "py",
-  javascript: "js",
-  js: "js",
-  jsx: "jsx",
-  typescript: "ts",
-  ts: "ts",
-  tsx: "tsx",
-  json: "json",
-  yaml: "yml",
-  yml: "yml",
-  xml: "xml",
-  html: "html",
-  css: "css",
-  sql: "sql",
-  dockerfile: "Dockerfile",
-  docker: "Dockerfile",
-  go: "go",
-  rust: "rs",
-  rs: "rs",
-  java: "java",
-  c: "c",
-  cpp: "cpp",
-  csharp: "cs",
-  cs: "cs",
-  text: null,
-  markdown: null,
-  md: null,
-};
-
-function CodeBlockHeader({ lang, raw }: { lang: string; raw: string }) {
+function CodeBlockHeader({
+  lang,
+  raw,
+  artifactKind,
+  onOpenArtifact,
+}: {
+  lang: string;
+  raw: string;
+  artifactKind: ArtifactKind | null;
+  onOpenArtifact?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const saveExt = SAVE_EXT_BY_LANG[lang.toLowerCase()];
 
@@ -89,15 +62,15 @@ function CodeBlockHeader({ lang, raw }: { lang: string; raw: string }) {
   return (
     <div className="flex items-center justify-between px-3 py-1 text-[11px] text-muted bg-muted/10 border-b border-border">
       <span>{lang}</span>
-      <div className="flex gap-1">
-        {saveExt && (
+      <div className="flex items-center gap-1.5">
+        {artifactKind && onOpenArtifact && (
           <button
-            onClick={handleSave}
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted/30 transition-default"
-            title={`Télécharger en .${saveExt === "Dockerfile" ? "" : saveExt}`}
+            onClick={onOpenArtifact}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-primary hover:bg-primary/10 transition-default"
+            title="Voir le rendu dans un panneau"
           >
-            <Download size={12} />
-            .{saveExt}
+            <Eye size={12} />
+            Voir
           </button>
         )}
         <button
@@ -258,7 +231,14 @@ function extractText(node: unknown): string {
 }
 
 export function MessageMarkdown({ content }: { content: string }) {
-  const segments = useMemo(() => parseFileMarkers(content), [content]);
+  // État du panneau Canvas/Artifact — un seul panneau ouvert à la fois,
+  // peu importe combien de blocks rendables il y a dans la réponse.
+  const [artifact, setArtifact] = useState<{
+    kind: ArtifactKind;
+    code: string;
+    title: string;
+  } | null>(null);
+
   return (
     <div className="prose-chat">
       {segments.map((seg, i) =>
@@ -281,8 +261,9 @@ function MarkdownPart({ content }: { content: string }) {
         ]}
         components={{
           // pre = wrapper autour du code block. On lui ajoute juste un header
-          // (langue + bouton copier). Le contenu est rendu par le composant
-          // <code> ci-dessous (qui reçoit déjà les <span> highlightés).
+          // (langue + bouton copier + bouton « Voir » si block rendable).
+          // Le contenu est rendu par le composant <code> ci-dessous (qui
+          // reçoit déjà les <span> highlightés).
           pre: ({ children, ...rest }: ComponentProps<"pre">) => {
             // Trouve le <code> enfant pour extraire className (langue) + texte brut
             const codeChild = Array.isArray(children)
@@ -301,9 +282,24 @@ function MarkdownPart({ content }: { content: string }) {
               .find((c) => c.startsWith("language-"));
             const lang = langClass ? langClass.replace("language-", "") : "text";
             const raw = extractText(codeProps.children).replace(/\n$/, "");
+            const artifactKind = artifactKindFromLang(lang);
             return (
               <div className="relative my-3 rounded-md overflow-hidden border border-border bg-background/60">
-                <CodeBlockHeader lang={lang} raw={raw} />
+                <CodeBlockHeader
+                  lang={lang}
+                  raw={raw}
+                  artifactKind={artifactKind}
+                  onOpenArtifact={
+                    artifactKind
+                      ? () =>
+                          setArtifact({
+                            kind: artifactKind,
+                            code: raw,
+                            title: deriveArtifactTitle(artifactKind, raw),
+                          })
+                      : undefined
+                  }
+                />
                 <pre className="overflow-x-auto p-3 text-xs leading-relaxed" {...rest}>
                   {children}
                 </pre>
@@ -364,6 +360,15 @@ function MarkdownPart({ content }: { content: string }) {
       >
         {content}
       </ReactMarkdown>
+      {artifact && (
+        <ArtifactPanel
+          open
+          kind={artifact.kind}
+          code={artifact.code}
+          title={artifact.title}
+          onClose={() => setArtifact(null)}
+        />
+      )}
     </div>
   );
 }

@@ -14,24 +14,34 @@ import {
   HelpCircle,
   ShieldCheck,
   Plug,
+  Sparkles,
+  Zap,
+  Network,
   X,
 } from "lucide-react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
 import { useUI, setUI } from "@/lib/ui-store";
+import { useT } from "@/lib/i18n";
 
+// Les `label` sont des CLÉS i18n (résolues via t() dans le rendu) — pas
+// des chaînes affichables directement. Ça permet de reswitcher la langue
+// sans recharger la page.
 const items = [
-  { href: "/",          label: "Discuter",         icon: MessageSquare, primary: true },
-  { href: "/agents",    label: "Mes assistants",   icon: Bot },
-  { href: "/workflows", label: "Automatisations",  icon: Workflow },
-  { href: "/documents", label: "Documents",        icon: FileText },
+  { href: "/",          labelKey: "sidebar.nav.chat",       icon: MessageSquare, primary: true },
+  { href: "/agents",    labelKey: "sidebar.nav.agents",     icon: Bot },
+  { href: "/workflows", labelKey: "sidebar.nav.workflows",  icon: Workflow },
+  { href: "/documents", labelKey: "sidebar.nav.documents",  icon: FileText },
 ];
 
 const adminItems = [
-  { href: "/users",      label: "Utilisateurs", icon: Users },
-  { href: "/connectors", label: "Connecteurs",  icon: Plug },
-  { href: "/audit",      label: "Audit",        icon: ScrollText },
-  { href: "/system",     label: "État serveur", icon: Activity },
-  { href: "/settings",   label: "Paramètres",   icon: Settings },
+  { href: "/users",                 labelKey: "sidebar.admin.users",          icon: Users },
+  { href: "/connectors",            labelKey: "sidebar.admin.connectors",     icon: Plug },
+  { href: "/agents/marketplace",    labelKey: "sidebar.admin.marketplaceAi",  icon: Sparkles },
+  { href: "/workflows/marketplace", labelKey: "sidebar.admin.marketplaceN8n", icon: Zap },
+  { href: "/integrations/mcp",      labelKey: "sidebar.admin.mcp",            icon: Network },
+  { href: "/audit",                 labelKey: "sidebar.admin.audit",          icon: ScrollText },
+  { href: "/system",                labelKey: "sidebar.admin.system",         icon: Activity },
+  { href: "/settings",              labelKey: "sidebar.admin.settings",       icon: Settings },
 ];
 
 interface SidebarProps {
@@ -44,6 +54,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
     href === "/" ? pathname === "/" : pathname.startsWith(href);
   const { state } = useUI();
   const open = state.mobileMenuOpen;
+  const { t } = useT();
 
   return (
     <>
@@ -82,7 +93,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
                 }`}
               >
                 <Icon size={18} />
-                <span>{item.label}</span>
+                <span>{t(item.labelKey)}</span>
               </Link>
             );
           })}
@@ -92,7 +103,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
         {isAdmin && (
           <>
             <div className="mt-6 px-6 mb-2 text-xs uppercase tracking-wide text-muted">
-              Administration
+              {t("sidebar.admin.header")}
             </div>
             <nav className="px-3 space-y-1">
               {adminItems.map((item) => {
@@ -109,7 +120,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
                     }`}
                   >
                     <Icon size={18} />
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                   </Link>
                 );
               })}
@@ -128,14 +139,14 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
           className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted hover:bg-muted/30 transition-default"
         >
           <ShieldCheck size={16} />
-          <span>Mes données</span>
+          <span>{t("sidebar.footer.myData")}</span>
         </Link>
         <Link
           href="/help"
           className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted hover:bg-muted/30 transition-default"
         >
           <HelpCircle size={16} />
-          <span>Aide</span>
+          <span>{t("sidebar.footer.help")}</span>
         </Link>
         {/* Bouton fermer sur mobile uniquement */}
         <button
@@ -143,7 +154,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
           className="lg:hidden w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted hover:bg-muted/30 transition-default"
         >
           <X size={16} />
-          <span>Fermer</span>
+          <span>{t("sidebar.footer.close")}</span>
         </button>
       </div>
     </aside>

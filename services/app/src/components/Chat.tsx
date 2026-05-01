@@ -27,6 +27,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageSources, type RetrieverResource } from "./MessageSources";
 import { useUI, setUI } from "@/lib/ui-store";
 import { useSpeech, useTTS } from "@/lib/use-speech";
+import { smoothEmit } from "@/lib/smooth-stream";
 import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu";
 import {
   Plus, RefreshCcw, FileDown, Bot as BotIcon,
@@ -425,6 +426,37 @@ export function Chat() {
     if (files && files.length) await uploadFiles(files);
   }
 
+  /** Handler `paste` sur le textarea : extrait les images du clipboard et
+   *  les uploade comme attachements. Fonctionne avec Ctrl+V (Cmd+V) après
+   *  une capture d'écran ou un copy d'image dans une autre app. Le texte
+   *  collé reste injecté normalement dans le textarea (default behavior). */
+  async function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (!currentAgent) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    const fileItems = items.filter((it) => it.kind === "file");
+    if (fileItems.length === 0) return; // pas de fichier → laisse le paste texte se faire
+    e.preventDefault();
+    const files: File[] = [];
+    for (const it of fileItems) {
+      const f = it.getAsFile();
+      if (f) {
+        // Si pas de nom (cas screenshot Windows = "image.png"), génère un
+        // nom user-friendly avec timestamp pour le distinguer dans la
+        // preview et dans Dify.
+        if (!f.name || f.name === "image.png" || f.name.startsWith("Capture")) {
+          const ext = f.type.split("/")[1] || "png";
+          const stamped = new File([f], `capture-${Date.now()}.${ext}`, { type: f.type });
+          files.push(stamped);
+        } else {
+          files.push(f);
+        }
+      }
+    }
+    if (files.length > 0) {
+      await uploadFiles(files);
+    }
+  }
+
   function removeAttached(id: string) {
     setAttached((cur) => cur.filter((a) => a.upload_file_id !== id));
   }
@@ -569,13 +601,19 @@ export function Chat() {
                 collectedMessageId = data.message_id;
               }
               if (data.event === "message" && typeof data.answer === "string") {
-                setMessages((m) =>
-                  m.map((x) =>
-                    x.id === asstMsg.id
-                      ? { ...x, content: x.content + data.answer }
-                      : x,
-                  ),
-                );
+                // Streaming fluide : on chunk les gros deltas Dify en
+                // 1-3 chars avec 5ms de pause → effet « tape comme un
+                // humain » (cf lib/smooth-stream.ts, pattern Open-WebUI).
+                // Skip si onglet caché pour ne pas burn CPU.
+                await smoothEmit(data.answer, (chunk) => {
+                  setMessages((m) =>
+                    m.map((x) =>
+                      x.id === asstMsg.id
+                        ? { ...x, content: x.content + chunk }
+                        : x,
+                    ),
+                  );
+                });
               } else if (data.event === "message_end") {
                 // Sources RAG (retriever_resources)
                 const rr = data?.metadata?.retriever_resources;
@@ -1185,9 +1223,10 @@ export function Chat() {
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={onPaste}
                 placeholder={
                   currentAgentMeta
-                    ? `Message à ${currentAgentMeta.name}… (tape / pour les commandes)`
+                    ? `Message à ${currentAgentMeta.name}… (tape / pour les commandes, Ctrl+V pour coller une capture)`
                     : "Écrivez votre message…"
                 }
                 rows={1}

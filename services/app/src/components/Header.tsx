@@ -6,6 +6,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { SystemMetricsWidget } from "./SystemMetricsWidget";
 import { useUI, setUI } from "@/lib/ui-store";
+import { useT } from "@/lib/i18n";
 
 interface HeaderProps {
   brandName: string;
@@ -16,6 +17,7 @@ export function Header({ brandName, brandLogoUrl }: HeaderProps) {
   const { data: session } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
   const { state } = useUI();
+  const { t } = useT();
 
   const initials = session?.user?.name
     ? session.user.name
@@ -33,8 +35,8 @@ export function Header({ brandName, brandLogoUrl }: HeaderProps) {
         <button
           className="lg:hidden p-2 rounded-md hover:bg-muted/30 transition-default"
           onClick={() => setUI({ mobileMenuOpen: !state.mobileMenuOpen })}
-          title="Menu"
-          aria-label="Menu"
+          title={t("header.menu")}
+          aria-label={t("header.menu")}
         >
           <Menu size={18} />
         </button>
@@ -59,7 +61,7 @@ export function Header({ brandName, brandLogoUrl }: HeaderProps) {
           onClick={() => setUI({ theme: state.theme === "dark" ? "light" : "dark" })}
           className="p-2 rounded-md hover:bg-muted/30 transition-default text-muted hover:text-foreground"
           title={state.theme === "dark" ? "Mode clair" : "Mode sombre"}
-          aria-label="Toggle theme"
+          aria-label={t("header.toggleTheme")}
         >
           {state.theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>

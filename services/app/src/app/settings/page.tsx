@@ -3,6 +3,9 @@ import { PagePlaceholder } from "@/components/PagePlaceholder";
 import { CustomInstructionsCard } from "@/components/CustomInstructionsCard";
 import { BrandingCard } from "@/components/BrandingCard";
 import { SeedDemoCard } from "@/components/SeedDemoCard";
+import { LanguageCard } from "@/components/LanguageCard";
+import { VersionCard } from "@/components/VersionCard";
+import { CloudProvidersCard } from "@/components/CloudProvidersCard";
 
 export default function SettingsPage() {
   return (
@@ -12,8 +15,11 @@ export default function SettingsPage() {
       description="Personnalisation des assistants, branding, intégrations."
     >
       <div className="space-y-4">
+        <VersionCard />
+        <LanguageCard />
         <CustomInstructionsCard />
         <BrandingCard />
+        <CloudProvidersCard />
         <SeedDemoCard />
         <div className="bg-card border border-border rounded-lg p-4">
           <h2 className="font-semibold mb-2">Sauvegardes</h2>

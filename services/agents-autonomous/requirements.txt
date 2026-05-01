@@ -1,0 +1,37 @@
+# =============================================================================
+# AI Box — Agents autonomes
+# =============================================================================
+# Versions épinglées (= reproductibilité) — seuls patch upgrades automatiques.
+# LangGraph 1.0 = LTS officielle (oct 2025).
+# langgraph-prebuilt PIN STRICT à 1.0.1 (un breaking change est passé en 1.0.2).
+# =============================================================================
+
+# ---- Web framework ----------------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic[email]==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
+
+# ---- LangGraph + LangChain (Ollama first-class) -----------------------------
+langgraph==1.0.1
+langgraph-prebuilt==1.0.1
+langgraph-checkpoint-postgres==2.0.10
+langchain-core>=0.3.67,<0.4
+langchain-ollama>=0.2.2,<0.4
+langchain-openai>=0.3.0,<0.4    # pour vLLM (API OpenAI-compatible)
+
+# ---- HTTP client (pour appels n8n / Dify / connecteurs) ---------------------
+httpx==0.28.1
+tenacity==9.0.0
+
+# ---- Postgres (checkpointer + migrations légères) ---------------------------
+psycopg[binary,pool]==3.2.3
+
+# ---- Observabilité ----------------------------------------------------------
+structlog==24.4.0
+prometheus-client==0.21.1
+
+# ---- Tests (pour CI / validation locale) ------------------------------------
+pytest==8.3.4
+pytest-asyncio==0.25.0

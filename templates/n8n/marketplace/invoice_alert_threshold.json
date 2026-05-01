@@ -1,0 +1,60 @@
+{
+  "name": "AI Box — Alerte facture >5k€",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 2 }]
+        }
+      },
+      "id": "trigger_2h",
+      "name": "Toutes les 2h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "=http://aibox-conn-pennylane:8000/invoices?status=upcoming&limit=50",
+        "options": {}
+      },
+      "id": "http_pennylane",
+      "name": "Liste factures récentes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const invoices = $input.first().json;\nif (!Array.isArray(invoices)) return [];\nconst threshold = 5000;\nconst big = invoices.filter(i => (parseFloat(i.amount_eur) || 0) >= threshold);\nif (big.length === 0) return [];\nreturn big.map(i => ({\n  json: {\n    invoice_number: i.invoice_number,\n    amount: i.amount_eur,\n    customer: i.customer_name,\n    body: `🚨 Facture ${i.invoice_number} de ${i.amount_eur} € détectée pour ${i.customer_name}.\\nVérifie-la dans Pennylane.`,\n  },\n}));"
+      },
+      "id": "filter_big",
+      "name": "Filtre >5k€",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ai-box@aibox.local",
+        "toEmail": "={{$env.ADMIN_EMAIL}}",
+        "subject": "=💰 AI Box — Facture {{$json.amount}} € détectée",
+        "emailFormat": "text",
+        "text": "={{$json.body}}",
+        "options": {}
+      },
+      "id": "send_alert",
+      "name": "Email alerte",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Toutes les 2h": { "main": [[{ "node": "Liste factures récentes", "type": "main", "index": 0 }]] },
+    "Liste factures récentes": { "main": [[{ "node": "Filtre >5k€", "type": "main", "index": 0 }]] },
+    "Filtre >5k€": { "main": [[{ "node": "Email alerte", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "AI Box" }, { "name": "Finance" }, { "name": "Marketplace" }]
+}

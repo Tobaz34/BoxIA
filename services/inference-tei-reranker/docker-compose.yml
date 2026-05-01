@@ -1,0 +1,74 @@
+# =============================================================================
+# AI Box — TEI Reranker (BAAI/bge-reranker-v2-m3)
+# =============================================================================
+# Service optionnel pour améliorer la qualité du RAG côté Dify.
+# Pattern : retrieval bge-m3 (top-K=20) → rerank bge-reranker-v2-m3 (top-K=5)
+# → contexte LLM. Gain mesuré ~30% sur Spider/MTEB FR.
+#
+# Activation conditionnelle :
+#   - HW_PROFILE=pme ou pme-plus → démarré par install.sh
+#   - HW_PROFILE=tpe → skipped (VRAM 12 Go = trop juste avec Ollama 7B + bge-m3)
+#
+# Configuration côté Dify (manuelle pour l'instant, à automatiser plus tard) :
+#   1. Console Dify → Settings → Model Providers → Hugging Face TEI
+#   2. URL : http://aibox-tei-reranker:8080
+#   3. Model name : BAAI/bge-reranker-v2-m3
+#   4. Type : reranker
+#   5. Dans chaque dataset Dify : activer "Rerank Model" → choisir TEI
+#
+# Coût VRAM (RTX 4090 24 Go) :
+#   - vLLM Qwen2.5-14B AWQ : ~13 Go
+#   - Ollama bge-m3 : ~1.5 Go
+#   - TEI reranker : ~0.5 Go
+#   - Total : ~15 Go (marge 9 Go)
+#
+# Coût VRAM (RTX 4070 Super 12 Go — tier tpe NON recommandé) :
+#   - Ollama qwen2.5:7b : ~5 Go
+#   - Ollama bge-m3 : ~1.5 Go
+#   - TEI reranker : ~0.5 Go
+#   - Total : ~7 Go (4 Go libre, mais sature en pic)
+# =============================================================================
+
+name: aibox-inference-tei-reranker
+
+services:
+  tei-reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:1.5
+    container_name: aibox-tei-reranker
+    restart: unless-stopped
+    ports:
+      # Bind 127.0.0.1 — accès uniquement via aibox_net depuis Dify
+      - "127.0.0.1:8082:80"
+    volumes:
+      - tei_cache:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      --model-id BAAI/bge-reranker-v2-m3
+      --port 80
+      --max-concurrent-requests 16
+      --max-batch-tokens 65536
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s   # premier boot = download HF (~600 Mo)
+    mem_limit: 4g
+    mem_reservation: 1g
+
+volumes:
+  tei_cache:
+    name: aibox_tei_reranker_cache    # ~600 Mo pour bge-reranker-v2-m3
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

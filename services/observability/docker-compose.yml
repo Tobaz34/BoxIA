@@ -1,0 +1,86 @@
+# =============================================================================
+# Service Observability — Langfuse v2 self-hosted
+# =============================================================================
+#
+# Pourquoi v2 et pas v3 ?
+#   - v3 demande ClickHouse en mode cluster avec ZooKeeper/Keeper, MinIO,
+#     Redis et un worker séparé → ~6 containers, config complexe pour
+#     une box mono-tenant TPE/PME (5-50 users)
+#   - v2 = web + postgres seulement, ingestion+UI dans le même service
+#   - v2 supporte le SDK ingestion REST identique à v3 (côté client TS
+#     on n'a rien à changer)
+#   - v2 toujours maintenu (security patches)
+#
+# Argument BoxIA : trace replay step-by-step de chaque conversation
+# agent (input, prompts intermédiaires, tool calls, latences, tokens,
+# coût estimé). Argument commercial RGPD/auditabilité direct.
+#
+# Activation côté aibox-app :
+#   1. docker compose up -d (compose ci-dessous)
+#   2. Aller sur http://<box>:3001/, créer un compte (premier compte =
+#      auto admin), créer un projet, copier les pk-lf-... / sk-lf-...
+#   3. Ajouter dans /srv/ai-stack/.env :
+#        LANGFUSE_BASE_URL=http://aibox-langfuse-web:3000
+#        LANGFUSE_PUBLIC_KEY=pk-lf-...
+#        LANGFUSE_SECRET_KEY=sk-lf-...
+#   4. docker compose -f services/app/docker-compose.yml up -d --force-recreate app
+#
+# Sans ces vars : tout le wiring côté chat est no-op silencieux.
+# =============================================================================
+services:
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: aibox-langfuse-db
+    restart: unless-stopped
+    networks: [aibox_net]
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse_dev_change_me}
+    volumes:
+      - langfuse_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  langfuse-web:
+    image: langfuse/langfuse:2
+    container_name: aibox-langfuse-web
+    restart: unless-stopped
+    networks: [aibox_net]
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse_dev_change_me}@aibox-langfuse-db:5432/langfuse
+      NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL:-http://localhost:3001}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-please_change_me_in_prod_64_chars_min_xxxxxxxxxxxxxxxxxxxxxxxx}
+      SALT: ${LANGFUSE_SALT:-please_change_me_in_prod_xxxxx}
+      TELEMETRY_ENABLED: "false"
+      # Auto-création de l'organisation + projet + premier user admin
+      # → on récupère immédiatement les API keys via l'UI à /project/.../settings
+      LANGFUSE_INIT_ORG_ID: aibox
+      LANGFUSE_INIT_ORG_NAME: AI Box
+      LANGFUSE_INIT_PROJECT_ID: aibox-default
+      LANGFUSE_INIT_PROJECT_NAME: BoxIA Concierge & Agents
+      LANGFUSE_INIT_USER_EMAIL: ${ADMIN_EMAIL:-admin@aibox.local}
+      LANGFUSE_INIT_USER_NAME: Admin
+      LANGFUSE_INIT_USER_PASSWORD: ${ADMIN_PASSWORD:-admin1234}
+      # Pré-créé les API keys au 1er boot — évite l'aller-retour UI pour
+      # récupérer pk-lf-... / sk-lf-.... Le wizard /api/configure les
+      # auto-génère et les écrit dans .env (LANGFUSE_PUBLIC_KEY /
+      # LANGFUSE_SECRET_KEY) qui sont consommés AUSSI par aibox-app.
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-aibox-default-please-change}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-aibox-default-please-change}
+    ports:
+      # Exposé localhost only — accès depuis le poste admin via SSH tunnel
+      # ou via Caddy reverse proxy (à wirer dans /etc/caddy/Caddyfile).
+      - "127.0.0.1:3001:3000"
+
+volumes:
+  langfuse_db:
+
+networks:
+  aibox_net:
+    external: true

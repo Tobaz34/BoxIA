@@ -1,0 +1,15 @@
+id: import_fec
+name: "Import FEC (Fichier des Écritures Comptables)"
+category: accounting
+description: "Endpoint universel d'import du FEC légal français (art. A. 47 A-1 LPF). Couvre Sage 100/EBP/Cegid/Quadra/etc. sans partenariat éditeur."
+status: implemented
+
+required_env:
+  - FEC_TOOL_API_KEY      # Bearer pour authentifier les appels (Dify/n8n/UI)
+optional_env:
+  - FEC_MAX_FILE_MB       # défaut: 100
+  - FEC_DATA_DIR          # défaut: /data (où sont stockés les FEC importés)
+
+triggered_by_questionnaire:
+  question: comptabilite
+  values: ["sage", "ebp", "cegid", "ciel", "autre", "fec"]
