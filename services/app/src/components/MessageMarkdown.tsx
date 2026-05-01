@@ -16,28 +16,56 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Eye } from "lucide-react";
 import { useState, type ComponentProps } from "react";
+import { ArtifactPanel } from "./ArtifactPanel";
+import {
+  artifactKindFromLang,
+  deriveArtifactTitle,
+  type ArtifactKind,
+} from "@/lib/artifacts";
 
-function CodeBlockHeader({ lang, raw }: { lang: string; raw: string }) {
+function CodeBlockHeader({
+  lang,
+  raw,
+  artifactKind,
+  onOpenArtifact,
+}: {
+  lang: string;
+  raw: string;
+  artifactKind: ArtifactKind | null;
+  onOpenArtifact?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex items-center justify-between px-3 py-1 text-[11px] text-muted bg-muted/10 border-b border-border">
       <span>{lang}</span>
-      <button
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(raw);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-          } catch { /* noop */ }
-        }}
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted/30 transition-default"
-        title="Copier"
-      >
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-        {copied ? "Copié" : "Copier"}
-      </button>
+      <div className="flex items-center gap-1.5">
+        {artifactKind && onOpenArtifact && (
+          <button
+            onClick={onOpenArtifact}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-primary hover:bg-primary/10 transition-default"
+            title="Voir le rendu dans un panneau"
+          >
+            <Eye size={12} />
+            Voir
+          </button>
+        )}
+        <button
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(raw);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1200);
+            } catch { /* noop */ }
+          }}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted/30 transition-default"
+          title="Copier"
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? "Copié" : "Copier"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -56,6 +84,14 @@ function extractText(node: unknown): string {
 }
 
 export function MessageMarkdown({ content }: { content: string }) {
+  // État du panneau Canvas/Artifact — un seul panneau ouvert à la fois,
+  // peu importe combien de blocks rendables il y a dans la réponse.
+  const [artifact, setArtifact] = useState<{
+    kind: ArtifactKind;
+    code: string;
+    title: string;
+  } | null>(null);
+
   return (
     <div className="prose-chat">
       <ReactMarkdown
@@ -66,8 +102,9 @@ export function MessageMarkdown({ content }: { content: string }) {
         ]}
         components={{
           // pre = wrapper autour du code block. On lui ajoute juste un header
-          // (langue + bouton copier). Le contenu est rendu par le composant
-          // <code> ci-dessous (qui reçoit déjà les <span> highlightés).
+          // (langue + bouton copier + bouton « Voir » si block rendable).
+          // Le contenu est rendu par le composant <code> ci-dessous (qui
+          // reçoit déjà les <span> highlightés).
           pre: ({ children, ...rest }: ComponentProps<"pre">) => {
             // Trouve le <code> enfant pour extraire className (langue) + texte brut
             const codeChild = Array.isArray(children)
@@ -86,9 +123,24 @@ export function MessageMarkdown({ content }: { content: string }) {
               .find((c) => c.startsWith("language-"));
             const lang = langClass ? langClass.replace("language-", "") : "text";
             const raw = extractText(codeProps.children).replace(/\n$/, "");
+            const artifactKind = artifactKindFromLang(lang);
             return (
               <div className="relative my-3 rounded-md overflow-hidden border border-border bg-background/60">
-                <CodeBlockHeader lang={lang} raw={raw} />
+                <CodeBlockHeader
+                  lang={lang}
+                  raw={raw}
+                  artifactKind={artifactKind}
+                  onOpenArtifact={
+                    artifactKind
+                      ? () =>
+                          setArtifact({
+                            kind: artifactKind,
+                            code: raw,
+                            title: deriveArtifactTitle(artifactKind, raw),
+                          })
+                      : undefined
+                  }
+                />
                 <pre className="overflow-x-auto p-3 text-xs leading-relaxed" {...rest}>
                   {children}
                 </pre>
@@ -149,6 +201,15 @@ export function MessageMarkdown({ content }: { content: string }) {
       >
         {content}
       </ReactMarkdown>
+      {artifact && (
+        <ArtifactPanel
+          open
+          kind={artifact.kind}
+          code={artifact.code}
+          title={artifact.title}
+          onClose={() => setArtifact(null)}
+        />
+      )}
     </div>
   );
 }

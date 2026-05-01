@@ -164,65 +164,130 @@ interface UseTTSResult {
   stop: () => void;
 }
 
+/** Nettoie le markdown pour la synthèse vocale (commun aux 2 backends). */
+function cleanForSpeech(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "(extrait de code)")     // fences
+    .replace(/`([^`]+)`/g, "$1")                          // inline code
+    .replace(/\*\*([^*]+)\*\*/g, "$1")                    // bold
+    .replace(/\*([^*]+)\*/g, "$1")                        // italic
+    .replace(/^#+\s+/gm, "")                              // headers
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")              // links → keep text
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 export function useTTS(): UseTTSResult {
   const [speaking, setSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Backend TTS résolu au mount via GET /api/tts. Si "piper", on utilise
+  // l'audio serveur (qualité supérieure). Sinon Web Speech API natif
+  // (fallback gracieux : si Piper down on bascule sur natif au runtime).
+  const [backend, setBackend] = useState<"piper" | "web-speech">("web-speech");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/tts", { method: "GET", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d?.backend === "piper") setBackend("piper");
+      })
+      .catch(() => {/* fallback web-speech */});
+    return () => { cancelled = true; };
+  }, []);
 
   const supported =
-    typeof window !== "undefined" && "speechSynthesis" in window;
+    typeof window !== "undefined" &&
+    ("speechSynthesis" in window || backend === "piper");
 
-  const speak = useCallback((text: string, messageId: string, lang = "fr-FR") => {
-    if (!supported) return;
-    // Stop tout ce qui est en cours
-    window.speechSynthesis.cancel();
+  const stopAll = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+  }, []);
 
-    // Strip basic markdown for cleaner spoken output (sans plomber le code complexe)
-    const clean = text
-      .replace(/```[\s\S]*?```/g, "(extrait de code)")     // fences
-      .replace(/`([^`]+)`/g, "$1")                          // inline code
-      .replace(/\*\*([^*]+)\*\*/g, "$1")                    // bold
-      .replace(/\*([^*]+)\*/g, "$1")                        // italic
-      .replace(/^#+\s+/gm, "")                              // headers
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")              // links → keep text
-      .replace(/\n{3,}/g, "\n\n");
-
+  const speakWebNative = useCallback((clean: string, lang: string) => {
     const u = new SpeechSynthesisUtterance(clean);
     u.lang = lang;
-    u.rate = 1.05;     // un peu plus rapide que défaut, plus naturel
+    u.rate = 1.05;
     u.pitch = 1;
-    // Préfère une voix FR si disponible
     const voices = window.speechSynthesis.getVoices();
     const frVoice = voices.find((v) => v.lang.startsWith("fr"))
                  || voices.find((v) => v.lang.startsWith("fr-FR"));
     if (frVoice) u.voice = frVoice;
-    u.onend = () => {
-      setSpeaking(false);
-      setSpeakingMessageId(null);
-    };
-    u.onerror = () => {
-      setSpeaking(false);
-      setSpeakingMessageId(null);
-    };
+    u.onend = () => { setSpeaking(false); setSpeakingMessageId(null); };
+    u.onerror = () => { setSpeaking(false); setSpeakingMessageId(null); };
     utteranceRef.current = u;
     window.speechSynthesis.speak(u);
+  }, []);
+
+  const speakPiper = useCallback(async (clean: string, lang: string) => {
+    try {
+      const r = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: clean }),
+      });
+      if (!r.ok) {
+        // Backend Piper down → fallback web-speech au runtime
+        setBackend("web-speech");
+        if ("speechSynthesis" in window) speakWebNative(clean, lang);
+        else { setSpeaking(false); setSpeakingMessageId(null); }
+        return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        setSpeaking(false);
+        setSpeakingMessageId(null);
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        setSpeaking(false);
+        setSpeakingMessageId(null);
+      };
+      await audio.play();
+    } catch {
+      setSpeaking(false);
+      setSpeakingMessageId(null);
+    }
+  }, [speakWebNative]);
+
+  const speak = useCallback((text: string, messageId: string, lang = "fr-FR") => {
+    if (!supported) return;
+    stopAll();
+    const clean = cleanForSpeech(text);
     setSpeaking(true);
     setSpeakingMessageId(messageId);
-  }, [supported]);
+    if (backend === "piper") {
+      void speakPiper(clean, lang);
+    } else if ("speechSynthesis" in window) {
+      speakWebNative(clean, lang);
+    } else {
+      setSpeaking(false);
+      setSpeakingMessageId(null);
+    }
+  }, [supported, backend, speakPiper, speakWebNative, stopAll]);
 
   const stop = useCallback(() => {
-    if (!supported) return;
-    window.speechSynthesis.cancel();
+    stopAll();
     setSpeaking(false);
     setSpeakingMessageId(null);
-  }, [supported]);
+  }, [stopAll]);
 
   // Cleanup au unmount
   useEffect(() => {
-    return () => {
-      if (supported) window.speechSynthesis.cancel();
-    };
-  }, [supported]);
+    return () => stopAll();
+  }, [stopAll]);
 
   return { supported, speaking, speakingMessageId, speak, stop };
 }

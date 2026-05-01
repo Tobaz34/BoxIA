@@ -1,0 +1,50 @@
+# =============================================================================
+# Service TTS (Text-to-Speech) — Piper via OpenTTS HTTP wrapper
+# =============================================================================
+#
+# Pourquoi Piper plutôt que Web Speech API ?
+#   - Qualité : voix neural (Tacotron2) vs voix robot OS-natives
+#   - Cohérence : même voix sur tous les devices (Linux/Mac/Win/Mobile)
+#   - Privacy : 100% local, pas de cloud TTS
+#   - Latence : générée sur le serveur GPU (RTF < 0.3s pour qwen-class)
+#
+# Image choisie : synesthesiam/opentts (wrapper HTTP Piper community).
+# Endpoint : GET http://aibox-tts:5500/api/tts?voice=larynx2:fr_FR/...&text=...
+#            → audio/wav stream
+#
+# Modèles français disponibles (download au démarrage si --no-cache) :
+#   - larynx:fr_FR/siwis-low      ~25 MB, voix féminine, qualité « ok »
+#   - larynx:fr_FR/siwis-medium   ~60 MB, qualité « bonne »
+#   - larynx2:fr_FR/upmc-jessica  ~80 MB, voix féminine, qualité « top »
+#
+# Le default voice est défini via env OPENTTS_DEFAULT_VOICE (sinon le 1er FR).
+# =============================================================================
+services:
+  tts:
+    image: synesthesiam/opentts:fr
+    container_name: aibox-tts
+    restart: unless-stopped
+    networks:
+      - aibox_net
+    environment:
+      # Limite la RAM des modèles chargés (utile sur 16-32 GB)
+      OPENTTS_MAX_PROCESSES: "2"
+    volumes:
+      # Cache des modèles téléchargés (persisté entre restarts)
+      - tts_cache:/home/openttsuser/.local/share
+    command: ["--no-espeak", "--no-glow-speak", "--no-marytts",
+              "--no-festival", "--no-flite", "--no-nanotts"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5500/api/voices"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  tts_cache:
+    driver: local
+
+networks:
+  aibox_net:
+    external: true
