@@ -31,6 +31,7 @@ export type AuditAction =
   | "rgpd.delete_memory"
   | "agent.install_template"
   | "agent.uninstall"
+  | "workflow.run_manual"
   | "user.invite"
   | "user.role_change"
   | "user.toggle_active"

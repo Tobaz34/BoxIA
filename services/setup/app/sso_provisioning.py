@@ -1242,21 +1242,50 @@ def _resolve_n8n_url(host: str) -> list[str]:
     return candidates
 
 
+def _n8n_strong_password(n: int = 24) -> str:
+    """Génère un password fort respectant la policy n8n :
+    8+ chars + au moins 1 majuscule + 1 minuscule + 1 chiffre.
+    On ajoute aussi un caractère spécial pour robustesse.
+    """
+    import secrets
+    import string
+    pools = [
+        string.ascii_uppercase,
+        string.ascii_lowercase,
+        string.digits,
+        "!#$%*+-=?@_",
+    ]
+    pwd = [secrets.choice(p) for p in pools]
+    pwd += [secrets.choice("".join(pools)) for _ in range(max(0, n - 4))]
+    secrets.SystemRandom().shuffle(pwd)
+    return "".join(pwd)
+
+
 def setup_n8n_owner(env: dict[str, str], host: str = "") -> dict[str, Any]:
     """Crée le compte owner n8n (1er user) via leur API.
 
     n8n Community expose POST /rest/owner/setup pour le 1er compte.
     Essaye plusieurs URLs au cas où le DNS interne ne résoud pas (n8n peut
     être sur un réseau différent du nôtre, comme `stack_xefia_ollama_net`).
+
+    Le ADMIN_PASSWORD principal (généré par `gen_secret` dans install.sh) ne
+    respecte pas toujours la policy n8n (1 majuscule + 1 chiffre). On utilise
+    donc un N8N_PASSWORD dédié, auto-généré ici si absent, et persisté dans
+    .env par le caller (cf. provision_all → flow d'écriture .env). Le client
+    aibox-app lira N8N_PASSWORD en priorité (fallback ADMIN_PASSWORD).
     """
     full = env.get("ADMIN_FULLNAME", "Admin").split()
     first = full[0] if full else "Admin"
     last  = " ".join(full[1:]) or "User"
+
+    # Préfère un N8N_PASSWORD dédié (déjà fort), sinon génère-en un.
+    n8n_password = env.get("N8N_PASSWORD") or _n8n_strong_password(24)
+
     payload = {
         "email":     env.get("ADMIN_EMAIL", "admin@example.com"),
         "firstName": first,
         "lastName":  last,
-        "password":  env.get("ADMIN_PASSWORD", ""),
+        "password":  n8n_password,
     }
 
     last_err = "no candidate URL succeeded"
@@ -1265,8 +1294,29 @@ def setup_n8n_owner(env: dict[str, str], host: str = "") -> dict[str, Any]:
             with httpx.Client(timeout=10) as c:
                 r = c.post(f"{base}/rest/owner/setup", json=payload)
                 if r.status_code in (200, 201):
-                    return {"ok": True, "created": True, "via": base}
-                if r.status_code in (400, 403, 409):
+                    # SUCCÈS : on remonte le password généré pour que le caller
+                    # le persiste dans .env (env est passé par référence).
+                    env["N8N_PASSWORD"] = n8n_password
+                    return {
+                        "ok": True, "created": True, "via": base,
+                        "n8n_password_persisted": True,
+                    }
+                # 400 = password too weak (n8n) → on retry avec un mdp renforcé
+                # si on n'avait pas N8N_PASSWORD (cas où ADMIN_PASSWORD passé).
+                if r.status_code == 400 and "password" in r.text.lower():
+                    new_pwd = _n8n_strong_password(24)
+                    payload["password"] = new_pwd
+                    r2 = c.post(f"{base}/rest/owner/setup", json=payload)
+                    if r2.status_code in (200, 201):
+                        env["N8N_PASSWORD"] = new_pwd
+                        return {
+                            "ok": True, "created": True, "via": base,
+                            "note": "password renforcé après 400",
+                            "n8n_password_persisted": True,
+                        }
+                    last_err = f"retry status={r2.status_code} body={r2.text[:150]}"
+                    continue
+                if r.status_code in (403, 409):
                     return {"ok": True, "created": False, "note": "déjà initialisé", "via": base}
                 last_err = f"status={r.status_code} body={r.text[:150]}"
         except Exception as e:

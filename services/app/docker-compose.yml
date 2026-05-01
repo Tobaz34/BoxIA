@@ -95,6 +95,17 @@ services:
       AGENTS_API_KEY:                  ${AGENTS_API_KEY:-}
       AGENTS_BASE_URL:                 ${AGENTS_BASE_URL:-http://aibox-agents:8000}
 
+      # ---- n8n owner password ----
+      # n8n exige password fort (8+ chars, 1 maj, 1 chiffre). Le ADMIN_PASSWORD
+      # principal ne respecte pas toujours la règle (cf. install.sh gen_secret).
+      # On utilise un password dédié, généré par install.sh / setup_n8n_owner.
+      # lib/n8n.ts lit N8N_PASSWORD en priorité, fallback ADMIN_PASSWORD.
+      N8N_PASSWORD:                    ${N8N_PASSWORD:-}
+
+      # ---- Connecteurs sidecars (URLs) ----
+      PENNYLANE_TOOL_URL:              ${PENNYLANE_TOOL_URL:-http://127.0.0.1:8090}
+      FEC_TOOL_URL:                    ${FEC_TOOL_URL:-http://127.0.0.1:8091}
+
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}
       BRAND_LOGO_URL: ${BRAND_LOGO_URL:-}

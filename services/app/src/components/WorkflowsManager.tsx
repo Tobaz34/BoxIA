@@ -9,6 +9,7 @@
  */
 import {
   Workflow, ExternalLink, Power, RefreshCw, AlertCircle, Tag, Zap,
+  Play, CheckCircle2, XCircle, Clock, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -72,6 +73,27 @@ function relTime(iso: string): string {
 export function WorkflowsManager() {
   const { data: session } = useSession();
   const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
+
+  const toggleExpand = (id: string) => setExpanded((prev) => (prev === id ? null : id));
+
+  const runManual = async (id: string) => {
+    setRunningId(id);
+    try {
+      const r = await fetch(`/api/workflows/${id}/run`, { method: "POST" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert("Échec exécution : " + (j.detail || j.error || `HTTP ${r.status}`));
+      } else {
+        // Pas d'alert : on attend que l'utilisateur déplie pour voir l'exécution.
+        setExpanded(id);
+      }
+    } finally {
+      setRunningId(null);
+    }
+  };
 
   const [workflows, setWorkflows] = useState<N8nWorkflow[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -267,20 +289,37 @@ export function WorkflowsManager() {
               </div>
               <div className="flex items-center gap-1">
                 {isAdmin && (
-                  <button
-                    onClick={() => toggle(w.id, !w.active)}
-                    disabled={toggling === w.id}
-                    className={
-                      "p-2 rounded transition-default " +
-                      (w.active
-                        ? "text-accent hover:bg-accent/10"
-                        : "text-muted hover:bg-muted/30 hover:text-foreground")
-                    }
-                    title={w.active ? "Désactiver" : "Activer"}
-                  >
-                    <Power size={14} />
-                  </button>
+                  <>
+                    <button
+                      onClick={() => runManual(w.id)}
+                      disabled={runningId === w.id}
+                      className="p-2 rounded text-muted hover:text-primary hover:bg-primary/10 transition-default disabled:opacity-50"
+                      title="Exécuter maintenant"
+                    >
+                      <Play size={14} className={runningId === w.id ? "animate-pulse" : ""} />
+                    </button>
+                    <button
+                      onClick={() => toggle(w.id, !w.active)}
+                      disabled={toggling === w.id}
+                      className={
+                        "p-2 rounded transition-default " +
+                        (w.active
+                          ? "text-accent hover:bg-accent/10"
+                          : "text-muted hover:bg-muted/30 hover:text-foreground")
+                      }
+                      title={w.active ? "Désactiver" : "Activer"}
+                    >
+                      <Power size={14} />
+                    </button>
+                  </>
                 )}
+                <button
+                  onClick={() => toggleExpand(w.id)}
+                  className="p-2 rounded text-muted hover:text-foreground hover:bg-muted/30 transition-default"
+                  title="Voir les exécutions"
+                >
+                  {expanded === w.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
                 <a
                   href={`${n8nUrl}/workflow/${w.id}`}
                   target="_blank"
@@ -291,6 +330,11 @@ export function WorkflowsManager() {
                   <ExternalLink size={14} />
                 </a>
               </div>
+              {expanded === w.id && (
+                <div className="col-span-3 mt-2 pt-3 border-t border-border">
+                  <ExecutionsPanel workflowId={w.id} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -307,6 +351,112 @@ export function WorkflowsManager() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface N8nExecution {
+  id: string;
+  finished?: boolean;
+  status?: string;
+  mode?: string;
+  startedAt?: string;
+  stoppedAt?: string;
+}
+
+interface ExecutionsResponse {
+  executions: N8nExecution[];
+  stats: { success: number; error: number; running: number; total: number };
+}
+
+function ExecutionsPanel({ workflowId }: { workflowId: string }) {
+  const [data, setData] = useState<ExecutionsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/workflows/${workflowId}/executions`, { cache: "no-store" });
+      if (r.ok) setData(await r.json());
+    } finally {
+      setLoading(false);
+    }
+  }, [workflowId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const statusIcon = (status?: string, finished?: boolean) => {
+    if (status === "success" || (finished && !status)) {
+      return <CheckCircle2 size={12} className="text-accent" />;
+    }
+    if (status === "error" || status === "crashed") {
+      return <XCircle size={12} className="text-red-400" />;
+    }
+    if (status === "running" || status === "waiting" || status === "new") {
+      return <Clock size={12} className="text-yellow-400 animate-pulse" />;
+    }
+    return <Clock size={12} className="text-muted" />;
+  };
+
+  const dur = (e: N8nExecution) => {
+    if (!e.startedAt) return "—";
+    const start = new Date(e.startedAt).getTime();
+    const end = e.stoppedAt ? new Date(e.stoppedAt).getTime() : Date.now();
+    const sec = Math.max(0, Math.round((end - start) / 1000));
+    if (sec < 60) return `${sec}s`;
+    return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  };
+
+  return (
+    <div className="space-y-2">
+      {data && (
+        <div className="flex items-center gap-3 text-xs">
+          <span className="font-medium text-muted">Sur 7 jours :</span>
+          <span className="inline-flex items-center gap-1 text-accent">
+            <CheckCircle2 size={11} />
+            {data.stats.success} succès
+          </span>
+          <span className="inline-flex items-center gap-1 text-red-400">
+            <XCircle size={11} />
+            {data.stats.error} échec{data.stats.error > 1 ? "s" : ""}
+          </span>
+          {data.stats.running > 0 && (
+            <span className="inline-flex items-center gap-1 text-yellow-400">
+              <Clock size={11} />
+              {data.stats.running} en cours
+            </span>
+          )}
+          <span className="ml-auto">
+            <button onClick={load} disabled={loading} className="text-muted hover:text-foreground" title="Rafraîchir">
+              <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+            </button>
+          </span>
+        </div>
+      )}
+      {loading ? (
+        <div className="text-xs text-muted py-2">Chargement…</div>
+      ) : !data?.executions || data.executions.length === 0 ? (
+        <div className="text-xs text-muted py-2">
+          Aucune exécution récente. Cliquez sur ▶ pour déclencher une exécution manuelle.
+        </div>
+      ) : (
+        <div className="rounded-md border border-border divide-y divide-border max-h-60 overflow-y-auto">
+          {data.executions.slice(0, 10).map((e) => (
+            <div key={e.id} className="px-3 py-1.5 flex items-center gap-2 text-xs">
+              {statusIcon(e.status, e.finished)}
+              <span className="font-mono text-muted text-[10px]">#{e.id}</span>
+              <span className="text-muted">{e.mode || "manual"}</span>
+              <span className="flex-1" />
+              <span className="text-[10px] text-muted">{dur(e)}</span>
+              <span className="text-[10px] text-muted">
+                {e.startedAt ? new Date(e.startedAt).toLocaleString("fr-FR", {
+                  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                }) : "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

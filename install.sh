@@ -41,6 +41,20 @@ gen_secret() {
   tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c "$len"
 }
 
+# Génère un password "strong" garantissant au moins 1 majuscule, 1 minuscule,
+# 1 chiffre et 1 caractère spécial. Requis par certains services (n8n, GLPI…)
+# qui rejettent les mots de passe faibles. Préfixe "Aa1!" puis remplit avec
+# de l'aléatoire — l'ordre est mélangé pour éviter le pattern statique.
+gen_strong_pass() {
+  local len="${1:-24}"
+  if [[ $len -lt 8 ]]; then len=8; fi
+  local fixed="Aa1!"  # garantit les 4 classes
+  local rest_len=$((len - 4))
+  local rest
+  rest=$(tr -dc 'A-Za-z0-9!#$%*+-=?@_' </dev/urandom | head -c "$rest_len")
+  echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n'
+}
+
 # ---- Fonction de déploiement (réutilisable depuis CLI ou wizard web) -------
 deploy_stack() {
   local env_file="${SCRIPT_DIR}/.env"
@@ -248,6 +262,10 @@ PENNYLANE_TOOL_API_KEY=$(gen_secret 48)
 GLPI_TOOL_API_KEY=$(gen_secret 48)
 ODOO_TOOL_API_KEY=$(gen_secret 48)
 TEXT2SQL_TOOL_API_KEY=$(gen_secret 48)
+# n8n exige un password fort (8+ chars, 1 maj, 1 chiffre). On génère un
+# password dédié plutôt que réutiliser ADMIN_PASSWORD qui peut ne pas
+# respecter ces règles. Le wizard provisionne n8n owner avec celui-ci.
+N8N_PASSWORD=$(gen_strong_pass 24)
 
 cat > .env <<EOF
 # Généré par install.sh le $(date -Iseconds)
@@ -305,6 +323,7 @@ PENNYLANE_TOOL_API_KEY=${PENNYLANE_TOOL_API_KEY}
 GLPI_TOOL_API_KEY=${GLPI_TOOL_API_KEY}
 ODOO_TOOL_API_KEY=${ODOO_TOOL_API_KEY}
 TEXT2SQL_TOOL_API_KEY=${TEXT2SQL_TOOL_API_KEY}
+N8N_PASSWORD=${N8N_PASSWORD}
 
 # ----- HOST URLS sidecars (network_mode: host) -----
 INFERENCE_BACKEND=ollama
