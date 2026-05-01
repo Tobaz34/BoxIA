@@ -41,7 +41,8 @@ export type AuditAction =
   | "user.recovery_link"
   | "agent.chat"             // optionnel, peut spammer
   | "settings.update"
-  | "audit.access";          // l'admin a consulté l'audit
+  | "audit.access"           // l'admin a consulté l'audit
+  | "concierge.approval";    // l'admin a approuvé/refusé une action Concierge
 
 export interface AuditEntry {
   ts: number;                              // ms epoch

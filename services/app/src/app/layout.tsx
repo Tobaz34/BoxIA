@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { PasswordChangeBanner } from "@/components/PasswordChangeBanner";
+import { ConciergeApprovalBanner } from "@/components/ConciergeApprovalBanner";
 import { getBranding } from "@/lib/branding-server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -75,6 +76,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <PasswordChangeBanner />
                 <main className="flex-1 overflow-auto">{children}</main>
               </div>
+              {/* Banner global d'approbation Concierge — admin-only,
+                  affiché par-dessus toute l'app si une action mutative
+                  est en attente. Cf. lib/approval-gate.ts. */}
+              {isAdmin && <ConciergeApprovalBanner />}
             </div>
           )}
         </Providers>
