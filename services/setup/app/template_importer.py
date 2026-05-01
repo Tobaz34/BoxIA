@@ -246,6 +246,147 @@ def _import_n8n_template(client: httpx.Client, base: str, template_id: str) -> d
 
 
 # ---------------------------------------------------------------------------
+# n8n marketplace : import auto des workflows `default_active: true`
+# ---------------------------------------------------------------------------
+# Pour chaque entrée du catalogue marketplace (templates/n8n/marketplace/
+# _catalog.json) flaggée `default_active: true`, on :
+#   1. push le JSON dans n8n (POST /rest/workflows)
+#   2. active le workflow (POST /rest/workflows/<id>/activate)
+#
+# Idempotent : si un workflow du même nom existe → on ne le re-crée pas, mais
+# on s'assure qu'il est actif (au cas où il aurait été désactivé entre 2
+# `provision_all`).
+#
+# Critère de sécurité : on n'auto-active que les workflows sans
+# credentials_required (sinon le workflow tournerait avec des creds vides
+# et planterait à chaque cron). Les autres restent disponibles dans la
+# marketplace UI pour install manuel.
+
+MARKETPLACE_DIR = TEMPLATES_DIR / "n8n" / "marketplace"
+
+
+def _import_n8n_marketplace_entry(
+    client: httpx.Client,
+    base: str,
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    """Importe + active une entrée du catalogue marketplace n8n."""
+    file = entry.get("file", "")
+    if not file or not isinstance(file, str):
+        return {"ok": False, "error": "missing file in entry"}
+    json_path = MARKETPLACE_DIR / file
+    if not json_path.exists():
+        return {"ok": False, "file": file, "error": f"template file not found: {json_path}"}
+
+    workflow = json.loads(json_path.read_text(encoding="utf-8"))
+    name = workflow.get("name", file)
+
+    creds_required = entry.get("credentials_required") or []
+    safe_to_activate = (
+        entry.get("default_active") is True and len(creds_required) == 0
+    )
+
+    # Existe déjà côté n8n ?
+    existing_id: str | None = None
+    try:
+        r = client.get(f"{base}/rest/workflows")
+        if r.status_code == 200:
+            data = r.json().get("data", r.json())
+            if isinstance(data, list):
+                for w in data:
+                    if w.get("name") == name:
+                        existing_id = str(w.get("id"))
+                        break
+    except Exception:
+        pass
+
+    if existing_id is None:
+        payload = {
+            "name": name,
+            "nodes": workflow.get("nodes", []),
+            "connections": workflow.get("connections", {}),
+            "settings": workflow.get("settings", {"executionOrder": "v1"}),
+        }
+        try:
+            r = client.post(f"{base}/rest/workflows", json=payload)
+            if r.status_code not in (200, 201):
+                return {"ok": False, "file": file, "name": name,
+                        "status": r.status_code, "body": r.text[:200]}
+            data = r.json()
+            existing_id = str((data.get("data") or data).get("id"))
+            created = True
+        except Exception as e:
+            return {"ok": False, "file": file, "error": str(e)}
+    else:
+        created = False
+
+    # Activation si safe
+    activated = False
+    if safe_to_activate and existing_id:
+        try:
+            ar = client.post(f"{base}/rest/workflows/{existing_id}/activate")
+            activated = ar.status_code in (200, 201)
+        except Exception as e:
+            log.warning("activate %s failed: %s", name, e)
+
+    return {
+        "ok": True,
+        "file": file,
+        "name": name,
+        "workflow_id": existing_id,
+        "created": created,
+        "activated": activated,
+        "auto_activate_eligible": safe_to_activate,
+    }
+
+
+def import_n8n_marketplace_default_workflows(
+    env: dict[str, str], host: str = "",
+) -> dict[str, Any]:
+    """Lit `_catalog.json`, importe + active les entrées `default_active: true`.
+
+    Retourne un rapport identique à `import_all_templates` (entrée par
+    workflow). À appeler après `setup_n8n_owner` pour que le compte
+    admin existe avant le login.
+
+    Crédential utilisé : N8N_PASSWORD (provisionné par setup_n8n_owner)
+    avec fallback ADMIN_PASSWORD pour rétro-compat.
+    """
+    catalog_path = MARKETPLACE_DIR / "_catalog.json"
+    if not catalog_path.exists():
+        return {"ok": False, "error": f"catalog not found: {catalog_path}"}
+
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"ok": False, "error": f"catalog parse error: {e}"}
+
+    workflows = catalog.get("workflows") or []
+    todo = [w for w in workflows if w.get("default_active") is True]
+    if not todo:
+        return {"ok": True, "skipped": "no default_active workflows"}
+
+    pwd = env.get("N8N_PASSWORD") or env.get("ADMIN_PASSWORD", "")
+    n8n_login = _n8n_login(env.get("ADMIN_EMAIL", ""), pwd, host)
+    if not n8n_login:
+        return {"ok": False, "error": "n8n login failed"}
+
+    client, base = n8n_login
+    results: list[dict[str, Any]] = []
+    try:
+        for entry in todo:
+            results.append(_import_n8n_marketplace_entry(client, base, entry))
+    finally:
+        client.close()
+
+    return {
+        "ok": all(r.get("ok") for r in results),
+        "count": len(results),
+        "items": results,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def import_all_templates(env: dict[str, str], host: str = "") -> dict[str, Any]:

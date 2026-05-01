@@ -1,0 +1,75 @@
+{
+  "name": "AI Box — Digest factures impayées Pennylane",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "trigger_morning",
+      "name": "Tous les jours 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "=http://aibox-conn-pennylane:8000/invoices/unpaid?days_overdue=30&limit=50",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http_pennylane",
+      "name": "Pennylane impayés >30j",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const invoices = $input.first().json;\nif (!Array.isArray(invoices) || invoices.length === 0) {\n  return [{ json: { skip: true } }];\n}\nconst lines = invoices.slice(0, 20).map(i =>\n  `- ${i.invoice_number || i.id} | ${i.customer_name || '?'} | ${i.amount_eur || '?'} € | ${i.days_overdue || '?'}j de retard`\n).join('\\n');\nreturn [{ json: {\n  count: invoices.length,\n  total_eur: invoices.reduce((s, i) => s + (parseFloat(i.amount_eur) || 0), 0).toFixed(2),\n  body: `Bonjour,\\n\\n${invoices.length} facture(s) impayée(s) au-delà de 30 jours.\\n\\n${lines}\\n\\nMontant total dû : ${invoices.reduce((s, i) => s + (parseFloat(i.amount_eur) || 0), 0).toFixed(2)} €\\n\\n— AI Box`,\n}}];"
+      },
+      "id": "format_digest",
+      "name": "Format digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ai-box@aibox.local",
+        "toEmail": "={{$env.ADMIN_EMAIL}}",
+        "subject": "=AI Box — {{$json.count}} factures impayées (total {{$json.total_eur}} €)",
+        "emailFormat": "text",
+        "text": "={{$json.body}}",
+        "options": {}
+      },
+      "id": "send_email",
+      "name": "Envoyer email admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Tous les jours 8h": {
+      "main": [[{ "node": "Pennylane impayés >30j", "type": "main", "index": 0 }]]
+    },
+    "Pennylane impayés >30j": {
+      "main": [[{ "node": "Format digest", "type": "main", "index": 0 }]]
+    },
+    "Format digest": {
+      "main": [[{ "node": "Envoyer email admin", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "AI Box" }, { "name": "Finance" }, { "name": "Marketplace" }]
+}

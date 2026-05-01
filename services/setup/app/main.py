@@ -504,7 +504,19 @@ def import_templates(request: Request):
             env[k] = v.strip("'\"")
 
     host = (request.headers.get("host") or "localhost").split(":")[0]
-    return template_importer.import_all_templates(env, host)
+    base_report = template_importer.import_all_templates(env, host)
+    # Marketplace n8n : workflows `default_active: true` du catalogue local.
+    # Indépendant de `client_config.yaml` (un healthcheck stack ou un snapshot
+    # Qdrant est utile à toutes les configs).
+    try:
+        marketplace_report = template_importer.import_n8n_marketplace_default_workflows(
+            env, host,
+        )
+    except Exception as e:
+        marketplace_report = {"ok": False, "error": str(e)[:300]}
+    if isinstance(base_report, dict):
+        base_report["n8n_marketplace_defaults"] = marketplace_report
+    return base_report
 
 
 @app.post("/api/deploy/start")

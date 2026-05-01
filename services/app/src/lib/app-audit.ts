@@ -33,6 +33,7 @@ export type AuditAction =
   | "agent.uninstall"
   | "workflow.run_manual"
   | "workflow.upload"
+  | "workflow.install_template"
   | "user.invite"
   | "user.role_change"
   | "user.toggle_active"

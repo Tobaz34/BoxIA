@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Plug,
   Sparkles,
+  Zap,
   Network,
   X,
 } from "lucide-react";
@@ -31,8 +32,9 @@ const items = [
 const adminItems = [
   { href: "/users",              label: "Utilisateurs",  icon: Users },
   { href: "/connectors",         label: "Connecteurs",   icon: Plug },
-  { href: "/agents/marketplace", label: "Marketplace",   icon: Sparkles },
-  { href: "/integrations/mcp",   label: "Intégrations MCP", icon: Network },
+  { href: "/agents/marketplace",    label: "Marketplace IA",     icon: Sparkles },
+  { href: "/workflows/marketplace", label: "Marketplace n8n",    icon: Zap },
+  { href: "/integrations/mcp",      label: "Intégrations MCP",   icon: Network },
   { href: "/audit",              label: "Audit",         icon: ScrollText },
   { href: "/system",             label: "État serveur",  icon: Activity },
   { href: "/settings",           label: "Paramètres",    icon: Settings },

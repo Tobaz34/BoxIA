@@ -1,0 +1,92 @@
+{
+  "name": "AI Box — Relance auto factures impayées",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "trigger_monday",
+      "name": "Lundi 9h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "=http://aibox-conn-pennylane:8000/invoices/unpaid?days_overdue=30&limit=20",
+        "options": {}
+      },
+      "id": "http_pennylane",
+      "name": "Factures impayées >30j",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const invoices = $input.first().json;\nif (!Array.isArray(invoices) || invoices.length === 0) return [];\n// Une seule relance par client (regroupement)\nconst byClient = {};\nfor (const i of invoices) {\n  const key = i.customer_name || i.id;\n  if (!byClient[key]) byClient[key] = [];\n  byClient[key].push(i);\n}\nreturn Object.entries(byClient).map(([client, invs]) => ({\n  json: {\n    customer: client,\n    invoices: invs,\n    total: invs.reduce((s, i) => s + (parseFloat(i.amount_eur) || 0), 0).toFixed(2),\n    invoice_list: invs.map(i => `${i.invoice_number} (${i.amount_eur} €, ${i.days_overdue}j de retard)`).join(', '),\n  },\n}));"
+      },
+      "id": "group_by_client",
+      "name": "Regrouper par client",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://aibox-agents:8000/v1/triage-email",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.AGENTS_API_KEY}}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "sender", "value": "={{$env.ADMIN_EMAIL}}" },
+            { "name": "subject", "value": "=Génère un email de relance courtoise pour {{$json.customer}}" },
+            { "name": "body", "value": "=Le client {{$json.customer}} a {{$json.invoices.length}} facture(s) impayée(s) totalisant {{$json.total}} €. Détails : {{$json.invoice_list}}. Rédige un email de relance courtois en français." },
+            { "name": "received_at", "value": "={{new Date().toISOString()}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "agent_draft",
+      "name": "Agent rédige email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{$env.ADMIN_EMAIL}}",
+        "toEmail": "={{$env.ADMIN_EMAIL}}",
+        "subject": "=AI Box — Relance proposée pour {{$('Regrouper par client').item.json.customer}} ({{$('Regrouper par client').item.json.total}} €)",
+        "emailFormat": "text",
+        "text": "=BROUILLON DE RELANCE (à valider avant envoi) :\n\n{{$json.suggested_reply || $json.summary || $json.intent}}\n\n— AI Box (à valider manuellement avant envoi au client)",
+        "options": {}
+      },
+      "id": "send_draft",
+      "name": "Envoie brouillon admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Lundi 9h": { "main": [[{ "node": "Factures impayées >30j", "type": "main", "index": 0 }]] },
+    "Factures impayées >30j": { "main": [[{ "node": "Regrouper par client", "type": "main", "index": 0 }]] },
+    "Regrouper par client": { "main": [[{ "node": "Agent rédige email", "type": "main", "index": 0 }]] },
+    "Agent rédige email": { "main": [[{ "node": "Envoie brouillon admin", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "AI Box" }, { "name": "Finance" }, { "name": "Marketplace" }]
+}

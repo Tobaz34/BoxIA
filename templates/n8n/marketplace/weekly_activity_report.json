@@ -1,0 +1,65 @@
+{
+  "name": "AI Box — Rapport hebdo activité IA",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 17 * * 5"
+            }
+          ]
+        }
+      },
+      "id": "trigger_friday",
+      "name": "Vendredi 17h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:3100/api/stats",
+        "options": {}
+      },
+      "id": "fetch_stats",
+      "name": "Stats AI Box",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst s = r?.summary || {};\nconst agents = (r?.agents || []).map(a => `  - ${a.name} : ${a.conversations} conversations`).join('\\n') || '  (aucune donnée)';\nconst body = `Bonjour,\\n\\nVoici le rapport hebdomadaire de votre AI Box :\\n\\n📊 Vue d'ensemble :\\n  - Utilisateurs actifs : ${s.users?.active || 0} / ${s.users?.total || 0}\\n  - Conversations totales : ${s.conversations_total || 0}\\n  - Documents indexés : ${s.documents_total || 0}\\n  - Connecteurs actifs : ${s.connectors_active || 0}\\n  - Actions sur 24h : ${s.audit_24h || 0}\\n\\n🤖 Activité par assistant :\\n${agents}\\n\\nBon week-end !\\n— AI Box`;\nreturn [{ json: { body } }];"
+      },
+      "id": "format_report",
+      "name": "Format rapport",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ai-box@aibox.local",
+        "toEmail": "={{$env.ADMIN_EMAIL}}",
+        "subject": "📊 AI Box — Rapport hebdomadaire",
+        "emailFormat": "text",
+        "text": "={{$json.body}}",
+        "options": {}
+      },
+      "id": "send_report",
+      "name": "Email rapport",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Vendredi 17h": { "main": [[{ "node": "Stats AI Box", "type": "main", "index": 0 }]] },
+    "Stats AI Box": { "main": [[{ "node": "Format rapport", "type": "main", "index": 0 }]] },
+    "Format rapport": { "main": [[{ "node": "Email rapport", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "AI Box" }, { "name": "Monitoring" }, { "name": "Marketplace" }]
+}

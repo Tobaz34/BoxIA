@@ -1,0 +1,74 @@
+{
+  "name": "AI Box — Snapshot Qdrant hebdomadaire",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "trigger_sunday",
+      "name": "Dimanche 2h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://aibox-qdrant:6333/collections",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "api-key", "value": "={{$env.QDRANT_API_KEY}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "list_collections",
+      "name": "Liste collections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst cols = r?.result?.collections || [];\nreturn cols.map(c => ({ json: { name: c.name } }));"
+      },
+      "id": "split_cols",
+      "name": "Pour chaque collection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://aibox-qdrant:6333/collections/{{$json.name}}/snapshots",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "api-key", "value": "={{$env.QDRANT_API_KEY}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create_snapshot",
+      "name": "Crée snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Dimanche 2h": { "main": [[{ "node": "Liste collections", "type": "main", "index": 0 }]] },
+    "Liste collections": { "main": [[{ "node": "Pour chaque collection", "type": "main", "index": 0 }]] },
+    "Pour chaque collection": { "main": [[{ "node": "Crée snapshot", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "AI Box" }, { "name": "Backup" }, { "name": "Marketplace" }]
+}

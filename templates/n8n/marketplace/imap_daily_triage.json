@@ -1,0 +1,78 @@
+{
+  "name": "AI Box — Triage email IMAP horaire",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 1 }]
+        }
+      },
+      "id": "trigger_hourly",
+      "name": "Toutes les heures",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "imap_fetch",
+      "name": "Lire IMAP (à configurer)",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "À configurer : connexion IMAP de la boîte que vous voulez surveiller (host, port 993, user, mdp app-specific recommandé). Filtre par défaut : nouveaux emails non lus."
+    },
+    {
+      "parameters": {
+        "url": "http://aibox-agents:8000/v1/triage-email",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.AGENTS_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "sender", "value": "={{$json.from?.value?.[0]?.address || $json.from || 'unknown@example.com'}}" },
+            { "name": "sender_name", "value": "={{$json.from?.value?.[0]?.name || ''}}" },
+            { "name": "subject", "value": "={{$json.subject || '(sans objet)'}}" },
+            { "name": "body", "value": "={{$json.text || $json.html || ''}}" },
+            { "name": "received_at", "value": "={{$json.date || new Date().toISOString()}}" },
+            { "name": "has_attachments", "value": "={{$json.attachments && $json.attachments.length > 0}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "agent_triage",
+      "name": "Agent triage IA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst out = {\n  email_id: $('Lire IMAP (à configurer)').first().json.uid || '',\n  from: $('Lire IMAP (à configurer)').first().json.from?.value?.[0]?.address || '',\n  subject: $('Lire IMAP (à configurer)').first().json.subject || '',\n  category: r.category,\n  priority: r.priority,\n  intent: r.intent,\n  needs_human: r.needs_human_validation,\n  draft: r.suggested_reply,\n  phishing: r.contains_phishing_signals,\n  pii: r.contains_pii,\n  processed_at: new Date().toISOString(),\n};\nreturn [{ json: out }];"
+      },
+      "id": "format_output",
+      "name": "Format digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Toutes les heures": { "main": [[{ "node": "Lire IMAP (à configurer)", "type": "main", "index": 0 }]] },
+    "Lire IMAP (à configurer)": { "main": [[{ "node": "Agent triage IA", "type": "main", "index": 0 }]] },
+    "Agent triage IA": { "main": [[{ "node": "Format digest", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "AI Box" }, { "name": "Email" }, { "name": "Marketplace" }]
+}
