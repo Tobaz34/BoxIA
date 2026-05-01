@@ -116,11 +116,23 @@ export async function listWorkflows(): Promise<N8nWorkflow[]> {
 }
 
 export async function setWorkflowActive(id: string, active: boolean): Promise<boolean> {
+  // n8n 1.70+ : PATCH /rest/workflows/<id> body {"active":true|false}.
+  // n8n < 1.70 : POST /rest/workflows/<id>/(de)activate.
+  // On essaie PATCH d'abord, fallback POST /(de)activate sur 404.
   try {
-    const r = await n8nFetch(`/rest/workflows/${id}/${active ? "activate" : "deactivate"}`, {
-      method: "POST",
+    const pr = await n8nFetch(`/rest/workflows/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
     });
-    return r.ok;
+    if (pr.ok) return true;
+    if (pr.status === 404) {
+      const r = await n8nFetch(
+        `/rest/workflows/${id}/${active ? "activate" : "deactivate"}`,
+        { method: "POST" },
+      );
+      return r.ok;
+    }
+    return false;
   } catch {
     return false;
   }

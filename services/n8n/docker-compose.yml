@@ -46,7 +46,10 @@ services:
     networks:
       - aibox_net
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      # IMPORTANT : 127.0.0.1 (pas `localhost`) — dans l'image n8n, `localhost`
+      # résout en IPv6 (::1) alors que n8n bind uniquement en IPv4 (0.0.0.0).
+      # `localhost:5678` = Connection refused → unhealthy à vie.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5678/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

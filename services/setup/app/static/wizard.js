@@ -241,6 +241,22 @@ async function deploy() {
             out.textContent += `  ${status} workflow n8n : ${t.name || t.id} ${t.skipped || t.error || ''}\n`;
           }
         }
+        // Marketplace n8n : workflows par défaut (healthcheck stack, snapshot
+        // Qdrant, etc.) ajoutés indépendamment des techs cochées.
+        if (j5.n8n_marketplace_defaults) {
+          const m = j5.n8n_marketplace_defaults;
+          if (m.items && m.items.length) {
+            for (const it of m.items) {
+              const created = it.created ? '✓' : '↻';
+              const active = it.activated ? ' (activé)' : '';
+              out.textContent += `  ${created} marketplace n8n : ${it.name || it.file}${active}\n`;
+            }
+          } else if (m.skipped) {
+            out.textContent += `  ↻ marketplace n8n : ${m.skipped}\n`;
+          } else if (m.error) {
+            out.textContent += `  ⚠ marketplace n8n : ${m.error}\n`;
+          }
+        }
       } catch (e) {
         out.textContent += '  ⚠ Erreur import templates : ' + e + '\n';
       }

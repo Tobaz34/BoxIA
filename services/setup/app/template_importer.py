@@ -191,11 +191,23 @@ def _n8n_resolve_url(host: str = "") -> list[str]:
 
 
 def _n8n_login(email: str, password: str, host: str = "") -> tuple[httpx.Client, str] | None:
-    """Logge sur n8n et retourne (client avec cookie, url base)."""
+    """Logge sur n8n et retourne (client avec cookie, url base).
+
+    n8n 1.x utilisait `emailOrLdapLoginId`. Depuis ~1.70 le serveur attend
+    `email` directement (renvoie 401 « Wrong username or password » sinon,
+    ce qui est trompeur). On envoie les deux clés pour être rétro-compatible.
+    """
     for base in _n8n_resolve_url(host):
         try:
             c = httpx.Client(timeout=15)
-            r = c.post(f"{base}/rest/login", json={"emailOrLdapLoginId": email, "password": password})
+            r = c.post(
+                f"{base}/rest/login",
+                json={
+                    "email": email,
+                    "emailOrLdapLoginId": email,
+                    "password": password,
+                },
+            )
             if r.status_code in (200, 201):
                 return c, base
         except Exception:
@@ -228,9 +240,12 @@ def _import_n8n_template(client: httpx.Client, base: str, template_id: str) -> d
     if _n8n_workflow_exists(client, base, name):
         return {"ok": True, "id": template_id, "name": name, "skipped": "already exists"}
 
-    # Crée le workflow (status `inactive` par défaut)
+    # Crée le workflow (status `inactive` par défaut).
+    # IMPORTANT : n8n >= 1.70 exige `active` NOT NULL côté SQLite (sinon
+    # SQLITE_CONSTRAINT 500). Idem pour `settings`.
     payload = {
         "name": name,
+        "active": False,
         "nodes": workflow.get("nodes", []),
         "connections": workflow.get("connections", {}),
         "settings": workflow.get("settings", {"executionOrder": "v1"}),
@@ -301,8 +316,13 @@ def _import_n8n_marketplace_entry(
         pass
 
     if existing_id is None:
+        # n8n >= 1.70 exige `active` NOT NULL côté SQLite (sinon
+        # SQLITE_CONSTRAINT 500). On force False — l'activation se fait
+        # ensuite via /rest/workflows/<id>/activate (cf. plus bas) si le
+        # workflow est éligible (default_active && credentials_required vide).
         payload = {
             "name": name,
+            "active": False,
             "nodes": workflow.get("nodes", []),
             "connections": workflow.get("connections", {}),
             "settings": workflow.get("settings", {"executionOrder": "v1"}),
@@ -320,12 +340,29 @@ def _import_n8n_marketplace_entry(
     else:
         created = False
 
-    # Activation si safe
+    # Activation si safe.
+    # n8n 1.70+ : PATCH /rest/workflows/<id> body {"active":true}.
+    # n8n <1.70 : POST /rest/workflows/<id>/activate.
+    # On essaie PATCH d'abord, fallback POST /activate sur 404.
     activated = False
     if safe_to_activate and existing_id:
         try:
-            ar = client.post(f"{base}/rest/workflows/{existing_id}/activate")
-            activated = ar.status_code in (200, 201)
+            pr = client.patch(
+                f"{base}/rest/workflows/{existing_id}",
+                json={"active": True},
+            )
+            if pr.status_code in (200, 201):
+                activated = True
+            elif pr.status_code == 404:
+                ar = client.post(
+                    f"{base}/rest/workflows/{existing_id}/activate"
+                )
+                activated = ar.status_code in (200, 201)
+            else:
+                log.warning(
+                    "activate %s : PATCH HTTP %s, body=%s",
+                    name, pr.status_code, pr.text[:200],
+                )
         except Exception as e:
             log.warning("activate %s failed: %s", name, e)
 

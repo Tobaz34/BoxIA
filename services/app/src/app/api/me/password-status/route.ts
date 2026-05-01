@@ -48,9 +48,45 @@ export async function GET() {
       reason: "user_not_found",
     });
   }
-  const mustChange = Boolean(
+  let mustChange = Boolean(
     user.attributes && (user.attributes as Record<string, unknown>).must_change_password,
   );
+
+  // Self-healing : si Authentik trace `password_change_date > date_joined`,
+  // c'est que l'admin a réellement changé son pwd à un moment donné
+  // (depuis le wizard) — on peut clear le flag sans demander de confirmation.
+  // Évite que la bannière reste affichée à vie pour les users qui ont changé
+  // leur mdp mais oublié de cliquer « J'ai changé ».
+  if (mustChange) {
+    const u = user as unknown as Record<string, unknown>;
+    const changeDate = typeof u.password_change_date === "string"
+      ? Date.parse(u.password_change_date) : NaN;
+    const joinedDate = typeof u.date_joined === "string"
+      ? Date.parse(u.date_joined) : NaN;
+    // +5s de tolérance car Authentik écrit password_change_date à la création
+    // de l'user (souvent égal à date_joined à la milliseconde près).
+    if (
+      Number.isFinite(changeDate) && Number.isFinite(joinedDate) &&
+      changeDate - joinedDate > 5_000
+    ) {
+      // Best-effort PATCH pour persister — si ça foire, pas grave, le check
+      // sera refait au prochain GET.
+      try {
+        const newAttrs = {
+          ...(user.attributes || {}),
+          must_change_password: false,
+        };
+        await akFetch(`/core/users/${user.pk}/`, {
+          method: "PATCH",
+          body: JSON.stringify({ attributes: newAttrs }),
+        });
+      } catch {
+        // silencieux
+      }
+      mustChange = false;
+    }
+  }
+
   return NextResponse.json({
     must_change: mustChange,
     // URL utilisateur Authentik : page « Mes paramètres » avec l'onglet

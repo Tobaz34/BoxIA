@@ -321,7 +321,11 @@ async def create_admin_user():
     # update_or_create).
     import time as _t
     ready = False
-    for attempt in range(60):  # max ~180s (30 attempts × 3s + travail)
+    # En fresh deploy, install.sh peut être en train de puller les images
+    # (5-15 min sur connexion ADSL) → 600 tentatives × 3s = 30 min max.
+    # En cas de re-deploy (images déjà présentes), Authentik est ready en <60s
+    # donc on n'attendra réellement que ~30s grâce au break précoce.
+    for attempt in range(600):
         try:
             check = subprocess.run(
                 ["docker", "exec", "aibox-authentik-server", "ak", "shell", "-c",
@@ -337,10 +341,24 @@ async def create_admin_user():
             )
             if "READY" in check.stdout:
                 ready = True
+                print(f"[create-admin-user] Authentik ready after "
+                      f"{(attempt+1)*3}s", flush=True)
                 break
         except Exception:
             pass
         _t.sleep(3)
+    if not ready:
+        # 30 min sans Authentik = problème grave (images pas pull, GPU absent,
+        # etc.). On lève une 504 pour que le wizard affiche un message clair.
+        raise HTTPException(
+            504,
+            detail={
+                "error": "authentik_not_ready",
+                "message": "Authentik n'est pas devenu healthy après 30 minutes. "
+                           "Vérifier `docker logs aibox-authentik-server` et "
+                           "l'état du pull d'images (`docker pull` peut être lent).",
+            },
+        )
     # Marge supplémentaire pour laisser Authentik finir ses tasks de
     # bootstrap (création des outpost-users etc.) — sinon update_or_create
     # peut entrer en conflit avec la création concurrente d'un user.
