@@ -23,6 +23,7 @@ import {
   Workflow, Search, ShieldAlert, Plus, RefreshCw, AlertCircle,
   CheckCircle2, KeyRound, ExternalLink,
 } from "lucide-react";
+import { useT } from "@/lib/i18n";
 
 interface MarketplaceCategoryDef {
   id: string;
@@ -60,6 +61,7 @@ const DIFFICULTY_COLOR: Record<string, string> = {
 export default function WorkflowsMarketplacePage() {
   const { data: session, status } = useSession();
   const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+  const { t } = useT();
 
   const [workflows, setWorkflows] = useState<MarketplaceWorkflow[]>([]);
   const [categories, setCategories] = useState<MarketplaceCategoryDef[]>([]);
@@ -150,14 +152,14 @@ export default function WorkflowsMarketplacePage() {
       if (j.already_installed) {
         setToast({
           kind: "warn",
-          msg: `« ${j.name} » est déjà installé côté n8n.`,
+          msg: t("workflows.marketplace.toastAlreadyInstalled", { name: j.name }),
         });
       } else {
         setToast({
           kind: "ok",
           msg: w.credentials_required.length > 0
-            ? `« ${j.name} » installé (désactivé). Configurez les credentials avant d'activer.`
-            : `« ${j.name} » installé (désactivé). Activez-le depuis /workflows quand vous êtes prêt.`,
+            ? t("workflows.marketplace.toastInstalledNeedsCreds", { name: j.name })
+            : t("workflows.marketplace.toastInstalled", { name: j.name }),
         });
       }
       await reload();
@@ -169,7 +171,7 @@ export default function WorkflowsMarketplacePage() {
   };
 
   if (status === "loading") {
-    return <div className="p-6 text-sm text-muted">Chargement…</div>;
+    return <div className="p-6 text-sm text-muted">{t("common.loading")}</div>;
   }
 
   if (!isAdmin) {
@@ -177,10 +179,8 @@ export default function WorkflowsMarketplacePage() {
       <div className="p-6 max-w-3xl mx-auto">
         <div className="rounded-lg border border-border bg-card p-8 text-center">
           <ShieldAlert size={32} className="mx-auto text-muted mb-3" />
-          <h1 className="text-lg font-semibold mb-1">Accès réservé</h1>
-          <p className="text-sm text-muted">
-            La marketplace de workflows est accessible aux administrateurs uniquement.
-          </p>
+          <h1 className="text-lg font-semibold mb-1">{t("common.accessReserved")}</h1>
+          <p className="text-sm text-muted">{t("common.accessReservedAdmin")}</p>
         </div>
       </div>
     );
@@ -194,26 +194,20 @@ export default function WorkflowsMarketplacePage() {
             <Workflow size={20} />
           </div>
           <div>
-            <h1 className="text-xl font-semibold">Marketplace workflows n8n</h1>
-            <p className="text-sm text-muted">
-              Workflows pré-écrits, prêts à importer en 1 clic. Idéal pour
-              automatiser les tâches récurrentes (relances factures, alertes
-              SLA, snapshots, healthcheck…).
-            </p>
+            <h1 className="text-xl font-semibold">{t("workflows.marketplace.title")}</h1>
+            <p className="text-sm text-muted">{t("workflows.marketplace.subtitle")}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-xs text-muted text-right hidden sm:block">
-            <div>{counts.total} disponibles</div>
-            <div>
-              {counts.installed} installés · {counts.active} actifs
-            </div>
+            <div>{t("workflows.marketplace.countAvailable", { count: counts.total })}</div>
+            <div>{t("workflows.marketplace.countInstalled", { installed: counts.installed, active: counts.active })}</div>
           </div>
           <button
             onClick={reload}
             disabled={loading}
             className="p-2 rounded hover:bg-muted/20 text-muted hover:text-foreground transition-default"
-            title="Rafraîchir"
+            title={t("common.refresh")}
           >
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
           </button>
@@ -256,7 +250,7 @@ export default function WorkflowsMarketplacePage() {
           />
           <input
             type="text"
-            placeholder="Rechercher un workflow (impayés, GLPI, snapshot…)"
+            placeholder={t("workflows.marketplace.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 rounded-md bg-card border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -272,7 +266,7 @@ export default function WorkflowsMarketplacePage() {
                 : "bg-muted/15 text-muted hover:bg-muted/25")
             }
           >
-            Tout
+            {t("workflows.marketplace.categoryAll")}
           </button>
           {categories.map((c) => (
             <button
@@ -294,10 +288,10 @@ export default function WorkflowsMarketplacePage() {
 
       {/* Grid */}
       {loading ? (
-        <div className="text-center text-sm text-muted py-12">Chargement…</div>
+        <div className="text-center text-sm text-muted py-12">{t("common.loading")}</div>
       ) : filtered.length === 0 ? (
         <div className="text-center text-sm text-muted py-12">
-          Aucun workflow trouvé. Essaie un autre filtre.
+          {t("workflows.marketplace.empty")}
         </div>
       ) : (
         <section>
@@ -345,8 +339,7 @@ export default function WorkflowsMarketplacePage() {
                     <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1 mb-2 flex items-start gap-1">
                       <KeyRound size={11} className="shrink-0 mt-0.5" />
                       <span>
-                        Credentials requis :{" "}
-                        {w.credentials_required.join(", ")}
+                        {t("workflows.marketplace.credsRequired", { list: w.credentials_required.join(", ") })}
                       </span>
                     </div>
                   )}
@@ -368,7 +361,9 @@ export default function WorkflowsMarketplacePage() {
                         className="px-2.5 py-1 text-xs rounded-md bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-default flex items-center gap-1"
                       >
                         <CheckCircle2 size={12} />
-                        {w.active ? "Actif" : "Installé"}
+                        {w.active
+                          ? t("workflows.marketplace.active")
+                          : t("workflows.marketplace.installed")}
                         <ExternalLink size={10} className="opacity-60" />
                       </a>
                     ) : (
@@ -382,7 +377,9 @@ export default function WorkflowsMarketplacePage() {
                         ) : (
                           <Plus size={12} />
                         )}
-                        {isInstalling ? "Installation…" : "Installer"}
+                        {isInstalling
+                          ? t("workflows.marketplace.installing")
+                          : t("workflows.marketplace.install")}
                       </button>
                     )}
                   </div>
@@ -394,9 +391,7 @@ export default function WorkflowsMarketplacePage() {
       )}
 
       <p className="text-[11px] text-muted mt-6 text-center">
-        Les workflows sont importés <strong>désactivés</strong> par sécurité —
-        configurez les credentials nécessaires côté n8n puis activez-les
-        depuis l&apos;onglet Workflows.
+        {t("workflows.marketplace.footerNote")}
       </p>
     </div>
   );

@@ -19,6 +19,7 @@
  */
 import { useEffect, useState } from "react";
 import { AlertTriangle, ExternalLink, Check } from "lucide-react";
+import { useT } from "@/lib/i18n";
 
 interface Status {
   must_change: boolean;
@@ -37,6 +38,7 @@ export function PasswordChangeBanner() {
   const [dismissing, setDismissing] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [locallyDismissed, setLocallyDismissed] = useState(false);
+  const { t } = useT();
 
   // Read le dismiss local au mount (avant de fetcher l'état serveur)
   useEffect(() => {
@@ -104,10 +106,8 @@ export function PasswordChangeBanner() {
       <div className="max-w-6xl mx-auto flex items-center gap-3 flex-wrap">
         <AlertTriangle size={16} className="shrink-0 text-amber-400" />
         <div className="text-sm flex-1 min-w-[260px]">
-          <strong>Mot de passe par défaut détecté.</strong>{" "}
-          {hasOpened
-            ? "Une fois changé dans la fenêtre Authentik, clique « J'ai changé »."
-            : "Change-le dès maintenant pour sécuriser ton compte."}
+          <strong>{t("passwordBanner.detected")}</strong>{" "}
+          {hasOpened ? t("passwordBanner.afterOpen") : t("passwordBanner.cta")}
         </div>
         <div className="flex items-center gap-2">
           {!hasOpened && (
@@ -117,7 +117,7 @@ export function PasswordChangeBanner() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-500 text-amber-950 text-xs font-medium hover:bg-amber-400 transition-default disabled:opacity-40"
             >
               <ExternalLink size={12} />
-              Changer maintenant
+              {t("passwordBanner.changeNow")}
             </button>
           )}
           {hasOpened && (
@@ -127,7 +127,7 @@ export function PasswordChangeBanner() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-medium hover:opacity-90 transition-default disabled:opacity-40"
             >
               <Check size={12} />
-              {dismissing ? "..." : "J'ai changé"}
+              {dismissing ? "..." : t("passwordBanner.iChanged")}
             </button>
           )}
         </div>
