@@ -3,6 +3,7 @@ import { PagePlaceholder } from "@/components/PagePlaceholder";
 import { CustomInstructionsCard } from "@/components/CustomInstructionsCard";
 import { BrandingCard } from "@/components/BrandingCard";
 import { SeedDemoCard } from "@/components/SeedDemoCard";
+import { LanguageCard } from "@/components/LanguageCard";
 
 export default function SettingsPage() {
   return (
@@ -12,6 +13,7 @@ export default function SettingsPage() {
       description="Personnalisation des assistants, branding, intégrations."
     >
       <div className="space-y-4">
+        <LanguageCard />
         <CustomInstructionsCard />
         <BrandingCard />
         <SeedDemoCard />

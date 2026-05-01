@@ -10,6 +10,7 @@
 import {
   Workflow, ExternalLink, Power, RefreshCw, AlertCircle, Tag, Zap,
   Play, CheckCircle2, XCircle, Clock, ChevronDown, ChevronRight,
+  KeyRound,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -23,6 +24,10 @@ interface N8nWorkflow {
   tags?: { id: string; name: string }[];
   nodes?: { type: string; name: string }[];
   triggerCount?: number;
+  // Enrichissement marketplace : si le workflow vient d'un template,
+  // liste des credentials externes que l'admin doit configurer dans n8n.
+  credentials_required?: string[];
+  marketplace_file?: string | null;
 }
 
 /** URL publique de n8n. Calculée dynamiquement en fonction du host
@@ -267,6 +272,41 @@ export function WorkflowsManager() {
           )}
         </div>
       ) : workflows && workflows.length > 0 ? (
+        <>
+          {/* Banner global : alerte si N workflows actifs ont des creds requis
+              non configurés. On utilise la liste `credentials_required` du
+              catalogue marketplace ; on ne peut pas vérifier si l'admin a
+              VRAIMENT créé les creds côté n8n (info pas exposée par l'API
+              workflows), donc on alerte tant qu'au moins un workflow concerné
+              est actif — l'admin clique pour aller sur la page n8n credentials. */}
+          {(() => {
+            const needCreds = workflows.filter(
+              (w) => w.active && (w.credentials_required?.length || 0) > 0,
+            );
+            if (needCreds.length === 0 || !isAdmin) return null;
+            return (
+              <div className="mb-4 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm px-3 py-2.5 flex items-start gap-2">
+                <KeyRound size={14} className="shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <strong>Credentials à configurer.</strong>{" "}
+                  {needCreds.length} workflow{needCreds.length > 1 ? "s" : ""} actif{needCreds.length > 1 ? "s" : ""}{" "}
+                  attend{needCreds.length === 1 ? "" : "ent"} encore{" "}
+                  des credentials externes pour fonctionner :{" "}
+                  {Array.from(new Set(needCreds.flatMap((w) => w.credentials_required || []))).join(", ")}.
+                </div>
+                <a
+                  href="/api/sso/n8n?to=/home/credentials"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-amber-500 text-amber-950 hover:bg-amber-400 transition-default font-medium"
+                >
+                  <ExternalLink size={11} />
+                  Configurer dans n8n
+                </a>
+              </div>
+            );
+          })()}
+
         <div className="rounded-lg border border-border bg-card divide-y divide-border">
           {workflows.map((w) => (
             <div
@@ -359,6 +399,7 @@ export function WorkflowsManager() {
             </div>
           ))}
         </div>
+        </>
       ) : null}
 
       <div className="mt-6 rounded-lg bg-muted/5 border border-border p-4">

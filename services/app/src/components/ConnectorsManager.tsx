@@ -481,7 +481,7 @@ function ActiveRow({
       <div className="flex items-center gap-1">
         <button
           onClick={onSync}
-          title="Sync now"
+          title="Synchroniser maintenant"
           className="p-2 rounded hover:bg-muted/30 text-muted hover:text-foreground transition-default"
         >
           <RefreshCw size={14} />

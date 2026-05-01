@@ -1363,24 +1363,8 @@ def setup_portainer_admin(env: dict[str, str], host: str = "") -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Uptime Kuma : compte admin via Socket.IO (1er user à l'install)
-# ---------------------------------------------------------------------------
-def setup_uptime_kuma_admin(env: dict[str, str], host: str = "") -> dict[str, Any]:
-    """Uptime Kuma utilise Socket.IO (pas REST) pour le setup, pas trivial.
-    Pour le POC : on note que c'est manuel. À l'utilisateur de créer le compte
-    au 1er accès avec les mêmes credentials.
-    """
-    return {
-        "ok": True,
-        "created": False,
-        "note": "à créer manuellement au 1er accès (Socket.IO setup, pas d'API REST)",
-        "credentials_to_use": {
-            "username": env.get("ADMIN_USERNAME", ""),
-            "password": "(celui du wizard)",
-        },
-    }
-
-
+# (Uptime Kuma : retiré du produit BoxIA — remplacé par Prometheus +
+# Grafana + /system page + workflow healthcheck. Cf. memory/n8n_marketplace.)
 # ---------------------------------------------------------------------------
 # Dify : provisioning du custom tool "AI Box Agents" (sidecar LangGraph)
 # ---------------------------------------------------------------------------
@@ -1582,5 +1566,4 @@ def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
         "ak_management": setup_authentik_management(env),
         "n8n":         setup_n8n_owner(env, host),
         "portainer":   setup_portainer_admin(env, host),
-        "uptime_kuma": setup_uptime_kuma_admin(env, host),
     }
