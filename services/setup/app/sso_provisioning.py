@@ -1301,21 +1301,42 @@ def setup_n8n_owner(env: dict[str, str], host: str = "") -> dict[str, Any]:
                         "ok": True, "created": True, "via": base,
                         "n8n_password_persisted": True,
                     }
-                # 400 = password too weak (n8n) → on retry avec un mdp renforcé
-                # si on n'avait pas N8N_PASSWORD (cas où ADMIN_PASSWORD passé).
-                if r.status_code == 400 and "password" in r.text.lower():
-                    new_pwd = _n8n_strong_password(24)
-                    payload["password"] = new_pwd
-                    r2 = c.post(f"{base}/rest/owner/setup", json=payload)
-                    if r2.status_code in (200, 201):
-                        env["N8N_PASSWORD"] = new_pwd
+                # 400 a 2 sens distincts côté n8n :
+                #   a) "password too weak" → on retry avec un mdp renforcé.
+                #   b) "Instance owner already setup" → idempotent OK
+                #      (cas ré-exécution de provision_all après un crash).
+                if r.status_code == 400:
+                    body_lower = r.text.lower()
+                    if "already" in body_lower or "instance owner" in body_lower:
                         return {
-                            "ok": True, "created": True, "via": base,
-                            "note": "password renforcé après 400",
-                            "n8n_password_persisted": True,
+                            "ok": True, "created": False,
+                            "note": "déjà initialisé (400)", "via": base,
                         }
-                    last_err = f"retry status={r2.status_code} body={r2.text[:150]}"
-                    continue
+                    if "password" in body_lower:
+                        new_pwd = _n8n_strong_password(24)
+                        payload["password"] = new_pwd
+                        r2 = c.post(f"{base}/rest/owner/setup", json=payload)
+                        if r2.status_code in (200, 201):
+                            env["N8N_PASSWORD"] = new_pwd
+                            return {
+                                "ok": True, "created": True, "via": base,
+                                "note": "password renforcé après 400",
+                                "n8n_password_persisted": True,
+                            }
+                        # Le retry peut aussi tomber sur "already setup" si
+                        # la 1re requête a abouti côté DB mais renvoyé 400
+                        # (race rare mais observée en multi-replicas).
+                        if r2.status_code == 400 and (
+                            "already" in r2.text.lower()
+                            or "instance owner" in r2.text.lower()
+                        ):
+                            return {
+                                "ok": True, "created": False,
+                                "note": "déjà initialisé après retry password",
+                                "via": base,
+                            }
+                        last_err = f"retry status={r2.status_code} body={r2.text[:150]}"
+                        continue
                 if r.status_code in (403, 409):
                     return {"ok": True, "created": False, "note": "déjà initialisé", "via": base}
                 last_err = f"status={r.status_code} body={r.text[:150]}"
@@ -1330,14 +1351,25 @@ def setup_n8n_owner(env: dict[str, str], host: str = "") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 def setup_portainer_admin(env: dict[str, str], host: str = "") -> dict[str, Any]:
     """Crée le compte admin Portainer via /api/users/admin/init.
-    Idempotent : 409 si déjà initialisé.
+
+    Portainer N'EST PAS dans la stack BoxIA core (cf. install.sh — il était
+    présent dans la stack héritée /srv/anythingllm/ uniquement). Pour un
+    client TPE/PME, la gestion Docker est invisible : tout passe par
+    aibox-app /system. Cette fonction reste pour rétro-compat sur xefia
+    qui a encore un Portainer démarré, mais elle skip silencieusement si
+    aucun container Portainer n'est joignable.
+
+    Idempotent : 409 si déjà initialisé. Skip propre si pas déployé.
     """
     payload = {
         "Username": env.get("ADMIN_USERNAME", "admin"),
         "Password": env.get("ADMIN_PASSWORD", ""),
     }
     if len(payload["Password"]) < 12:
-        return {"ok": False, "error": "Portainer exige un mdp ≥ 12 caractères"}
+        return {
+            "ok": True, "skipped": "portainer_password_too_short",
+            "note": "Portainer exige un mdp ≥ 12 chars (default password = 18 OK)",
+        }
 
     candidates = [
         "https://portainer:9443",
@@ -1359,6 +1391,11 @@ def setup_portainer_admin(env: dict[str, str], host: str = "") -> dict[str, Any]
         except Exception as e:
             last_err = str(e)
             continue
+    # Aucune URL n'a répondu (Portainer pas dans la stack) → skip propre
+    # plutôt qu'erreur. Le wizard ne doit pas déclarer le déploiement
+    # comme failed pour un service optionnel non déployé.
+    if "Connection refused" in last_err or "Name or service not known" in last_err:
+        return {"ok": True, "skipped": "portainer_not_deployed", "via": last_err}
     return {"ok": False, "error": last_err}
 
 

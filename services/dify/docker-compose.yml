@@ -95,6 +95,13 @@ services:
       APP_API_URL: ""
       APP_WEB_URL: ""
       FILES_URL: ""
+      # SSO seamless aibox-app → Dify : autorise aibox-app à POSTer
+      # /console/api/login depuis son origin LAN. Sans ça, le browser
+      # bloque le preflight CORS. `*` est OK ici car la box est LAN-only
+      # (pas exposée publiquement) ; en prod multi-tenant, restreindre
+      # à l'origin précis (ex: https://app.client.fr).
+      CONSOLE_CORS_ALLOW_ORIGINS: "*"
+      WEB_API_CORS_ALLOW_ORIGINS: "*"
       MIGRATION_ENABLED: "true"
       DB_USERNAME: postgres
       DB_PASSWORD: ${PG_DIFY_PASSWORD}

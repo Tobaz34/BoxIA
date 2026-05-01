@@ -78,6 +78,22 @@ def gen_secret(length: int = 32) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+def gen_strong_password(length: int = 24) -> str:
+    """Mot de passe fort avec garanties pour les services exigeants (n8n,
+    GLPI, Portainer) : ≥ 1 majuscule, ≥ 1 minuscule, ≥ 1 chiffre, ≥ 1 spécial.
+    Préfixe « Aa1! » puis remplit avec aléatoire, puis mélange les caractères.
+    """
+    if length < 8:
+        length = 8
+    fixed = "Aa1!"
+    rest_len = length - len(fixed)
+    rest_alphabet = string.ascii_letters + string.digits + "!#$%*+-=?@_"
+    rest = "".join(secrets.choice(rest_alphabet) for _ in range(rest_len))
+    chars = list(fixed + rest)
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
 # ---- Routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
@@ -198,6 +214,22 @@ async def configure(payload: WizardSubmit):
     # Dify 1.x : plugin daemon a besoin de 2 secrets partagés avec dify-api
     dify_plugin_key = gen_secret(50)
     dify_inner_key = gen_secret(50)
+    # Sidecars & connecteurs : auto-générées (jamais saisies par le client).
+    # Cf. memory/product_appliance_principle.md — zéro intervention humaine.
+    # Si on les omet, aibox-agents/mem0/connecteurs ne démarrent pas (les
+    # composes les exigent comme variables required, donc compose lève une
+    # erreur à `up`).
+    agents_api_key = gen_secret(48)
+    mem0_api_key = gen_secret(48)
+    fec_tool_api_key = gen_secret(48)
+    pennylane_tool_api_key = gen_secret(48)
+    glpi_tool_api_key = gen_secret(48)
+    odoo_tool_api_key = gen_secret(48)
+    text2sql_tool_api_key = gen_secret(48)
+    # n8n exige un mdp fort (8+ chars + 1 maj + 1 chiffre). gen_secret n'a
+    # pas cette garantie, on génère donc un mdp dédié. setup_n8n_owner sait
+    # le re-générer si besoin (rétry sur 400 password too weak).
+    n8n_password = gen_strong_password(24)
 
     # Échappe les caractères spéciaux pour bash (.env est sourcé par scripts shell)
     def shell_escape(s: str) -> str:
@@ -246,6 +278,22 @@ async def configure(payload: WizardSubmit):
         f"DIFY_PLUGIN_DAEMON_KEY={dify_plugin_key}",
         f"DIFY_INNER_API_KEY={dify_inner_key}",
         f"QDRANT_API_KEY={qdrant_key}",
+        # Sidecars & connecteurs — auto-générés ci-dessus
+        f"AGENTS_API_KEY={agents_api_key}",
+        f"MEM0_API_KEY={mem0_api_key}",
+        f"FEC_TOOL_API_KEY={fec_tool_api_key}",
+        f"PENNYLANE_TOOL_API_KEY={pennylane_tool_api_key}",
+        f"GLPI_TOOL_API_KEY={glpi_tool_api_key}",
+        f"ODOO_TOOL_API_KEY={odoo_tool_api_key}",
+        f"TEXT2SQL_TOOL_API_KEY={text2sql_tool_api_key}",
+        f"N8N_PASSWORD={shell_escape(n8n_password)}",
+        # URLs sidecars en network_mode: host (constants, pas de secret)
+        "INFERENCE_BACKEND=ollama",
+        "CHECKPOINTER_MODE=postgres",
+        "MEM0_BASE_URL=http://127.0.0.1:8087",
+        "AGENTS_BASE_URL=http://127.0.0.1:8085",
+        "PENNYLANE_TOOL_URL=http://127.0.0.1:8090",
+        "FEC_TOOL_URL=http://127.0.0.1:8091",
         "QDRANT_VERSION=v1.13.4",
         "DIFY_VERSION=1.10.1",
         "AUTHENTIK_VERSION=2025.10.0",

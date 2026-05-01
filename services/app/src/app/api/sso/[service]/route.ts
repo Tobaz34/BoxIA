@@ -193,28 +193,25 @@ export async function GET(
   const redirectUrl = `${serviceBase}${redirectPath}`;
   const payload = cfg.buildPayload(adminEmail, adminPwd);
 
-  // Stratégie POST cross-origin sans CORS preflight :
-  // - JSON payload via fetch DÉCLENCHE preflight (Content-Type:application/json
-  //   = non-simple) → CORS bloque si le service cible n'autorise pas notre
-  //   origin. Or Dify/n8n n'autorisent pas les origins externes par défaut.
-  // - Form-urlencoded via <form> HTML POST natif = "simple request", PAS de
-  //   preflight. Le browser POST tel quel et les Set-Cookie sont reçus.
+  // Stratégie POST cross-origin :
   //
-  // Solution : Dify accepte form-urlencoded sur /console/api/login ? OUI
-  // (Flask parse les 2 formats). Idem n8n.
-  // Mais il y a une autre subtilité : le navigateur va NAVIGUER vers la
-  // response du form POST (donc afficher du JSON brut côté Dify ou erreur
-  // n8n). Solution : target="_self" + onload du form qui redirect via JS
-  // après que la response soit chargée.
+  // Dify >= 1.10 accepte UNIQUEMENT application/json sur /console/api/login
+  // (form-urlencoded → 400 "Missing required parameter in the JSON body").
+  // → on doit utiliser fetch() avec Content-Type: application/json.
   //
-  // Approche finale plus robuste : <iframe hidden> qui contient le form,
-  // submit dedans, onload (réussi → cookies posés) → redirect parent
-  // window vers la console.
+  // JSON déclenche un preflight CORS. Pour qu'il passe :
+  // - Dify a CONSOLE_CORS_ALLOW_ORIGINS=* dans son compose (cf. services/dify/docker-compose.yml).
+  // - n8n par défaut accepte * (configurable via N8N_PUSH_BACKEND si besoin).
+  // - Grafana et Portainer acceptent form-urlencoded (cas plus simple).
+  //
+  // Le code essaie fetch JSON d'abord, fallback form-urlencoded si payloadType=form.
   const formFields = Object.entries(payload)
     .map(([k, v]) =>
       `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(String(v))}">`,
     )
     .join("\n        ");
+
+  const useJson = cfg.payloadType === "json";
 
   const html = `<!doctype html>
 <html lang="fr">
@@ -239,10 +236,7 @@ export async function GET(
     <div class="hint">Auto-login admin via aibox-app.</div>
   </div>
 
-  <!-- iframe cachée qui héberge le form de login.
-       Le form est en form-urlencoded (pas de preflight CORS).
-       Le service répond avec Set-Cookie qui est posé sur SON domaine,
-       puis on navigue la fenêtre principale vers redirectUrl. -->
+  <!-- Fallback form (utilisé pour Grafana/Portainer en form-urlencoded). -->
   <iframe name="ssoFrame" id="ssoFrame"></iframe>
   <form id="ssoForm" action="${escapeHtml(loginUrl)}" method="POST"
         target="ssoFrame" enctype="application/x-www-form-urlencoded">
@@ -251,25 +245,22 @@ export async function GET(
 
 <script>
 (function() {
+  const useJson = ${JSON.stringify(useJson)};
+  const loginUrl = ${JSON.stringify(loginUrl)};
+  const payload = ${JSON.stringify(payload)};
   const redirectUrl = ${JSON.stringify(redirectUrl)};
-  const frame = document.getElementById("ssoFrame");
-  const form = document.getElementById("ssoForm");
   let done = false;
 
-  // Quand l'iframe finit de charger, le login a abouti (succès ou échec).
-  // On redirect quoi qu'il arrive — si échec, l'utilisateur verra la page
-  // de login du service.
-  frame.addEventListener("load", function() {
+  function finish() {
     if (done) return;
     done = true;
-    // Petit délai pour laisser au browser le temps d'écrire les cookies
     setTimeout(function() {
       window.location.replace(redirectUrl);
     }, 200);
-  });
+  }
 
-  // Fallback : si le form ne réussit pas à se soumettre dans les 5s,
-  // on redirect quand même vers la console (au pire l'admin verra le login).
+  // Fallback timer : si rien n'aboutit en 5s, on redirect quand même
+  // (au pire l'admin verra le login normal du service).
   setTimeout(function() {
     if (done) return;
     document.querySelector(".spinner").style.display = "none";
@@ -278,8 +269,29 @@ export async function GET(
       '<a href="' + redirectUrl + '">Ouvrir ${escapeHtml(service)} maintenant</a>';
   }, 5000);
 
-  // Submit du form
-  form.submit();
+  if (useJson) {
+    // fetch JSON cross-origin avec credentials:include pour que les
+    // Set-Cookie de la response soient écrits sur l'origin du service.
+    fetch(loginUrl, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function(r) {
+      // 200 = login OK. Cookies posés. On redirect.
+      // Autre code = login KO → redirect quand même, l'utilisateur verra
+      // le formulaire de login du service.
+      finish();
+    }).catch(function(e) {
+      // CORS bloqué ou réseau down → retombe sur le form classique.
+      console.warn("SSO fetch failed:", e);
+      document.getElementById("ssoForm").submit();
+    });
+  } else {
+    // Form path : iframe load = login soumis (succès ou échec).
+    document.getElementById("ssoFrame").addEventListener("load", finish);
+    document.getElementById("ssoForm").submit();
+  }
 })();
 </script>
 </body>
