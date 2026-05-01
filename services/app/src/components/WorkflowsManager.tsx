@@ -178,15 +178,28 @@ export function WorkflowsManager() {
           >
             <RefreshCw size={16} />
           </button>
-          <a
-            href={n8nUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-default"
-          >
-            <ExternalLink size={14} />
-            Ouvrir n8n
-          </a>
+          {isAdmin ? (
+            <a
+              href="/api/sso/n8n"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-default"
+              title="Ouvre n8n avec auto-login (vous êtes admin)"
+            >
+              <ExternalLink size={14} />
+              Ouvrir n8n
+            </a>
+          ) : (
+            <a
+              href={n8nUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-default"
+            >
+              <ExternalLink size={14} />
+              Ouvrir n8n
+            </a>
+          )}
         </div>
       </header>
 
@@ -233,10 +246,11 @@ export function WorkflowsManager() {
               {importing ? "Import en cours…" : "📦 Importer les templates par défaut"}
             </button>
             <a
-              href={n8nUrl}
+              href={isAdmin ? "/api/sso/n8n" : n8nUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-muted/15 transition-default"
+              title={isAdmin ? "Ouvre n8n avec auto-login (admin)" : undefined}
             >
               <ExternalLink size={14} />
               Ouvrir n8n pour créer le mien
@@ -321,7 +335,11 @@ export function WorkflowsManager() {
                   {expanded === w.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </button>
                 <a
-                  href={`${n8nUrl}/workflow/${w.id}`}
+                  href={
+                    isAdmin
+                      ? `/api/sso/n8n?to=${encodeURIComponent("/workflow/" + w.id)}`
+                      : `${n8nUrl}/workflow/${w.id}`
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-2 rounded text-muted hover:text-foreground hover:bg-muted/30 transition-default"
