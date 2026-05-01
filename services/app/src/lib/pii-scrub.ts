@@ -27,21 +27,20 @@ interface ScrubPattern {
   replacement: string;
 }
 
+// ORDRE CRITIQUE : du plus spécifique au moins spécifique. Sinon, un
+// pattern court (ex: phone_fr `0[1-9](\s\d{2}){4}`) peut grignoter
+// l'intérieur d'un pattern long (ex: IBAN `FR76 3000 6000 0112 3456…`)
+// avant qu'il ne soit reconnu, et tout le reste s'écroule.
+//
+// Bug observé pendant le sprint Standard 2026 : sans ce ré-ordonnancement,
+// l'IBAN « FR76 3000 6000 0112 3456 7890 189 » se faisait découper en
+// « FR76 3000 6000 [PHONE]90 189 » à cause du « 0112 3456 7890 18 » qui
+// satisfait phone_fr.
 const PATTERNS: ScrubPattern[] = [
   {
-    name: "email",
-    re: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
-    replacement: "[EMAIL_REDACTED]",
-  },
-  {
-    name: "phone_fr",
-    // 06 12 34 56 78, 06.12.34.56.78, +33 6 12 34 56 78, 06-12-34-56-78
-    re: /(?:\+33[\s.-]?|0)[1-9](?:[\s.-]?\d{2}){4}/g,
-    replacement: "[PHONE_REDACTED]",
-  },
-  {
     name: "iban",
-    // IBAN FR (27 chars) — focus FR mais le pattern matche large
+    // IBAN FR (27 chars) — focus FR mais le pattern matche large.
+    // PASSE EN PREMIER pour que phone_fr ne grignote pas son intérieur.
     re: /\b[A-Z]{2}\d{2}[\s]?(?:[A-Z0-9]{4}[\s]?){4,7}[A-Z0-9]{1,4}\b/g,
     replacement: "[IBAN_REDACTED]",
   },
@@ -52,6 +51,13 @@ const PATTERNS: ScrubPattern[] = [
     replacement: "[CARD_REDACTED]",
   },
   {
+    name: "nir_fr",
+    // NIR français (sécu sociale) 13 chars + 2 clé : 1 84 04 75 116 003 42
+    // Très spécifique (commence par 1 ou 2) → avant siret qui est juste 14 chiffres.
+    re: /\b[12]\s?\d{2}\s?\d{2}\s?\d{2,3}\s?\d{3}\s?\d{3}\s?\d{2}\b/g,
+    replacement: "[NIR_REDACTED]",
+  },
+  {
     name: "siret",
     // SIRET 14 chiffres (peut avoir des espaces aux 3-3-3-5)
     re: /\b\d{3}[\s]?\d{3}[\s]?\d{3}[\s]?\d{5}\b/g,
@@ -59,15 +65,24 @@ const PATTERNS: ScrubPattern[] = [
   },
   {
     name: "siren",
-    // SIREN 9 chiffres (3-3-3 ou 9)
+    // SIREN 9 chiffres (3-3-3 ou 9). Après siret pour éviter de matcher
+    // les 9 premiers chars d'un SIRET (le `(?!\d)` est censé l'éviter
+    // mais belt-and-suspenders).
     re: /\b\d{3}[\s]?\d{3}[\s]?\d{3}\b(?!\d)/g,
     replacement: "[SIREN_REDACTED]",
   },
   {
-    name: "nir_fr",
-    // NIR français (sécu sociale) 13 chars + 2 clé : 1 84 04 75 116 003 42
-    re: /\b[12]\s?\d{2}\s?\d{2}\s?\d{2,3}\s?\d{3}\s?\d{3}\s?\d{2}\b/g,
-    replacement: "[NIR_REDACTED]",
+    name: "email",
+    re: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    replacement: "[EMAIL_REDACTED]",
+  },
+  {
+    name: "phone_fr",
+    // EN DERNIER : pattern le plus permissif, peut grignoter l'intérieur
+    // d'autres patterns numériques. Tous les autres passent avant.
+    // 06 12 34 56 78, 06.12.34.56.78, +33 6 12 34 56 78, 06-12-34-56-78
+    re: /(?:\+33[\s.-]?|0)[1-9](?:[\s.-]?\d{2}){4}/g,
+    replacement: "[PHONE_REDACTED]",
   },
 ];
 
