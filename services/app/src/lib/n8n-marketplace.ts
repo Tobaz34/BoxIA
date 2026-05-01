@@ -62,6 +62,20 @@ export interface MarketplaceWorkflow {
   boxia_services: string[];
   /** Si true, importé + activé automatiquement au first-run. */
   default_active: boolean;
+  /**
+   * Origine du template :
+   *   - "boxia"     : workflow officiel BoxIA (taillé pour notre stack,
+   *                   credentials_required minimal, prêt à activer)
+   *   - "community" : importé depuis n8n.io community (top par totalViews,
+   *                   demande config manuelle des creds avant activation)
+   */
+  source?: "boxia" | "community";
+  /** URL n8n.io originale (community uniquement). */
+  source_url?: string;
+  /** Nb de vues n8n.io (community uniquement, pour tri par popularité). */
+  total_views?: number;
+  /** Auteur n8n.io (community uniquement). */
+  author?: string;
 }
 
 export interface MarketplaceCatalog {
@@ -100,7 +114,7 @@ export async function readCatalog(): Promise<MarketplaceCatalog> {
           icon: typeof c.icon === "string" ? c.icon : "📦",
         }))
     : [];
-  const workflows: MarketplaceWorkflow[] = Array.isArray(raw.workflows)
+  const officialWorkflows: MarketplaceWorkflow[] = Array.isArray(raw.workflows)
     ? raw.workflows
         .filter(
           (w): w is Record<string, unknown> =>
@@ -130,18 +144,76 @@ export async function readCatalog(): Promise<MarketplaceCatalog> {
               )
             : [],
           default_active: w.default_active === true,
+          source: "boxia" as const,
         }))
     : [];
-  return { version: raw.version || 1, categories, workflows };
+
+  // Charge aussi le catalogue communautaire si présent (templates fetchés
+  // depuis n8n.io via scripts/fetch_n8n_community_templates.py).
+  const community = await readCommunityCatalog();
+
+  return {
+    version: raw.version || 1,
+    categories,
+    workflows: [...officialWorkflows, ...community],
+  };
+}
+
+interface RawCommunityIndex {
+  workflows?: unknown[];
+}
+
+/** Lit `community/_index.json` (catalogue n8n.io) si présent. */
+async function readCommunityCatalog(): Promise<MarketplaceWorkflow[]> {
+  const indexFile = path.join(MARKETPLACE_DIR, "community", "_index.json");
+  try {
+    const content = await fs.readFile(indexFile, "utf-8");
+    const raw = JSON.parse(content) as RawCommunityIndex;
+    if (!Array.isArray(raw.workflows)) return [];
+    return raw.workflows
+      .filter(
+        (w): w is Record<string, unknown> =>
+          !!w &&
+          typeof w === "object" &&
+          typeof (w as { file?: unknown }).file === "string",
+      )
+      .map((w) => ({
+        file: String(w.file),
+        name: typeof w.name === "string" ? w.name : "(community)",
+        icon: typeof w.icon === "string" ? w.icon : "⚙️",
+        category: (typeof w.category === "string"
+          ? w.category
+          : "misc") as MarketplaceCategory,
+        description: typeof w.description === "string" ? w.description : "",
+        difficulty: (typeof w.difficulty === "string"
+          ? w.difficulty
+          : "moyen") as MarketplaceDifficulty,
+        credentials_required: Array.isArray(w.credentials_required)
+          ? (w.credentials_required as unknown[]).filter(
+              (x): x is string => typeof x === "string",
+            )
+          : [],
+        boxia_services: [],
+        default_active: false,
+        source: "community" as const,
+        source_url: typeof w.source_url === "string" ? w.source_url : undefined,
+        total_views: typeof w.total_views === "number" ? w.total_views : 0,
+        author: typeof w.author === "string" ? w.author : undefined,
+      }));
+  } catch {
+    // Catalogue communautaire absent ou illisible → on retourne juste les officiels.
+    return [];
+  }
 }
 
 /** Charge le JSON complet d'un workflow marketplace, identifié par `file`. */
 export async function readWorkflowTemplate(
   file: string,
 ): Promise<Record<string, unknown>> {
-  // Garde-fou path traversal : on n'accepte qu'un nom de fichier plat,
-  // pas de sous-dossier ni de "../".
-  if (!/^[a-zA-Z0-9_\-.]+\.json$/.test(file)) {
+  // Garde-fou path traversal : on accepte un nom de fichier plat OU
+  // `community/<id>.json` (catalogue communautaire). Pas de "../" ni
+  // de chemin absolu autorisé.
+  if (!/^(community\/)?[a-zA-Z0-9_\-.]+\.json$/.test(file) || file.includes("..")) {
     throw new Error(`Nom de fichier invalide : ${file}`);
   }
   const full = path.join(MARKETPLACE_DIR, file);

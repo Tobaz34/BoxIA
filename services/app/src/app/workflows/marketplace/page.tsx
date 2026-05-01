@@ -44,7 +44,13 @@ interface MarketplaceWorkflow {
   installed: boolean;
   workflow_id: string | null;
   active: boolean;
+  source?: "boxia" | "community";
+  source_url?: string;
+  total_views?: number;
+  author?: string;
 }
+
+type SourceTab = "boxia" | "community";
 
 const DIFFICULTY_LABEL: Record<string, string> = {
   facile: "Facile",
@@ -69,6 +75,7 @@ export default function WorkflowsMarketplacePage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
+  const [activeSource, setActiveSource] = useState<SourceTab>("boxia");
   const [installingFile, setInstallingFile] = useState<string | null>(null);
   const [toast, setToast] = useState<
     { kind: "ok" | "warn" | "err"; msg: string } | null
@@ -110,7 +117,9 @@ export default function WorkflowsMarketplacePage() {
   }, [toast]);
 
   const filtered = useMemo(() => {
-    let list = workflows;
+    // Filtre 1 : onglet de source (boxia / community). Les workflows
+    // sans `source` sont assimilés à "boxia" (rétro-compat).
+    let list = workflows.filter((w) => (w.source || "boxia") === activeSource);
     if (activeCategory !== "all") {
       list = list.filter((w) => w.category === activeCategory);
     }
@@ -123,14 +132,28 @@ export default function WorkflowsMarketplacePage() {
           w.category.toLowerCase().includes(q),
       );
     }
+    // Communauté : tri par popularité décroissante (totalViews) ; officiels :
+    // ordre du catalogue (déjà ordonné).
+    if (activeSource === "community") {
+      list = [...list].sort(
+        (a, b) => (b.total_views || 0) - (a.total_views || 0),
+      );
+    }
     return list;
-  }, [workflows, activeCategory, search]);
+  }, [workflows, activeCategory, activeSource, search]);
 
   const counts = useMemo(() => {
-    const total = workflows.length;
+    const boxia = workflows.filter((w) => (w.source || "boxia") === "boxia");
+    const community = workflows.filter((w) => w.source === "community");
     const installed = workflows.filter((w) => w.installed).length;
     const active = workflows.filter((w) => w.installed && w.active).length;
-    return { total, installed, active };
+    return {
+      total: workflows.length,
+      boxia_count: boxia.length,
+      community_count: community.length,
+      installed,
+      active,
+    };
   }, [workflows]);
 
   const installWorkflow = async (w: MarketplaceWorkflow) => {
@@ -241,6 +264,58 @@ export default function WorkflowsMarketplacePage() {
         </div>
       )}
 
+      {/* Onglets : Officiels BoxIA / Communauté n8n.io */}
+      <div className="mb-4 border-b border-border flex items-center gap-1">
+        <button
+          onClick={() => setActiveSource("boxia")}
+          className={
+            "px-4 py-2 text-sm font-medium transition-default border-b-2 -mb-px " +
+            (activeSource === "boxia"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted hover:text-foreground")
+          }
+        >
+          ⭐ Officiels BoxIA
+          <span className="ml-2 text-xs opacity-60">({counts.boxia_count})</span>
+        </button>
+        <button
+          onClick={() => setActiveSource("community")}
+          className={
+            "px-4 py-2 text-sm font-medium transition-default border-b-2 -mb-px " +
+            (activeSource === "community"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted hover:text-foreground")
+          }
+        >
+          🌐 Communauté n8n
+          <span className="ml-2 text-xs opacity-60">({counts.community_count})</span>
+        </button>
+        <div className="ml-auto pr-2">
+          <a
+            href="https://n8n.io/workflows/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1"
+          >
+            Voir 9000+ sur n8n.io <ExternalLink size={10} />
+          </a>
+        </div>
+      </div>
+
+      {/* Bandeau d'aide : seulement sur l'onglet communauté pour clarifier
+          que ces workflows demandent souvent une config manuelle. */}
+      {activeSource === "community" && (
+        <div className="mb-4 rounded-md bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs px-3 py-2 flex items-start gap-2">
+          <AlertCircle size={12} className="shrink-0 mt-0.5" />
+          <span>
+            Ces workflows viennent de la communauté n8n.io (top par popularité).
+            Ils peuvent demander des credentials externes (OpenAI, Slack, Telegram…)
+            à configurer dans n8n après installation. <strong>Toujours installés
+            désactivés</strong> par sécurité.
+          </span>
+        </div>
+      )}
+
       {/* Filtres */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -334,6 +409,26 @@ export default function WorkflowsMarketplacePage() {
                   <p className="text-xs text-muted line-clamp-3 flex-1 mb-2">
                     {w.description || "—"}
                   </p>
+
+                  {/* Métadonnées community : auteur + popularité + lien source */}
+                  {w.source === "community" && (w.author || w.total_views) && (
+                    <div className="text-[10px] text-muted mb-2 flex items-center gap-2 flex-wrap">
+                      {w.author && <span>par <strong>{w.author}</strong></span>}
+                      {w.total_views ? (
+                        <span>· {w.total_views.toLocaleString("fr-FR")} vues</span>
+                      ) : null}
+                      {w.source_url && (
+                        <a
+                          href={w.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:underline inline-flex items-center gap-0.5"
+                        >
+                          source <ExternalLink size={9} />
+                        </a>
+                      )}
+                    </div>
+                  )}
 
                   {w.credentials_required.length > 0 && (
                     <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1 mb-2 flex items-start gap-1">

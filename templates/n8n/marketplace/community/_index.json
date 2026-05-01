@@ -1,0 +1,710 @@
+{
+  "version": 1,
+  "source": "n8n.io community templates API",
+  "fetched_at": "2026-05-01T14:39:33.606740+00:00",
+  "count": 39,
+  "workflows": [
+    {
+      "file": "community/6270.json",
+      "n8n_template_id": 6270,
+      "name": "Build your first AI agent",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #6270",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/6270/",
+      "total_views": 912291,
+      "author": "lucaspeyrin"
+    },
+    {
+      "file": "community/14372.json",
+      "n8n_template_id": 14372,
+      "name": "Create daily historical AI videos with Gemini, fal.ai, Telegram and YouTube",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #14372",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14372/",
+      "total_views": 381,
+      "author": "itan"
+    },
+    {
+      "file": "community/8642.json",
+      "n8n_template_id": 8642,
+      "name": "Generate AI viral videos with VEO 3 and upload to TikTok",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #8642",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/8642/",
+      "total_views": 236537,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/14805.json",
+      "n8n_template_id": 14805,
+      "name": "Generate a daily multi-asset market report with TwelveData, Groq and Google Sheets",
+      "icon": "🤖",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14805",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14805/",
+      "total_views": 260,
+      "author": "weblineindia"
+    },
+    {
+      "file": "community/14824.json",
+      "n8n_template_id": 14824,
+      "name": "Book and manage appointments with Google Calendar and Gmail",
+      "icon": "✉️",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14824",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14824/",
+      "total_views": 257,
+      "author": "rnair1996"
+    },
+    {
+      "file": "community/14827.json",
+      "n8n_template_id": 14827,
+      "name": "Build an OpenAI RAG system with document upload, semantic search and caching",
+      "icon": "🤖",
+      "category": "rag",
+      "description": "Template communautaire n8n.io #14827",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14827/",
+      "total_views": 248,
+      "author": "rnair1996"
+    },
+    {
+      "file": "community/13526.json",
+      "n8n_template_id": 13526,
+      "name": "Generate AI videos and carousels with Blotato for Instagram and TikTok",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #13526",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/13526/",
+      "total_views": 13367,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/8527.json",
+      "n8n_template_id": 8527,
+      "name": "Learn n8n basics in 3 easy steps ✨",
+      "icon": "✉️",
+      "category": "email",
+      "description": "Template communautaire n8n.io #8527",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/8527/",
+      "total_views": 208973,
+      "author": "miha"
+    },
+    {
+      "file": "community/14808.json",
+      "n8n_template_id": 14808,
+      "name": "Compare gold and equity performance with Google Sheets, Groq, QuickChart and Gmail",
+      "icon": "🤖",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14808",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14808/",
+      "total_views": 206,
+      "author": "weblineindia"
+    },
+    {
+      "file": "community/5338.json",
+      "n8n_template_id": 5338,
+      "name": "Generate AI viral videos with Seedance and upload to TikTok, YouTube & Instagram",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #5338",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/5338/",
+      "total_views": 317624,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/8270.json",
+      "n8n_template_id": 8270,
+      "name": "Generate AI viral videos with NanoBanana & VEO3, shared on socials via Blotato",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #8270",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/8270/",
+      "total_views": 184149,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/8237.json",
+      "n8n_template_id": 8237,
+      "name": "Personal life manager with Telegram, Google services & voice-enabled AI",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #8237",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/8237/",
+      "total_views": 174551,
+      "author": "derekcheungsa"
+    },
+    {
+      "file": "community/14216.json",
+      "n8n_template_id": 14216,
+      "name": "Generate concert ticket PDFs with QR codes using PDF Generator API",
+      "icon": "✉️",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14216",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14216/",
+      "total_views": 1516,
+      "author": "marian"
+    },
+    {
+      "file": "community/14020.json",
+      "n8n_template_id": 14020,
+      "name": "Build an AI confidence coach for women with GPT-4o, Google Sheets and Gmail",
+      "icon": "🧠",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14020",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14020/",
+      "total_views": 2992,
+      "author": "rahul08"
+    },
+    {
+      "file": "community/14825.json",
+      "n8n_template_id": 14825,
+      "name": "Turn top Instagram reels into 7 new scripts using Apify, OpenAI, Claude and Google Sheets",
+      "icon": "🧠",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #14825",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14825/",
+      "total_views": 157,
+      "author": "jonasfrewert"
+    },
+    {
+      "file": "community/14008.json",
+      "n8n_template_id": 14008,
+      "name": "OpenClaw Clone 🦞: Expandable Personal Telegram AI Agent Template",
+      "icon": "🤖",
+      "category": "rag",
+      "description": "Template communautaire n8n.io #14008",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14008/",
+      "total_views": 2819,
+      "author": "n3witalia"
+    },
+    {
+      "file": "community/4846.json",
+      "n8n_template_id": 4846,
+      "name": "Generate AI videos with Google Veo3, save to Google Drive and upload to YouTube",
+      "icon": "🧠",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #4846",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/4846/",
+      "total_views": 258887,
+      "author": "n3witalia"
+    },
+    {
+      "file": "community/10000.json",
+      "n8n_template_id": 10000,
+      "name": "Auto-create TikTok videos with VEED.io AI avatars, ElevenLabs & GPT-4",
+      "icon": "🧠",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #10000",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/10000/",
+      "total_views": 82838,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/5035.json",
+      "n8n_template_id": 5035,
+      "name": "Generate & auto-post AI videos to social media with Veo3 and Blotato",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #5035",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/5035/",
+      "total_views": 242194,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/3066.json",
+      "n8n_template_id": 3066,
+      "name": "✨🤖Automate Multi-Platform Social Media Content Creation with AI",
+      "icon": "🤖",
+      "category": "email",
+      "description": "Template communautaire n8n.io #3066",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/3066/",
+      "total_views": 395417,
+      "author": "joe"
+    },
+    {
+      "file": "community/14802.json",
+      "n8n_template_id": 14802,
+      "name": "Send personalized birthday and anniversary emails with Google Sheets, Gemini, and Gmail",
+      "icon": "✉️",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14802",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14802/",
+      "total_views": 132,
+      "author": "weblineindia"
+    },
+    {
+      "file": "community/14167.json",
+      "n8n_template_id": 14167,
+      "name": "Scrape, search and browse the web with a Firecrawl AI agent webhook",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #14167",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14167/",
+      "total_views": 1418,
+      "author": "firecrawl"
+    },
+    {
+      "file": "community/14267.json",
+      "n8n_template_id": 14267,
+      "name": "Send AI job application auto-replies with Gmail, OpenAI GPT-4o and SMTP",
+      "icon": "🤖",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14267",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14267/",
+      "total_views": 1102,
+      "author": "al-noman"
+    },
+    {
+      "file": "community/13270.json",
+      "n8n_template_id": 13270,
+      "name": "Use skills In n8n agent node",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #13270",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/13270/",
+      "total_views": 9043,
+      "author": "liammcgarrigle"
+    },
+    {
+      "file": "community/14171.json",
+      "n8n_template_id": 14171,
+      "name": "Create children’s AI story videos from drawings and auto-publish to YouTube with Blotato",
+      "icon": "🪝",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #14171",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14171/",
+      "total_views": 1066,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/5110.json",
+      "n8n_template_id": 5110,
+      "name": "Create & upload AI-generated ASMR YouTube Shorts with Seedance, Fal AI, and GPT-4",
+      "icon": "🤖",
+      "category": "email",
+      "description": "Template communautaire n8n.io #5110",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/5110/",
+      "total_views": 197356,
+      "author": "bilsimaging"
+    },
+    {
+      "file": "community/7639.json",
+      "n8n_template_id": 7639,
+      "name": "Talk to your Google Sheets using ChatGPT-5",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #7639",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/7639/",
+      "total_views": 120910,
+      "author": "rbreen"
+    },
+    {
+      "file": "community/14545.json",
+      "n8n_template_id": 14545,
+      "name": "Detect, Analyze and Humanize 🕵️‍♂️🔎 AI-generated text using Rephrasy",
+      "icon": "👥",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #14545",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14545/",
+      "total_views": 108,
+      "author": "n3witalia"
+    },
+    {
+      "file": "community/4827.json",
+      "n8n_template_id": 4827,
+      "name": "AI-powered WhatsApp chatbot for text, voice, images, and PDF with RAG",
+      "icon": "🤖",
+      "category": "rag",
+      "description": "Template communautaire n8n.io #4827",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/4827/",
+      "total_views": 198668,
+      "author": "thomasgpt"
+    },
+    {
+      "file": "community/11204.json",
+      "n8n_template_id": 11204,
+      "name": "Create AI viral videos using NanoBanana 2 PRO & VEO3.1 and publish via Blotato",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #11204",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/11204/",
+      "total_views": 40623,
+      "author": "drfiras"
+    },
+    {
+      "file": "community/14666.json",
+      "n8n_template_id": 14666,
+      "name": "Manage Google Calendar and Gmail from Telegram with a Claude AI assistant",
+      "icon": "🤖",
+      "category": "email",
+      "description": "Template communautaire n8n.io #14666",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14666/",
+      "total_views": 215,
+      "author": "ghufranbarcha"
+    },
+    {
+      "file": "community/3442.json",
+      "n8n_template_id": 3442,
+      "name": "Fully automated AI video generation & multi-platform publishing",
+      "icon": "🧠",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #3442",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/3442/",
+      "total_views": 273388,
+      "author": "carlosgracia"
+    },
+    {
+      "file": "community/13717.json",
+      "n8n_template_id": 13717,
+      "name": "Run a self-hosted multi-channel AI assistant with Claude, Gemini and Gmail",
+      "icon": "🤖",
+      "category": "rag",
+      "description": "Template communautaire n8n.io #13717",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/13717/",
+      "total_views": 3540,
+      "author": "shabbirun"
+    },
+    {
+      "file": "community/14829.json",
+      "n8n_template_id": 14829,
+      "name": "Send 10-day post-purchase WhatsApp offers with Odoo, OpenAI and Evolution API",
+      "icon": "🧠",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #14829",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14829/",
+      "total_views": 101,
+      "author": "khaledyasser01"
+    },
+    {
+      "file": "community/4968.json",
+      "n8n_template_id": 4968,
+      "name": "Automated LinkedIn content creation with GPT-4 and DALL-E for scheduled posts",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #4968",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/4968/",
+      "total_views": 159211,
+      "author": "agenticvibe"
+    },
+    {
+      "file": "community/1954.json",
+      "n8n_template_id": 1954,
+      "name": "AI agent chat",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #1954",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/1954/",
+      "total_views": 1483327,
+      "author": "n8n-team"
+    },
+    {
+      "file": "community/2465.json",
+      "n8n_template_id": 2465,
+      "name": "Building your first WhatsApp chatbot",
+      "icon": "🤖",
+      "category": "rag",
+      "description": "Template communautaire n8n.io #2465",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/2465/",
+      "total_views": 489759,
+      "author": "jimleuk"
+    },
+    {
+      "file": "community/14316.json",
+      "n8n_template_id": 14316,
+      "name": "Ads Factory: Generate Unlimited Length UGC AI Video Pipeline",
+      "icon": "🤖",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #14316",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/14316/",
+      "total_views": 293,
+      "author": "ghufranbarcha"
+    },
+    {
+      "file": "community/5170.json",
+      "n8n_template_id": 5170,
+      "name": "🎓 Learn JSON basics with an interactive step-by-step tutorial for beginners",
+      "icon": "⚙️",
+      "category": "misc",
+      "description": "Template communautaire n8n.io #5170",
+      "difficulty": "moyen",
+      "credentials_required": [
+        "Voir nodes du workflow"
+      ],
+      "boxia_services": [],
+      "default_active": false,
+      "source": "n8n.io community",
+      "source_url": "https://n8n.io/workflows/5170/",
+      "total_views": 136743,
+      "author": "lucaspeyrin"
+    }
+  ]
+}
