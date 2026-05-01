@@ -61,3 +61,6 @@ build/
 
 # Memory (interne Claude, pas du repo produit)
 memory/
+
+# Research / audits externes (gros clones de repos tiers, hors scope BoxIA)
+research/

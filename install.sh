@@ -42,10 +42,36 @@ gen_secret() {
 }
 
 # ---- Fonction de déploiement (réutilisable depuis CLI ou wizard web) -------
+prepare_app_data_dirs() {
+  # Permissions des dossiers persistants montés en bind dans les containers.
+  #
+  # Problème : par défaut, `mkdir /srv/ai-stack/data` (lancé en root via sudo
+  # ou par dpkg) crée un dossier owned root:root, mais le container
+  # aibox-app tourne en uid 1001 (user "nextjs", Dockerfile services/app).
+  # Sans chown, tout `fs.writeFile("/data/...")` rate avec EACCES dès qu'on
+  # essaie d'enregistrer un agent custom, audit log, état connecteurs, etc.
+  #
+  # Idempotent : à relancer à chaque deploy_stack ne pose pas de problème
+  # (chown -R sur ~10 KB de JSON, négligeable).
+  c_blue "  → Préparation des dossiers persistants /data..."
+  if command -v sudo >/dev/null 2>&1; then
+    sudo mkdir -p /srv/ai-stack/data
+    sudo chown -R 1001:1001 /srv/ai-stack/data
+    sudo chmod 755 /srv/ai-stack/data
+  else
+    # Mode root direct (wizard web tourne déjà en root)
+    mkdir -p /srv/ai-stack/data
+    chown -R 1001:1001 /srv/ai-stack/data 2>/dev/null || true
+    chmod 755 /srv/ai-stack/data 2>/dev/null || true
+  fi
+}
+
 deploy_stack() {
   local env_file="${SCRIPT_DIR}/.env"
   [[ -f "$env_file" ]] || { c_red "  ✗ .env manquant à $env_file"; return 1; }
   set -a; . "$env_file"; set +a
+
+  prepare_app_data_dirs
 
   c_blue "  → Création du réseau Docker partagé..."
   docker network create "${NETWORK_NAME:-aibox_net}" 2>/dev/null || true

@@ -12,12 +12,13 @@
  * V1 : édition des 4 agents existants. V2 : création d'agents custom.
  */
 import {
-  Bot, AlertCircle, Settings as SettingsIcon, Save, Check, X,
+  Bot, Settings as SettingsIcon, Save, Check, X,
   ShieldCheck, Briefcase, User, Plus, Minus, RotateCcw,
-  MessageSquare,
+  MessageSquare, Cpu, Loader2, Sparkles, Trash2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import { CreateAgentWizard } from "@/components/CreateAgentWizard";
 
 interface AgentMeta {
   slug: string;
@@ -27,6 +28,7 @@ interface AgentMeta {
   available: boolean;
   isDefault?: boolean;
   allowedRoles?: string[];
+  custom?: boolean;
 }
 
 interface AgentDetail {
@@ -42,6 +44,20 @@ interface AgentDetail {
   opening_statement: string;
   suggested_questions: string[];
   model: { provider: string; name: string; mode: string } | null;
+  max_tokens: number | null;
+  custom?: boolean;
+}
+
+interface ModelOption {
+  name: string;
+  size: number;
+  size_label: string;
+  family?: string;
+  parameter_size?: string;
+  quantization?: string;
+  chat: boolean;
+  installed: boolean;
+  registered: boolean;
 }
 
 const ROLE_BADGE: Record<string, { label: string; cls: string; icon: typeof Bot }> = {
@@ -61,6 +77,50 @@ export function AgentsManager() {
   const [editing, setEditing] = useState<AgentDetail | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [savingState, setSavingState] = useState<"idle" | "saving" | "saved">("idle");
+  const [showWizard, setShowWizard] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Modèles dispos (Ollama installés + statut Dify). Chargé une fois à
+  // l'ouverture du modal. Si la requête échoue, on retombe sur un dropdown
+  // vide et on affiche juste le modèle actuel.
+  const [models, setModels] = useState<ModelOption[] | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+
+  // Tracking du modèle initial pour confirmer le switch
+  const [initialModelName, setInitialModelName] = useState<string | null>(null);
+  const [initialMaxTokens, setInitialMaxTokens] = useState<number | null>(null);
+
+  function refreshAgents() {
+    setLoading(true);
+    fetch("/api/agents", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : Promise.reject(r.status))
+      .then((j) => setAgents(j.agents))
+      .catch(() => setError("Impossible de charger les agents"))
+      .finally(() => setLoading(false));
+  }
+
+  async function handleDelete() {
+    if (!editing || !editing.custom) return;
+    if (!confirm(`Supprimer définitivement l'assistant "${editing.name}" ?\n\nL'app Dify et toutes ses conversations seront supprimées. Cette action est irréversible.`)) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agents/${editing.slug}`, { method: "DELETE" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setError(j.message || j.error || `Erreur ${r.status}`);
+        return;
+      }
+      setEditing(null);
+      refreshAgents();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   useEffect(() => {
     fetch("/api/agents", { cache: "no-store" })
@@ -85,7 +145,19 @@ export function AgentsManager() {
         setError(j.message || j.error || `Erreur ${r.status}`);
         return;
       }
-      setEditing(await r.json());
+      const detail: AgentDetail = await r.json();
+      setEditing(detail);
+      setInitialModelName(detail.model?.name || null);
+      setInitialMaxTokens(detail.max_tokens);
+      // Chargement liste modèles en parallèle (ne bloque pas l'édition)
+      if (!models) {
+        setModelsLoading(true);
+        fetch("/api/agents/models", { cache: "no-store" })
+          .then((rr) => rr.ok ? rr.json() : Promise.reject(rr.status))
+          .then((j) => setModels(j.models))
+          .catch(() => {/* tolérable, on garde le sélecteur vide */})
+          .finally(() => setModelsLoading(false));
+      }
     } finally {
       setEditLoading(false);
     }
@@ -96,22 +168,40 @@ export function AgentsManager() {
     setSavingState("saving");
     setError(null);
     try {
+      const currentModel = editing.model?.name || null;
+      const modelChanged = currentModel && currentModel !== initialModelName;
+      const tokensChanged = editing.max_tokens !== initialMaxTokens;
+
+      const payload: Record<string, unknown> = {
+        pre_prompt: editing.pre_prompt,
+        opening_statement: editing.opening_statement,
+        suggested_questions: editing.suggested_questions.filter((q) => q.trim()),
+      };
+      if (modelChanged && currentModel) payload.model_name = currentModel;
+      if (tokensChanged && editing.max_tokens !== null) {
+        payload.max_tokens = editing.max_tokens;
+      }
+
       const r = await fetch(`/api/agents/${editing.slug}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pre_prompt: editing.pre_prompt,
-          opening_statement: editing.opening_statement,
-          suggested_questions: editing.suggested_questions.filter((q) => q.trim()),
-        }),
+        body: JSON.stringify(payload),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        setError(j.details || j.error || `Erreur ${r.status}`);
+        setError(j.details || j.message || j.error || `Erreur ${r.status}`);
         setSavingState("idle");
         return;
       }
       setSavingState("saved");
+      // Si on a changé le modèle, on rafraîchit la liste pour mettre à jour
+      // le statut "registered" du nouveau modèle.
+      if (modelChanged) {
+        fetch("/api/agents/models", { cache: "no-store" })
+          .then((rr) => rr.ok ? rr.json() : null)
+          .then((j) => { if (j) setModels(j.models); })
+          .catch(() => {/* ignore */});
+      }
       setTimeout(() => {
         setSavingState("idle");
         setEditing(null);
@@ -137,6 +227,15 @@ export function AgentsManager() {
             </p>
           </div>
         </div>
+        {isAdmin && (
+          <button
+            onClick={() => setShowWizard(true)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-accent text-accent-foreground text-sm font-medium hover:opacity-90"
+            title="Créer un nouvel assistant"
+          >
+            <Sparkles size={14} /> Nouvel assistant
+          </button>
+        )}
       </header>
 
       {!isAdmin && (
@@ -171,6 +270,11 @@ export function AgentsManager() {
                     {a.isDefault && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
                         défaut
+                      </span>
+                    )}
+                    {a.custom && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent inline-flex items-center gap-0.5">
+                        <Sparkles size={9} /> custom
                       </span>
                     )}
                   </div>
@@ -261,10 +365,115 @@ export function AgentsManager() {
             </div>
 
             <div className="p-5 space-y-4">
-              {/* Modèle (read-only) */}
+              {/* Modèle (éditable) */}
               {editing.model && (
-                <div className="text-xs text-muted bg-muted/10 rounded px-3 py-2">
-                  <strong>Modèle :</strong> {editing.model.name} ({editing.model.mode})
+                <div className="rounded-md border border-border bg-muted/5 p-3 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-medium">
+                    <Cpu size={14} className="text-primary" />
+                    Modèle IA
+                    {modelsLoading && <Loader2 size={12} className="animate-spin text-muted" />}
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-muted block mb-1">
+                      Choisir le modèle
+                    </label>
+                    <select
+                      value={editing.model.name}
+                      onChange={(e) =>
+                        setEditing(editing.model
+                          ? { ...editing, model: { ...editing.model, name: e.target.value } }
+                          : editing)
+                      }
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                    >
+                      {/* Si le modèle actuel n'est pas dans la liste (cas
+                         marginal : provider Dify ≠ ollama, ou modèle
+                         désinstallé), on l'inclut quand même pour ne pas
+                         casser l'affichage. */}
+                      {!models?.some((m) => m.name === editing.model?.name) && editing.model && (
+                        <option value={editing.model.name}>
+                          {editing.model.name} (actuel)
+                        </option>
+                      )}
+                      {(models || [])
+                        .filter((m) => m.chat && m.installed)
+                        .map((m) => (
+                          <option key={m.name} value={m.name}>
+                            {m.name}
+                            {m.parameter_size ? ` · ${m.parameter_size}` : ""}
+                            {m.size_label !== "—" ? ` · ${m.size_label}` : ""}
+                            {!m.registered ? " (sera enregistré)" : ""}
+                          </option>
+                        ))}
+                    </select>
+                    <p className="text-[10px] text-muted mt-1">
+                      Plus le modèle est gros (paramètres), plus il est précis
+                      mais plus il consomme de VRAM et de temps. Repère :
+                      <strong> 7B</strong> = rapide quotidien (~5 Go),
+                      <strong> 14B</strong> = calculs métier précis (~9 Go),
+                      <strong> 32B</strong> = expertise pointue (~19 Go, lent).
+                    </p>
+                  </div>
+
+                  {/* Vue des autres modèles dispo, info-only */}
+                  {models && models.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border/50">
+                      {models.filter((m) => m.installed && m.chat).slice(0, 8).map((m) => {
+                        const isCurrent = m.name === editing.model?.name;
+                        return (
+                          <span
+                            key={m.name}
+                            title={
+                              `${m.size_label}` +
+                              (m.parameter_size ? ` · ${m.parameter_size}` : "") +
+                              (m.quantization ? ` · ${m.quantization}` : "") +
+                              (!m.registered ? " · non enregistré dans Dify" : "")
+                            }
+                            className={
+                              "text-[10px] px-1.5 py-0.5 rounded font-mono " +
+                              (isCurrent
+                                ? "bg-primary/20 text-primary"
+                                : m.registered
+                                  ? "bg-muted/15 text-muted"
+                                  : "bg-yellow-500/10 text-yellow-400")
+                            }
+                          >
+                            {m.name}
+                            {!m.registered && " ⚠"}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* max_tokens slider */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] text-muted">
+                        Longueur max de réponse (max_tokens)
+                      </label>
+                      <span className="text-[11px] font-mono text-foreground">
+                        {editing.max_tokens ?? "—"}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={512}
+                      max={8192}
+                      step={256}
+                      value={editing.max_tokens ?? 1024}
+                      onChange={(e) =>
+                        setEditing({ ...editing, max_tokens: Number(e.target.value) })
+                      }
+                      className="w-full accent-primary"
+                    />
+                    <div className="flex justify-between text-[10px] text-muted mt-0.5">
+                      <span>512 (court)</span>
+                      <span>2048 (équilibré)</span>
+                      <span>8192 (long)</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -361,13 +570,26 @@ export function AgentsManager() {
             </div>
 
             <div className="sticky bottom-0 bg-card border-t border-border px-5 py-3 flex items-center justify-between gap-2">
-              <button
-                onClick={() => openEdit(editing.slug)}
-                title="Recharger depuis Dify"
-                className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1"
-              >
-                <RotateCcw size={12} /> Recharger
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => openEdit(editing.slug)}
+                  title="Recharger depuis Dify"
+                  className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1"
+                >
+                  <RotateCcw size={12} /> Recharger
+                </button>
+                {editing.custom && (
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    title="Supprimer cet assistant custom"
+                    className="text-xs text-red-400 hover:text-red-300 inline-flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    {deleting ? "Suppression…" : "Supprimer"}
+                  </button>
+                )}
+              </div>
               <div className="flex gap-2">
                 <button
                   onClick={() => setEditing(null)}
@@ -389,6 +611,19 @@ export function AgentsManager() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Wizard de création d'un agent custom */}
+      {showWizard && (
+        <CreateAgentWizard
+          onClose={() => setShowWizard(false)}
+          onCreated={(slug) => {
+            setShowWizard(false);
+            refreshAgents();
+            // Ouvre directement la modale d'édition pour l'agent créé
+            setTimeout(() => openEdit(slug), 600);
+          }}
+        />
       )}
     </div>
   );

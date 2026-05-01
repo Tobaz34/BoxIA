@@ -8,7 +8,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import {
-  getAgentKey, defaultAgentSlug, AGENTS, canUseAgent, roleFromGroups,
+  getAgentKeyAsync, defaultAgentSlug, AGENTS, resolveAgentMeta, roleFromGroups,
 } from "@/lib/agents";
 import { isUserActive } from "@/lib/user-cache";
 
@@ -48,7 +48,9 @@ export async function requireDifyContext(
       { status: 503 },
     );
   }
-  if (!AGENTS[slug]) {
+  // Résout le meta (builtin OU custom)
+  const meta = await resolveAgentMeta(slug);
+  if (!meta) {
     return NextResponse.json(
       { error: "unknown_agent", agent: slug },
       { status: 400 },
@@ -58,24 +60,24 @@ export async function requireDifyContext(
   // Vérifie le rôle vs allowedRoles de l'agent
   const groups = (session.user as { groups?: string[] }).groups || [];
   const role = roleFromGroups(groups);
-  if (!canUseAgent(slug, role)) {
+  if (meta.allowedRoles.length > 0 && !meta.allowedRoles.includes(role)) {
     return NextResponse.json(
       {
         error: "agent_forbidden",
         message:
-          `L'agent « ${AGENTS[slug].name} » est réservé aux ` +
-          (AGENTS[slug].allowedRoles?.join(" / ") || "rôles autorisés") + ".",
+          `L'agent « ${meta.name} » est réservé aux ` +
+          meta.allowedRoles.join(" / ") + ".",
         agent: slug,
       },
       { status: 403 },
     );
   }
 
-  const key = getAgentKey(slug);
+  const key = await getAgentKeyAsync(slug);
   if (!key) {
     return NextResponse.json(
       { error: "agent_unavailable",
-        message: `L'agent « ${AGENTS[slug].name} » n'est pas configuré.`,
+        message: `L'agent « ${meta.name} » n'est pas configuré.`,
         agent: slug },
       { status: 503 },
     );

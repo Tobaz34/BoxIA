@@ -9,10 +9,29 @@
 name: aibox-app
 
 services:
+  # Init container : fixe les permissions de /srv/ai-stack/data au boot.
+  # Le container `app` tourne en uid 1001 (user nextjs, Dockerfile services/app)
+  # — sans ce step, un /data fraîchement créé en root rejette tout fs.writeFile
+  # avec EACCES (custom-agents.json, audit.jsonl, connectors.json, etc).
+  # Tourne en root, fait le chown, et exit 0 → le service `app` démarre ensuite.
+  data-init:
+    image: busybox:1.37
+    container_name: aibox-app-data-init
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command:
+      - "mkdir -p /data && chown -R 1001:1001 /data && chmod 755 /data && echo '[data-init] /data ready (uid=1001)'"
+    volumes:
+      - /srv/ai-stack/data:/data
+    restart: "no"
+
   app:
     build:
       context: .
     container_name: aibox-app
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     # network_mode: host = le container partage le namespace réseau de l'hôte.
     # Avantage : il joint TOUS les services via localhost:<port> et l'IP LAN

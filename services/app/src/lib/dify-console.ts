@@ -136,7 +136,16 @@ export interface DifyAppDetail {
     opening_statement?: string;
     suggested_questions?: string[];
     suggested_questions_after_answer?: { enabled: boolean };
-    model?: { provider: string; name: string; mode: string };
+    model?: {
+      provider: string;
+      name: string;
+      mode: string;
+      completion_params?: {
+        temperature?: number;
+        top_p?: number;
+        max_tokens?: number;
+      };
+    };
   };
 }
 
@@ -151,13 +160,15 @@ export async function getDifyApp(appId: string): Promise<DifyAppDetail | null> {
   }
 }
 
-/** Met à jour le model-config d'une app Dify (pre_prompt, opening, suggestions). */
+/** Met à jour le model-config d'une app Dify (pre_prompt, opening, suggestions, model). */
 export async function updateDifyAppConfig(
   appId: string,
   patch: {
     pre_prompt?: string;
     opening_statement?: string;
     suggested_questions?: string[];
+    model_name?: string;
+    max_tokens?: number;
   },
 ): Promise<{ ok: boolean; error?: string }> {
   // On doit poster le model-config COMPLET (Dify ne fait pas de patch
@@ -174,6 +185,29 @@ export async function updateDifyAppConfig(
   if (patch.pre_prompt !== undefined) mc.pre_prompt = patch.pre_prompt;
   if (patch.opening_statement !== undefined) mc.opening_statement = patch.opening_statement;
   if (patch.suggested_questions !== undefined) mc.suggested_questions = patch.suggested_questions;
+  if (patch.model_name !== undefined) {
+    if (!mc.model) {
+      return { ok: false, error: "no_model_in_config" };
+    }
+    // S'assurer que le modèle est enregistré côté provider Ollama avant
+    // de switch (sinon Dify renvoie dify_upstream_error au runtime).
+    const reg = await ensureOllamaModelRegistered(patch.model_name);
+    if (!reg.ok) {
+      return { ok: false, error: `register_failed: ${reg.error || "unknown"}` };
+    }
+    mc.model.name = patch.model_name;
+    if (!mc.model.provider) mc.model.provider = "langgenius/ollama/ollama";
+    if (!mc.model.mode) mc.model.mode = "chat";
+  }
+  if (patch.max_tokens !== undefined) {
+    if (!mc.model) {
+      return { ok: false, error: "no_model_in_config" };
+    }
+    mc.model.completion_params = {
+      ...(mc.model.completion_params || {}),
+      max_tokens: patch.max_tokens,
+    };
+  }
 
   const r = await consoleFetch(`/console/api/apps/${appId}/model-config`, {
     method: "POST",
@@ -184,6 +218,185 @@ export async function updateDifyAppConfig(
     return { ok: false, error: `status=${r.status} ${text.slice(0, 200)}` };
   }
   return { ok: true };
+}
+
+/** Liste les modèles Ollama enregistrés dans Dify (langgenius/ollama/ollama). */
+export async function listOllamaModelsInDify(): Promise<string[]> {
+  const provider = "langgenius/ollama/ollama";
+  try {
+    const r = await consoleFetch(
+      `/console/api/workspaces/current/model-providers/${provider}/models`,
+    );
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.data || [])
+      .map((m: { model?: string }) => m.model || "")
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Enregistre un modèle Ollama dans Dify si absent (idempotent).
+ *  Sans cette étape, l'app Dify renvoie dify_upstream_error. */
+export async function ensureOllamaModelRegistered(
+  modelName: string,
+): Promise<{ ok: boolean; added: boolean; error?: string }> {
+  const existing = await listOllamaModelsInDify();
+  if (existing.includes(modelName)) {
+    return { ok: true, added: false };
+  }
+  const provider = "langgenius/ollama/ollama";
+  const ollamaUrl = process.env.OLLAMA_INTERNAL_URL || "http://ollama:11434";
+  try {
+    const r = await consoleFetch(
+      `/console/api/workspaces/current/model-providers/${provider}/models/credentials`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          model: modelName,
+          model_type: "llm",
+          credentials: {
+            mode: "chat",
+            model: modelName,
+            context_size: "4096",
+            max_tokens: "4096",
+            base_url: ollamaUrl,
+          },
+        }),
+      },
+    );
+    if (r.status !== 200 && r.status !== 201) {
+      const text = await r.text().catch(() => "");
+      return { ok: false, added: false, error: `status=${r.status} ${text.slice(0, 200)}` };
+    }
+    return { ok: true, added: true };
+  } catch (e) {
+    return { ok: false, added: false, error: (e as Error).message };
+  }
+}
+
+/** Crée une nouvelle app Dify de type "chat" (mode chat).
+ *  Renvoie l'ID de l'app créée ou null. */
+export async function createDifyChatApp(
+  name: string,
+  description: string,
+  icon: string = "🤖",
+): Promise<{ id: string } | null> {
+  try {
+    const r = await consoleFetch(`/console/api/apps`, {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        description: description.slice(0, 200),
+        icon_type: "emoji",
+        icon: icon.slice(0, 4),
+        icon_background: "#FFEAD5",
+        mode: "chat",
+      }),
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      console.warn("[dify-console] createDifyChatApp failed:", r.status, t.slice(0, 200));
+      return null;
+    }
+    const j = await r.json();
+    if (!j.id) return null;
+    return { id: j.id };
+  } catch (e) {
+    console.warn("[dify-console] createDifyChatApp error:", e);
+    return null;
+  }
+}
+
+/** Configure le model-config initial d'une app Dify fraîchement créée. */
+export async function setDifyAppInitialConfig(
+  appId: string,
+  config: {
+    model_name: string;
+    pre_prompt: string;
+    opening_statement: string;
+    suggested_questions: string[];
+    max_tokens?: number;
+  },
+): Promise<{ ok: boolean; error?: string }> {
+  // S'assure que le modèle est enregistré côté provider Ollama
+  const reg = await ensureOllamaModelRegistered(config.model_name);
+  if (!reg.ok) {
+    return { ok: false, error: `register_failed: ${reg.error || "unknown"}` };
+  }
+  const mc = {
+    pre_prompt: config.pre_prompt,
+    prompt_type: "simple",
+    chat_prompt_config: {},
+    completion_prompt_config: {},
+    user_input_form: [],
+    dataset_query_variable: "",
+    more_like_this: { enabled: false },
+    opening_statement: config.opening_statement,
+    suggested_questions: config.suggested_questions,
+    suggested_questions_after_answer: { enabled: true },
+    speech_to_text: { enabled: false },
+    text_to_speech: { enabled: false, voice: "", language: "fr" },
+    retriever_resource: { enabled: true },
+    sensitive_word_avoidance: { enabled: false, type: "", configs: [] },
+    agent_mode: { enabled: false, tools: [] },
+    model: {
+      provider: "langgenius/ollama/ollama",
+      name: config.model_name,
+      mode: "chat",
+      completion_params: {
+        temperature: 0.7,
+        top_p: 1,
+        max_tokens: config.max_tokens || 2048,
+      },
+    },
+    dataset_configs: { retrieval_model: "multiple", top_k: 4 },
+  };
+  const r = await consoleFetch(`/console/api/apps/${appId}/model-config`, {
+    method: "POST",
+    body: JSON.stringify(mc),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    return { ok: false, error: `status=${r.status} ${t.slice(0, 200)}` };
+  }
+  return { ok: true };
+}
+
+/** Génère une App API key pour une app Dify (token Bearer app-...).
+ *  Cette clé est utilisée pour le runtime chat/messaging. */
+export async function createDifyAppApiKey(
+  appId: string,
+): Promise<{ token: string } | null> {
+  try {
+    const r = await consoleFetch(`/console/api/apps/${appId}/api-keys`, {
+      method: "POST",
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      console.warn("[dify-console] createDifyAppApiKey failed:", r.status, t.slice(0, 200));
+      return null;
+    }
+    const j = await r.json();
+    if (!j.token) return null;
+    return { token: j.token };
+  } catch (e) {
+    console.warn("[dify-console] createDifyAppApiKey error:", e);
+    return null;
+  }
+}
+
+/** Supprime une app Dify par son ID. */
+export async function deleteDifyApp(appId: string): Promise<boolean> {
+  try {
+    const r = await consoleFetch(`/console/api/apps/${appId}`, {
+      method: "DELETE",
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Recherche un app par nom (utile pour mapper agent.slug → app.id). */

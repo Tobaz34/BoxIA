@@ -156,11 +156,45 @@ export function roleFromGroups(groups: string[]): AgentRole {
   return "employee";
 }
 
-/** Récupère la clé API d'un agent par slug. Retourne null si indisponible. */
+/** Récupère la clé API d'un agent par slug. Retourne null si indisponible.
+ *  ATTENTION : ne gère que les agents builtin. Pour inclure les agents custom,
+ *  utiliser getAgentKeyAsync(). */
 export function getAgentKey(slug: string): string | null {
   const a = AGENTS[slug];
   if (!a) return null;
   return process.env[a.envVar] || null;
+}
+
+/** Version async qui résout aussi les agents custom (depuis /data/custom-agents.json). */
+export async function getAgentKeyAsync(slug: string): Promise<string | null> {
+  const builtin = getAgentKey(slug);
+  if (builtin) return builtin;
+  // Lazy import pour éviter une dépendance cyclique
+  const { getCustomAgent } = await import("@/lib/custom-agents");
+  const c = await getCustomAgent(slug);
+  return c?.api_key || null;
+}
+
+/** Métadonnées d'un agent (builtin ou custom) résolues async. */
+export async function resolveAgentMeta(slug: string): Promise<{
+  name: string;
+  allowedRoles: AgentRole[];
+  source: "builtin" | "custom";
+} | null> {
+  const builtin = AGENTS[slug];
+  if (builtin) {
+    return {
+      name: builtin.name,
+      allowedRoles: builtin.allowedRoles || [],
+      source: "builtin",
+    };
+  }
+  const { getCustomAgent } = await import("@/lib/custom-agents");
+  const c = await getCustomAgent(slug);
+  if (c) {
+    return { name: c.name, allowedRoles: c.allowedRoles, source: "custom" };
+  }
+  return null;
 }
 
 /** Retourne le slug par défaut (le 1er disponible avec isDefault=true,
