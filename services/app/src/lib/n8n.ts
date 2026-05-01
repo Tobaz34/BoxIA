@@ -185,6 +185,33 @@ export async function executionsStats(
   return { success, error, running, total };
 }
 
+export interface N8nCredential {
+  id: string;
+  name: string;
+  type?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Liste les credentials configurés (lecture seule, sans secrets). */
+export async function listCredentials(): Promise<N8nCredential[]> {
+  try {
+    const r = await n8nFetch("/rest/credentials");
+    if (!r.ok) return [];
+    const j = await r.json();
+    const data = j.data || j;
+    return (Array.isArray(data) ? data : []).map((c: Record<string, unknown>) => ({
+      id: String(c.id),
+      name: String(c.name || "(sans nom)"),
+      type: c.type ? String(c.type) : undefined,
+      createdAt: c.createdAt ? String(c.createdAt) : undefined,
+      updatedAt: c.updatedAt ? String(c.updatedAt) : undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /** Déclenche manuellement un workflow via /rest/workflows/<id>/run.
  *  n8n renvoie un `executionId` qu'on peut suivre via /rest/executions/<id>.
  */

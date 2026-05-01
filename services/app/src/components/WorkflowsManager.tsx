@@ -155,6 +155,9 @@ export function WorkflowsManager() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto pb-12">
+      {/* Section Workflows IA (apps Dify mode=workflow) — compact */}
+      <DifyWorkflowsSection isAdmin={isAdmin} />
+
       <header className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-md bg-primary/15 text-primary flex items-center justify-center">
@@ -370,6 +373,76 @@ export function WorkflowsManager() {
         </div>
       </div>
     </div>
+  );
+}
+
+// =========================================================================
+// Section Workflows IA (apps Dify mode=workflow)
+// =========================================================================
+
+interface DifyWorkflow {
+  slug: string;
+  app_id: string;
+  name: string;
+  description: string;
+  icon: string;
+  icon_background: string;
+  mode: string;
+  installed_at: string;
+}
+
+function DifyWorkflowsSection({ isAdmin }: { isAdmin: boolean }) {
+  const [workflows, setWorkflows] = useState<DifyWorkflow[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/dify/workflows", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : { workflows: [] })
+      .then((j) => setWorkflows(j.workflows || []))
+      .catch(() => setWorkflows([]));
+  }, []);
+
+  if (!workflows || workflows.length === 0) return null;
+
+  return (
+    <section className="mb-8">
+      <h2 className="text-xs font-semibold uppercase tracking-wide mb-2 text-muted">
+        Workflows IA ({workflows.length})
+      </h2>
+      <p className="text-xs text-muted mb-3">
+        Pipelines IA déterministes (résumé de PDF, traduction, transcription…) installés via la marketplace.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {workflows.map((w) => (
+          <div key={w.slug} className="rounded-lg border border-border bg-card p-3 flex items-start gap-3">
+            <div
+              className="w-10 h-10 rounded-md flex items-center justify-center text-xl shrink-0"
+              style={{ background: w.icon_background }}
+            >
+              {w.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-sm truncate">{w.name}</div>
+              <p className="text-xs text-muted line-clamp-2 mt-0.5">{w.description || "—"}</p>
+              <div className="mt-2">
+                {isAdmin ? (
+                  <a
+                    href={`/api/sso/dify?to=${encodeURIComponent("/app/" + w.app_id + "/workflow")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:opacity-90"
+                  >
+                    <ExternalLink size={11} />
+                    Ouvrir l'éditeur
+                  </a>
+                ) : (
+                  <span className="text-[10px] text-muted">Workflow IA installé</span>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

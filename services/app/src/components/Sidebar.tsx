@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Plug,
   Sparkles,
+  Network,
   X,
 } from "lucide-react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
@@ -31,6 +32,7 @@ const adminItems = [
   { href: "/users",              label: "Utilisateurs",  icon: Users },
   { href: "/connectors",         label: "Connecteurs",   icon: Plug },
   { href: "/agents/marketplace", label: "Marketplace",   icon: Sparkles },
+  { href: "/integrations/mcp",   label: "Intégrations MCP", icon: Network },
   { href: "/audit",              label: "Audit",         icon: ScrollText },
   { href: "/system",             label: "État serveur",  icon: Activity },
   { href: "/settings",           label: "Paramètres",    icon: Settings },
