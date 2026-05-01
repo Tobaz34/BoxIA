@@ -29,6 +29,8 @@ export type AuditAction =
   | "rgpd.export"
   | "rgpd.delete_conversations"
   | "rgpd.delete_memory"
+  | "agent.install_template"
+  | "agent.uninstall"
   | "user.invite"
   | "user.role_change"
   | "user.toggle_active"

@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { listAvailableAgents, roleFromGroups } from "@/lib/agents";
+import { listAllAvailableAgents, roleFromGroups } from "@/lib/agents";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,7 @@ export async function GET() {
   }
   const groups = (session.user as { groups?: string[] }).groups || [];
   const role = roleFromGroups(groups);
-  const agents = listAvailableAgents(role);
+  // Fusionne agents statiques (hardcoded) + dynamiques (installés via marketplace)
+  const agents = await listAllAvailableAgents(role);
   return NextResponse.json({ agents, role });
 }

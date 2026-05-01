@@ -118,9 +118,13 @@ export const AGENTS: Record<string, AgentConfig> = {
 };
 
 /** Métadonnées publiques (sans clé API) — sûr à exposer côté client. */
-export type PublicAgentMeta = Omit<AgentConfig, "envVar"> & { available: boolean };
+export type PublicAgentMeta = Omit<AgentConfig, "envVar"> & {
+  available: boolean;
+  /** True si l'agent provient de la marketplace (installé dynamiquement). */
+  installed?: boolean;
+};
 
-/** Liste les agents disponibles (clé env définie) — filtrés par rôle si fourni. */
+/** Liste les agents STATIQUES (hardcodés) — synchrone, sans IO. */
 export function listAvailableAgents(role?: AgentRole | null): PublicAgentMeta[] {
   const items: PublicAgentMeta[] = [];
   for (const a of Object.values(AGENTS)) {
@@ -138,8 +142,49 @@ export function listAvailableAgents(role?: AgentRole | null): PublicAgentMeta[] 
   return items;
 }
 
-/** Vérifie qu'un rôle a le droit d'utiliser un agent. */
-export function canUseAgent(slug: string, role: AgentRole): boolean {
+/** Liste TOUS les agents disponibles : statiques + installés via marketplace.
+ *  Async car lit le fichier JSON. À utiliser dans les API routes. */
+export async function listAllAvailableAgents(role?: AgentRole | null): Promise<PublicAgentMeta[]> {
+  const staticAgents = listAvailableAgents(role);
+  // Lazy import — installed-agents lit le filesystem
+  const { listInstalledAgents } = await import("@/lib/installed-agents");
+  const installed = await listInstalledAgents();
+  const dyn: PublicAgentMeta[] = installed
+    .filter((a) => {
+      if (!a.allowed_roles || a.allowed_roles.length === 0) return true;
+      if (!role) return true;
+      return a.allowed_roles.includes(role);
+    })
+    .map((a) => ({
+      slug: a.slug,
+      name: a.name,
+      icon: a.icon,
+      description: a.description || "Agent installé depuis la marketplace",
+      isDefault: false,
+      vision: false,
+      allowedRoles: a.allowed_roles,
+      installed: true,
+      available: true,
+    }));
+  return [...staticAgents, ...dyn];
+}
+
+/** Vérifie qu'un rôle a le droit d'utiliser un agent (statique ou dynamique). */
+export async function canUseAgent(slug: string, role: AgentRole): Promise<boolean> {
+  const a = AGENTS[slug];
+  if (a) {
+    if (!a.allowedRoles || a.allowedRoles.length === 0) return true;
+    return a.allowedRoles.includes(role);
+  }
+  const { getInstalledAgent } = await import("@/lib/installed-agents");
+  const dyn = await getInstalledAgent(slug);
+  if (!dyn) return false;
+  if (!dyn.allowed_roles || dyn.allowed_roles.length === 0) return true;
+  return dyn.allowed_roles.includes(role);
+}
+
+/** Synchrone : check rôle pour agents statiques uniquement (compat). */
+export function canUseAgentStatic(slug: string, role: AgentRole): boolean {
   const a = AGENTS[slug];
   if (!a) return false;
   if (!a.allowedRoles || a.allowedRoles.length === 0) return true;
@@ -156,11 +201,20 @@ export function roleFromGroups(groups: string[]): AgentRole {
   return "employee";
 }
 
-/** Récupère la clé API d'un agent par slug. Retourne null si indisponible. */
+/** Récupère la clé API d'un agent statique par slug (synchrone). */
 export function getAgentKey(slug: string): string | null {
   const a = AGENTS[slug];
   if (!a) return null;
   return process.env[a.envVar] || null;
+}
+
+/** Récupère la clé API d'un agent — statique OU installé via marketplace. */
+export async function getAgentKeyAny(slug: string): Promise<string | null> {
+  const staticKey = getAgentKey(slug);
+  if (staticKey) return staticKey;
+  const { getInstalledAgent } = await import("@/lib/installed-agents");
+  const dyn = await getInstalledAgent(slug);
+  return dyn?.api_key || null;
 }
 
 /** Retourne le slug par défaut (le 1er disponible avec isDefault=true,
