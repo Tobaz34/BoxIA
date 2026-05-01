@@ -61,6 +61,12 @@ const APP_ACTION_LABEL: Record<string, { label: string; icon: typeof Activity; c
   "rgpd.export":          { label: "Export RGPD",            icon: ShieldCheck, color: "text-primary" },
   "rgpd.delete_conversations":
                           { label: "Suppression conv. user", icon: Trash2,      color: "text-red-400" },
+  "rgpd.delete_memory":   { label: "Suppression mémoire user", icon: Trash2,    color: "text-red-400" },
+  "agent.install_template":  { label: "Assistant installé",     icon: Plug,     color: "text-accent" },
+  "agent.uninstall":         { label: "Assistant désinstallé",  icon: Trash2,   color: "text-yellow-400" },
+  "workflow.install_template":{ label: "Workflow installé",      icon: Plug,    color: "text-accent" },
+  "workflow.run_manual":     { label: "Workflow exécuté",       icon: RotateCcw,color: "text-primary" },
+  "workflow.upload":         { label: "Workflow importé (JSON)", icon: FileText,color: "text-accent" },
   "user.invite":          { label: "Invite user",            icon: UserPlus,    color: "text-accent" },
   "user.role_change":     { label: "Changement de rôle",     icon: Shield,      color: "text-primary" },
   "user.toggle_active":   { label: "Activation/désactivation user", icon: UserMinus, color: "text-yellow-400" },
