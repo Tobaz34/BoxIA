@@ -735,6 +735,43 @@ def _ensure_dataset_api_key(c: httpx.Client, base: str,
         return {"ok": False, "error": str(e)}
 
 
+def _ensure_ollama_model_pulled(model_name: str,
+                                 ollama_url: str = "http://ollama:11434") -> dict[str, Any]:
+    """S'assure que le modèle est physiquement présent dans Ollama.
+
+    Sans ça, Dify pense qu'il a le modèle (ajouté via /models/credentials)
+    mais Ollama ne l'a pas téléchargé → toute inférence renvoie une erreur
+    silencieuse, le concierge reste bloqué sur « Je structure la réponse… ».
+
+    Bug observé sur cycle 2 reset : le volume Ollama survit (4 modèles
+    présents : qwen2.5-coder:7b, qwen2.5:14b, qwen2.5vl:7b, llama-guard3:8b),
+    mais qwen2.5:7b spécifique manque car jamais pull explicitement par
+    le wizard. Ce fix appelle POST /api/pull pour télécharger si absent.
+
+    Idempotent : 200 et stream rapide si déjà présent.
+    """
+    try:
+        # Liste les modèles présents
+        with httpx.Client(timeout=30) as cc:
+            r = cc.get(f"{ollama_url}/api/tags")
+            if r.status_code == 200:
+                tags = r.json().get("models", [])
+                names = {m.get("name", "").split(":")[0]: m.get("name") for m in tags}
+                # Match exact ou prefixe (qwen2.5:7b vs qwen2.5)
+                for n in tags:
+                    if n.get("name") == model_name:
+                        return {"ok": True, "already": True, "model": model_name}
+        # Pull (long — peut prendre 5-10 min sur ADSL si modèle 4-9 GB)
+        with httpx.Client(timeout=900) as cc:
+            r = cc.post(f"{ollama_url}/api/pull",
+                        json={"model": model_name, "stream": False})
+            if r.status_code in (200, 201):
+                return {"ok": True, "pulled": True, "model": model_name}
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
                       ollama_url: str = "http://ollama:11434") -> dict[str, Any]:
     """Ajoute un modèle Ollama (LLM) dans Dify pour le workspace courant.
@@ -743,7 +780,15 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
     Note : l'endpoint qui PERSISTE est /models/credentials (pas /models qui
     renvoie 200 mais ne stocke rien). La validation des creds se fait côté
     plugin (timeout possible si Ollama lent à répondre).
+
+    AVANT d'ajouter dans Dify, on s'assure que le modèle est physiquement
+    téléchargé dans Ollama (cf. _ensure_ollama_model_pulled).
     """
+    # 0. Pull du modèle si absent
+    pull_res = _ensure_ollama_model_pulled(model_name, ollama_url)
+    if not pull_res.get("ok"):
+        return {"ok": False, "step": "pull", **pull_res}
+
     provider = "langgenius/ollama/ollama"
     try:
         # Liste des modèles déjà configurés pour ce provider
@@ -864,17 +909,28 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "Que puis-je faire pour vous aujourd'hui ?"
         ),
         "suggested_questions": [],
-        "suggested_questions_after_answer": {"enabled": True},
+        # Désactivé : Qwen2.5:7b (Alibaba) génère les follow-ups dans sa
+        # langue native (chinois) malgré le pre_prompt en français. Le
+        # sub-prompt Dify pour générer les follow-up questions n'a pas
+        # de contrainte de langue forte → hallucinations CN. À ré-activer
+        # quand on aura un modèle francophone solide ou quand Dify expose
+        # un override de langue pour ces follow-ups.
+        "suggested_questions_after_answer": {"enabled": False},
         "speech_to_text": {"enabled": False},
         "text_to_speech": {"enabled": False, "voice": "", "language": "fr"},
         "retriever_resource": {"enabled": True},
         "sensitive_word_avoidance": {"enabled": False, "type": "", "configs": []},
         # Mode agent : si on passe des tools (cas concierge), on active
-        # automatiquement le mode agent function-calling. Sinon mode chat.
+        # automatiquement le mode agent ReAct. Sinon mode chat.
+        # IMPORTANT — strategy="react" (au lieu de "function_call") :
+        # Ollama + Qwen2.5:7b ne supporte pas bien le function calling
+        # natif d'OpenAI, Dify reste bloqué. ReAct fait parser les
+        # appels d'outils via le texte généré (Thought→Action→Observation),
+        # ce qui marche avec tous les LLM même ceux sans tool API native.
         "agent_mode": {
             "enabled": bool(agent_tools),
             "max_iteration": 5,
-            "strategy": "function_call",
+            "strategy": "react",
             "tools": agent_tools or [],
         },
         "model": {
