@@ -46,6 +46,26 @@ interface InstalledAgent {
   allowed_roles?: ("admin" | "manager" | "employee")[];
 }
 
+interface BoxiaFrCategory {
+  id: string;
+  label: string;
+  icon: string;
+}
+
+interface BoxiaFrTemplate {
+  slug: string;
+  name: string;
+  icon: string;
+  icon_background: string;
+  category: string;
+  description: string;
+  mode: "chat" | "agent-chat";
+  suggested_questions: string[];
+  tags: string[];
+}
+
+type SourceTab = "boxia-fr" | "explorer";
+
 const ROLE_LABELS = { admin: "Admin", manager: "Manager", employee: "Employé" };
 const ROLES: ("admin" | "manager" | "employee")[] = ["admin", "manager", "employee"];
 
@@ -64,11 +84,17 @@ export default function MarketplacePage() {
   const [templates, setTemplates] = useState<DifyTemplate[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [installed, setInstalled] = useState<InstalledAgent[]>([]);
+  const [boxiaFrCatalog, setBoxiaFrCatalog] = useState<{
+    categories: BoxiaFrCategory[];
+    templates: BoxiaFrTemplate[];
+  }>({ categories: [], templates: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [tab, setTab] = useState<SourceTab>("boxia-fr");
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
+  const [installingBoxiaFr, setInstallingBoxiaFr] = useState<string | null>(null);
   const [installingTemplate, setInstallingTemplate] = useState<DifyTemplate | null>(null);
   const [installInProgress, setInstallInProgress] = useState(false);
 
@@ -81,28 +107,52 @@ export default function MarketplacePage() {
     setLoading(true);
     setError(null);
     try {
-      const [tr, ar] = await Promise.all([
+      const [tr, ar, br] = await Promise.all([
         fetch("/api/dify/templates", { cache: "no-store" }),
         fetch("/api/dify/installed-agents", { cache: "no-store" }),
+        fetch("/api/dify/boxia-fr", { cache: "no-store" }),
       ]);
       if (tr.status === 403) {
         setError("Accès réservé aux administrateurs.");
         return;
       }
-      if (!tr.ok) {
-        const j = await tr.json().catch(() => ({}));
-        setError(j.detail || `Templates indisponibles (HTTP ${tr.status})`);
-        return;
+      if (tr.ok) {
+        const tjson = await tr.json();
+        setTemplates(tjson.templates || []);
+        setCategories(tjson.categories || []);
       }
-      const tjson = await tr.json();
-      setTemplates(tjson.templates || []);
-      setCategories(tjson.categories || []);
       if (ar.ok) {
         const ajson = await ar.json();
         setInstalled(ajson.agents || []);
       }
+      if (br.ok) {
+        const bjson = await br.json();
+        setBoxiaFrCatalog({
+          categories: bjson.categories || [],
+          templates: bjson.templates || [],
+        });
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const installBoxiaFr = async (tpl: BoxiaFrTemplate) => {
+    setInstallingBoxiaFr(tpl.slug);
+    try {
+      const r = await fetch("/api/dify/boxia-fr/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: tpl.slug }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert("Échec installation : " + (j.detail || j.error || `HTTP ${r.status}`));
+        return;
+      }
+      await reload();
+    } finally {
+      setInstallingBoxiaFr(null);
     }
   };
 
@@ -274,6 +324,45 @@ export default function MarketplacePage() {
         </section>
       )}
 
+      {/* Onglets : BoxIA-FR / Communauté Dify */}
+      <div className="mb-4 border-b border-border flex items-center gap-1">
+        <button
+          onClick={() => { setTab("boxia-fr"); setActiveCategory("all"); }}
+          className={
+            "px-4 py-2 text-sm font-medium transition-default border-b-2 -mb-px " +
+            (tab === "boxia-fr"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted hover:text-foreground")
+          }
+        >
+          🇫🇷 BoxIA-FR
+          <span className="ml-2 text-xs opacity-60">({boxiaFrCatalog.templates.length})</span>
+        </button>
+        <button
+          onClick={() => { setTab("explorer"); setActiveCategory("all"); }}
+          className={
+            "px-4 py-2 text-sm font-medium transition-default border-b-2 -mb-px " +
+            (tab === "explorer"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted hover:text-foreground")
+          }
+        >
+          🌐 Communauté Dify
+          <span className="ml-2 text-xs opacity-60">({templates.length})</span>
+        </button>
+      </div>
+
+      {tab === "boxia-fr" && (
+        <div className="mb-4 rounded-md bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs px-3 py-2 flex items-start gap-2">
+          <AlertCircle size={12} className="shrink-0 mt-0.5" />
+          <span>
+            Templates en français adaptés au marché TPE/PME français : TVA française,
+            code du travail, conventions BTP, RGPD, e-commerce. <strong>Tous configurés
+            sur Qwen2.5-7B local</strong> (pas d&apos;API key externe nécessaire).
+          </span>
+        </div>
+      )}
+
       {/* Filtres */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -301,25 +390,134 @@ export default function MarketplacePage() {
           >
             Tout
           </button>
-          {categories.map((c) => (
-            <button
-              key={c}
-              onClick={() => setActiveCategory(c)}
-              className={
-                "px-2.5 py-1 text-xs rounded-md transition-default " +
-                (activeCategory === c
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted/15 text-muted hover:bg-muted/25")
-              }
-            >
-              {c}
-            </button>
-          ))}
+          {tab === "boxia-fr"
+            ? boxiaFrCatalog.categories.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setActiveCategory(c.id)}
+                  className={
+                    "px-2.5 py-1 text-xs rounded-md transition-default flex items-center gap-1 " +
+                    (activeCategory === c.id
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/15 text-muted hover:bg-muted/25")
+                  }
+                >
+                  <span aria-hidden>{c.icon}</span>
+                  {c.label}
+                </button>
+              ))
+            : categories.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setActiveCategory(c)}
+                  className={
+                    "px-2.5 py-1 text-xs rounded-md transition-default " +
+                    (activeCategory === c
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/15 text-muted hover:bg-muted/25")
+                  }
+                >
+                  {c}
+                </button>
+              ))}
         </div>
       </div>
 
-      {/* Grid templates */}
-      {loading ? (
+      {/* Grid BoxIA-FR */}
+      {tab === "boxia-fr" && !loading && (() => {
+        const installedSlugs = new Set(
+          installed.map((a) => a.source_template_id).filter((s): s is string => !!s),
+        );
+        const filteredFr = boxiaFrCatalog.templates.filter((t) => {
+          if (activeCategory !== "all" && t.category !== activeCategory) return false;
+          if (search.trim()) {
+            const q = search.toLowerCase();
+            return t.name.toLowerCase().includes(q) ||
+              t.description.toLowerCase().includes(q) ||
+              t.tags.some((tag) => tag.toLowerCase().includes(q));
+          }
+          return true;
+        });
+        if (filteredFr.length === 0) {
+          return (
+            <div className="text-center text-sm text-muted py-12">
+              Aucun template BoxIA-FR trouvé.
+            </div>
+          );
+        }
+        const cat = (id: string) =>
+          boxiaFrCatalog.categories.find((c) => c.id === id);
+        return (
+          <section>
+            <h2 className="text-xs font-semibold uppercase tracking-wide mb-2 text-muted">
+              Templates BoxIA-FR ({filteredFr.length})
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredFr.map((t) => {
+                const installed_ = installedSlugs.has(`boxia-fr:${t.slug}`);
+                const isInstalling = installingBoxiaFr === t.slug;
+                return (
+                  <div
+                    key={t.slug}
+                    className="rounded-lg border border-border bg-card p-3 flex flex-col"
+                  >
+                    <div className="flex items-start gap-3 mb-2">
+                      <div
+                        className="w-10 h-10 rounded-md flex items-center justify-center text-xl shrink-0"
+                        style={{ background: t.icon_background }}
+                      >
+                        {t.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm">{t.name}</div>
+                        <div className="text-[10px] text-muted bg-muted/15 px-1.5 py-0.5 rounded inline-block mt-0.5">
+                          {cat(t.category)?.label || t.category}
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted line-clamp-4 flex-1 mb-2">
+                      {t.description || "—"}
+                    </p>
+                    {t.tags.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap mb-2">
+                        {t.tags.slice(0, 4).map((tag) => (
+                          <span key={tag} className="text-[10px] text-muted bg-muted/15 px-1.5 py-0.5 rounded">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center justify-end gap-2 mt-auto">
+                      {installed_ ? (
+                        <span className="text-xs text-accent flex items-center gap-1 px-2.5 py-1">
+                          <CheckCircle2 size={12} />
+                          Déjà activé
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => installBoxiaFr(t)}
+                          disabled={isInstalling}
+                          className="px-2.5 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-default flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {isInstalling ? (
+                            <RefreshCw size={12} className="animate-spin" />
+                          ) : (
+                            <Plus size={12} />
+                          )}
+                          {isInstalling ? "Installation…" : "Activer"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })()}
+
+      {/* Grid Dify Explorer */}
+      {tab === "explorer" && (loading ? (
         <div className="text-center text-sm text-muted py-12">Chargement…</div>
       ) : filtered.length === 0 ? (
         <div className="text-center text-sm text-muted py-12">
@@ -380,7 +578,7 @@ export default function MarketplacePage() {
             })}
           </div>
         </section>
-      )}
+      ))}
 
       {/* Modal install */}
       {installingTemplate && (
