@@ -1332,6 +1332,181 @@ def setup_uptime_kuma_admin(env: dict[str, str], host: str = "") -> dict[str, An
 
 
 # ---------------------------------------------------------------------------
+# Dify : provisioning du custom tool "AI Box Agents" (sidecar LangGraph)
+# ---------------------------------------------------------------------------
+# Pourquoi : le sidecar `aibox-agents` expose 3 agents autonomes via HTTP
+# (triage email, génération devis, rapprochement facture). Pour qu'ils soient
+# utilisables dans les Workflows Dify, il faut enregistrer un Custom API Tool
+# dans la console Dify. Sinon le client devrait le faire à la main = violation
+# du principe produit (cf. memory/product_appliance_principle.md).
+#
+# Idempotent : si le tool existe déjà → update au lieu de create.
+
+# Path standard du YAML OpenAPI dans le repo monté en /srv/ai-stack
+_AGENTS_TOOL_OPENAPI_PATHS = [
+    "/srv/ai-stack/services/agents-autonomous/dify-integration/openapi-tool.yaml",
+    "/app/static/openapi-agents-tool.yaml",  # fallback si copié dans le container
+]
+
+# Fallback embedded — version minimale si aucun fichier YAML trouvé.
+# Suffit pour exposer les 3 endpoints, sans schemas détaillés.
+_AGENTS_TOOL_OPENAPI_FALLBACK = """openapi: 3.0.3
+info:
+  title: AI Box Agents
+  version: 0.1.0
+  description: Agents autonomes (triage email, devis, rapprochement facture)
+servers:
+  - url: http://aibox-agents:8000
+paths:
+  /v1/triage-email:
+    post:
+      operationId: triageEmail
+      summary: Trie un email entrant
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object}}}
+      responses: {"200": {description: OK}}
+  /v1/generate-quote:
+    post:
+      operationId: generateQuote
+      summary: Génère un devis depuis un brief client
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object}}}
+      responses: {"200": {description: OK}}
+  /v1/reconcile-invoice:
+    post:
+      operationId: reconcileInvoice
+      summary: Rapproche une facture avec ses candidats
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object}}}
+      responses: {"200": {description: OK}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+"""
+
+_AGENTS_TOOL_PROVIDER_NAME = "AI Box Agents"
+
+
+def _load_agents_openapi_schema() -> str:
+    """Lit le YAML depuis le repo monté, sinon utilise le fallback embedded."""
+    import os
+    for p in _AGENTS_TOOL_OPENAPI_PATHS:
+        if os.path.isfile(p):
+            try:
+                return open(p, encoding="utf-8").read()
+            except OSError:
+                continue
+    log.info("YAML OpenAPI agents introuvable dans %s — fallback embedded",
+             _AGENTS_TOOL_OPENAPI_PATHS)
+    return _AGENTS_TOOL_OPENAPI_FALLBACK
+
+
+def setup_dify_agents_tool(env: dict[str, str]) -> dict[str, Any]:
+    """Provisionne le Custom API Tool "AI Box Agents" dans Dify.
+
+    Idempotent : si le provider existe → update du schéma + credentials.
+    Réutilise `_dify_console_client()` qui gère access_token + csrf_token.
+    """
+    base = "http://aibox-dify-nginx:80"
+    admin_email = env.get("ADMIN_EMAIL", "")
+    admin_password = env.get("ADMIN_PASSWORD", "")
+    agents_api_key = env.get("AGENTS_API_KEY", "")
+
+    if not admin_email or not admin_password:
+        return {"ok": False, "error": "ADMIN_EMAIL/ADMIN_PASSWORD manquants"}
+    if not agents_api_key:
+        return {"ok": False, "error": "AGENTS_API_KEY non défini dans .env"}
+
+    schema_text = _load_agents_openapi_schema()
+
+    c = _dify_console_client(base, admin_email, admin_password)
+    if c is None:
+        return {"ok": False, "error": "Login Dify console échoué"}
+
+    try:
+        # 1. Vérifier si le provider existe déjà (idempotence).
+        # Endpoint capturé via Chrome devtools sur Dify 1.10 :
+        #   GET /console/api/workspaces/current/tool-provider/api/get?provider=NAME
+        # → 200 + {provider, credentials, schema_type, ...} si existe
+        # → 404 ou 400 sinon
+        get_url = (
+            f"{base}/console/api/workspaces/current/tool-provider/api/get"
+            f"?provider={_AGENTS_TOOL_PROVIDER_NAME}"
+        )
+        existing: dict | None = None
+        try:
+            r = c.get(get_url)
+            if r.status_code == 200:
+                try:
+                    existing = r.json()
+                except Exception:
+                    existing = None
+        except Exception:
+            existing = None
+
+        # 2. Construire le payload
+        credentials = {
+            "auth_type": "api_key",
+            "api_key_header": "Authorization",
+            "api_key_value": f"Bearer {agents_api_key}",
+            "api_key_header_prefix": "no_prefix",
+        }
+        payload = {
+            "provider": _AGENTS_TOOL_PROVIDER_NAME,
+            "original_provider": _AGENTS_TOOL_PROVIDER_NAME,
+            "icon": {"background": "#3b82f6", "content": "🤖"},
+            "credentials": credentials,
+            "schema_type": "openapi",
+            "schema": schema_text,
+            "privacy_policy": "",
+            "custom_disclaimer": "Service interne AI Box. Bearer token requis.",
+            "labels": ["agents", "aibox"],
+        }
+
+        # 3. POST sur l'endpoint correspondant.
+        # Endpoints capturés Dify 1.10 :
+        #   POST /console/api/workspaces/current/tool-provider/api/add
+        #   POST /console/api/workspaces/current/tool-provider/api/update
+        if existing:
+            ep = "/console/api/workspaces/current/tool-provider/api/update"
+            payload["original_provider"] = (
+                existing.get("original_provider")
+                or existing.get("provider")
+                or _AGENTS_TOOL_PROVIDER_NAME
+            )
+            action = "update"
+        else:
+            ep = "/console/api/workspaces/current/tool-provider/api/add"
+            action = "create"
+
+        try:
+            r = c.post(f"{base}{ep}", json=payload)
+            if r.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "action": action,
+                    "provider": _AGENTS_TOOL_PROVIDER_NAME,
+                    "endpoint": ep,
+                }
+            return {
+                "ok": False,
+                "action": action,
+                "endpoint": ep,
+                "error": f"HTTP {r.status_code} : {r.text[:300]}",
+            }
+        except Exception as e:
+            return {"ok": False, "action": action, "endpoint": ep, "error": str(e)}
+    finally:
+        c.close()
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
@@ -1340,14 +1515,19 @@ def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
     # On ne provisionne l'agent par défaut que si l'admin Dify est OK
     # (sinon le login console échouerait).
     dify_agent: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
+    dify_tool: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
     if dify_admin.get("ok"):
         dify_agent = setup_dify_default_agent(env)
+        # Le tool ne dépend pas des agents — on peut le provisionner même si
+        # un des 4 agents a foiré. Mais on a besoin d'un workspace existant.
+        dify_tool = setup_dify_agents_tool(env)
 
     return {
         "aibox_app":   setup_aibox_app_oidc(env, host),
         "open_webui":  setup_owui_oidc(env, host),
         "dify":        dify_admin,
         "dify_agent":  dify_agent,
+        "dify_agents_tool": dify_tool,
         # Phase D : token + groupes pour la gestion users depuis aibox-app
         "ak_management": setup_authentik_management(env),
         "n8n":         setup_n8n_owner(env, host),

@@ -236,6 +236,18 @@ PG_AUTHENTIK_PASSWORD=$(gen_secret 32)
 AUTHENTIK_SECRET_KEY=$(gen_secret 60)
 DIFY_SECRET_KEY=$(gen_secret 50)
 QDRANT_API_KEY=$(gen_secret 32)
+# ---- Sidecars & connecteurs : auto-génération obligatoire ----
+# Principe produit : aucun secret ne doit être saisi à la main par l'admin
+# client (cf. memory/product_appliance_principle.md). Ces valeurs sont
+# utilisées uniquement entre nos services internes ; les credentials vers
+# des SaaS externes (Pennylane, MS Graph...) sont saisis via UI /connectors.
+AGENTS_API_KEY=$(gen_secret 48)
+MEM0_API_KEY=$(gen_secret 48)
+FEC_TOOL_API_KEY=$(gen_secret 48)
+PENNYLANE_TOOL_API_KEY=$(gen_secret 48)
+GLPI_TOOL_API_KEY=$(gen_secret 48)
+ODOO_TOOL_API_KEY=$(gen_secret 48)
+TEXT2SQL_TOOL_API_KEY=$(gen_secret 48)
 
 cat > .env <<EOF
 # Généré par install.sh le $(date -Iseconds)
@@ -284,6 +296,23 @@ PG_AUTHENTIK_PASSWORD=${PG_AUTHENTIK_PASSWORD}
 AUTHENTIK_SECRET_KEY=${AUTHENTIK_SECRET_KEY}
 DIFY_SECRET_KEY=${DIFY_SECRET_KEY}
 QDRANT_API_KEY=${QDRANT_API_KEY}
+
+# ----- SIDECARS & CONNECTEURS (auto-générés, ne PAS modifier) -----
+AGENTS_API_KEY=${AGENTS_API_KEY}
+MEM0_API_KEY=${MEM0_API_KEY}
+FEC_TOOL_API_KEY=${FEC_TOOL_API_KEY}
+PENNYLANE_TOOL_API_KEY=${PENNYLANE_TOOL_API_KEY}
+GLPI_TOOL_API_KEY=${GLPI_TOOL_API_KEY}
+ODOO_TOOL_API_KEY=${ODOO_TOOL_API_KEY}
+TEXT2SQL_TOOL_API_KEY=${TEXT2SQL_TOOL_API_KEY}
+
+# ----- HOST URLS sidecars (network_mode: host) -----
+INFERENCE_BACKEND=ollama
+CHECKPOINTER_MODE=postgres
+MEM0_BASE_URL=http://127.0.0.1:8087
+AGENTS_BASE_URL=http://127.0.0.1:8085
+PENNYLANE_TOOL_URL=http://127.0.0.1:8090
+FEC_TOOL_URL=http://127.0.0.1:8091
 
 # ----- VERSIONS (épinglage reproductibilité) -----
 QDRANT_VERSION=v1.13.4
