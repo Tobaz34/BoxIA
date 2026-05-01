@@ -12,6 +12,11 @@ import {
   isMemoryEnabled,
   searchUserMemory,
 } from "@/lib/memory";
+import {
+  isLangfuseEnabled,
+  startTrace,
+  updateTrace,
+} from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +60,24 @@ export async function POST(req: NextRequest) {
   }
   const augmentedQuery = memoryPrefix ? `${memoryPrefix}---\n\n${query}` : query;
 
+  // ----- Langfuse trace (best-effort, fire-and-forget) -----
+  // Une trace par message user, groupée par sessionId = conversation_id
+  // Dify (côté UI Langfuse → toutes les traces d'une conversation s'affichent
+  // groupées). Si LANGFUSE_BASE_URL absent → no-op silencieux.
+  const traceId = isLangfuseEnabled()
+    ? startTrace({
+        name: `chat:${body.agent || "default"}`,
+        userId: ctx.user,
+        sessionId: body.conversation_id || undefined,
+        input: query,
+        tags: [body.agent || "default", memoryPrefix ? "with-memory" : "no-memory"],
+        metadata: {
+          memory_prefix_chars: memoryPrefix.length,
+          files_count: Array.isArray(body.files) ? body.files.length : 0,
+        },
+      })
+    : "";
+
   const upstream = await fetch(`${DIFY_BASE_URL}/v1/chat-messages`, {
     method: "POST",
     headers: {
@@ -82,16 +105,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Tee le stream : un côté pour le client, un côté pour mémoriser la réponse
-  // assistant à la fin (si mémoire activée).
-  if (isMemoryEnabled() && ctx.user) {
+  // Tee le stream pour : (1) client SSE, (2) capture pour mémorisation
+  // mem0 ET update de trace Langfuse avec l'output final. On utilise un
+  // SEUL tee même si une seule des 2 features est active, pour ne pas
+  // dupliquer le code.
+  const needsCapture =
+    (isMemoryEnabled() && ctx.user) || (isLangfuseEnabled() && traceId);
+  if (needsCapture) {
     const [clientStream, captureStream] = upstream.body.tee();
     void captureAssistantReply(captureStream).then((assistantText) => {
-      if (assistantText) {
+      if (assistantText && isMemoryEnabled() && ctx.user) {
         addUserMemory(ctx.user, body.agent || "default", [
           { role: "user", content: query },
           { role: "assistant", content: assistantText },
         ], { conversation_id: body.conversation_id });
+      }
+      if (assistantText && isLangfuseEnabled() && traceId) {
+        updateTrace(traceId, {
+          output: assistantText,
+          metadata: { output_chars: assistantText.length },
+        });
       }
     });
     return new Response(clientStream, {

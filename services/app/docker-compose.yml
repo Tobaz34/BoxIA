@@ -100,6 +100,14 @@ services:
       MEM0_API_KEY:                    ${MEM0_API_KEY:-}
       MEM0_BASE_URL:                   ${MEM0_BASE_URL:-http://aibox-mem0:8000}
 
+      # ---- Observability Langfuse (optionnel) ----
+      # Si LANGFUSE_PUBLIC_KEY défini : trace chaque message du chat
+      # (input, output, latence, user, agent) vers Langfuse en
+      # fire-and-forget. Si vide : no-op silencieux.
+      LANGFUSE_BASE_URL:               ${LANGFUSE_BASE_URL:-}
+      LANGFUSE_PUBLIC_KEY:             ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY:             ${LANGFUSE_SECRET_KEY:-}
+
       # ---- Agents autonomes sidecar (optionnel) ----
       AGENTS_API_KEY:                  ${AGENTS_API_KEY:-}
       AGENTS_BASE_URL:                 ${AGENTS_BASE_URL:-http://aibox-agents:8000}
