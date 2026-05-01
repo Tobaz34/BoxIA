@@ -26,6 +26,31 @@ services:
       - "11434:11434"
     volumes:
       - ollama_models:/root/.ollama
+    environment:
+      # Optimisations performance — verdict #3 audit BentoML 2026-05 :
+      # « activer prefix caching = la plus grosse optim gratuite pour
+      # notre usage Dify+RAG (chaque prompt partage un long préfixe
+      # système) ».
+      #
+      # OLLAMA_KEEP_ALIVE : garde le modèle chargé en VRAM 24h au lieu
+      # de l'unload après 5min d'inactivité. Sans ça on perd le KV cache
+      # à chaque pause utilisateur, le 1er token suivant prend 5-10s de
+      # reload + recompute du prefix système. Avec : le KV cache du
+      # prefix RAG/system reste warm → first token 200-500ms.
+      OLLAMA_KEEP_ALIVE: "24h"
+      # Continuous batching — sert plusieurs requêtes en parallèle sur
+      # le même modèle (gain x2-3 sur throughput multi-user). Limité à
+      # 2 sur GPU 12 GB pour ne pas saturer la VRAM avec les vols KV.
+      OLLAMA_NUM_PARALLEL: "2"
+      # Flash Attention — accélère le KV cache de 30-40% et économise
+      # ~20% VRAM. Active par défaut depuis Ollama 0.5+ mais on
+      # explicite pour clarté + compat futurs versions.
+      OLLAMA_FLASH_ATTENTION: "true"
+      # KV cache quantization q8_0 — économie ~50% VRAM KV cache,
+      # perte qualité négligeable. Permet d'avoir plus de contexte
+      # ou de cohabiter avec qwen2.5vl (vision) + bge-m3 (embed) +
+      # llama-guard3 (safety) sur le même GPU 12 GB.
+      OLLAMA_KV_CACHE_TYPE: "q8_0"
     deploy:
       resources:
         reservations:

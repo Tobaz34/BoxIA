@@ -12,6 +12,7 @@
  */
 import { Plus, Trash2, MessageSquare, MoreHorizontal, Wand2, Tag } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { TagEditPopover } from "./TagEditPopover";
 
 // Inline (pas d'import depuis lib/conversation-tags qui touche à node:fs).
 // Couleur stable basée sur hash du tag → badges visuellement distincts.
@@ -106,6 +107,7 @@ export function ConversationsList({
   onRename,
 }: Props) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [tagPopoverFor, setTagPopoverFor] = useState<string | null>(null);
   const [tagsByConv, setTagsByConv] = useState<Record<string, string[]>>({});
   const [allTags, setAllTags] = useState<{ tag: string; count: number }[]>([]);
   const [filterTag, setFilterTag] = useState<string | null>(null);
@@ -130,25 +132,12 @@ export function ConversationsList({
 
   useEffect(() => { void reloadTags(); }, [reloadTags, conversations.length]);
 
-  // Édition rapide via prompt() — UX MVP, à remplacer par popover
-  // autocomplete v2 (cf BACKLOG-V1.1.md).
-  const editTags = useCallback(async (convId: string) => {
-    const current = (tagsByConv[convId] || []).join(", ");
-    const raw = window.prompt(
-      "Tags (séparés par virgule, max 8) :",
-      current,
-    );
-    if (raw === null) return;
-    const tags = raw.split(",").map((t) => t.trim()).filter(Boolean);
-    try {
-      const r = await fetch("/api/conversations/tags", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId, tags }),
-      });
-      if (r.ok) await reloadTags();
-    } catch { /* silencieux */ }
-  }, [tagsByConv, reloadTags]);
+  // Ouvre le popover d'édition de tags pour cette conversation.
+  // Le popover gère lui-même le POST + reload via le callback onSaved.
+  const openTagPopover = useCallback((convId: string) => {
+    setOpenMenu(null);
+    setTagPopoverFor(convId);
+  }, []);
 
   // Filtrage : si un tag pill est sélectionné, on n'affiche que les
   // conversations qui le contiennent.
@@ -297,10 +286,7 @@ export function ConversationsList({
                         </button>
                         <button
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-default"
-                          onClick={async () => {
-                            setOpenMenu(null);
-                            await editTags(c.id);
-                          }}
+                          onClick={() => openTagPopover(c.id)}
                         >
                           <Tag size={12} /> Tags…
                         </button>
@@ -316,6 +302,15 @@ export function ConversationsList({
                           <Trash2 size={12} /> Supprimer
                         </button>
                       </div>
+                    )}
+                    {tagPopoverFor === c.id && (
+                      <TagEditPopover
+                        conversationId={c.id}
+                        initialTags={tagsByConv[c.id] || []}
+                        knownTags={allTags}
+                        onClose={() => setTagPopoverFor(null)}
+                        onSaved={() => { void reloadTags(); }}
+                      />
                     )}
                   </div>
                 );

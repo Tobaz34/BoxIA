@@ -27,6 +27,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageSources, type RetrieverResource } from "./MessageSources";
 import { useUI, setUI } from "@/lib/ui-store";
 import { useSpeech, useTTS } from "@/lib/use-speech";
+import { smoothEmit } from "@/lib/smooth-stream";
 import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu";
 import {
   Plus, RefreshCcw, FileDown, Bot as BotIcon,
@@ -600,13 +601,19 @@ export function Chat() {
                 collectedMessageId = data.message_id;
               }
               if (data.event === "message" && typeof data.answer === "string") {
-                setMessages((m) =>
-                  m.map((x) =>
-                    x.id === asstMsg.id
-                      ? { ...x, content: x.content + data.answer }
-                      : x,
-                  ),
-                );
+                // Streaming fluide : on chunk les gros deltas Dify en
+                // 1-3 chars avec 5ms de pause → effet « tape comme un
+                // humain » (cf lib/smooth-stream.ts, pattern Open-WebUI).
+                // Skip si onglet caché pour ne pas burn CPU.
+                await smoothEmit(data.answer, (chunk) => {
+                  setMessages((m) =>
+                    m.map((x) =>
+                      x.id === asstMsg.id
+                        ? { ...x, content: x.content + chunk }
+                        : x,
+                    ),
+                  );
+                });
               } else if (data.event === "message_end") {
                 // Sources RAG (retriever_resources)
                 const rr = data?.metadata?.retriever_resources;

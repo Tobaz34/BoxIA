@@ -40,6 +40,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    ports:
+      # Exposé localhost only — aibox-app tourne en network_mode: host
+      # et ne résout pas le DNS Docker (aibox-tts:5500). Cf même
+      # contournement que pour Langfuse (services/observability/).
+      - "127.0.0.1:5500:5500"
 
 volumes:
   tts_cache:

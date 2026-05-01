@@ -108,6 +108,12 @@ services:
       LANGFUSE_PUBLIC_KEY:             ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY:             ${LANGFUSE_SECRET_KEY:-}
 
+      # ---- TTS Piper (optionnel) ----
+      # Si TTS_BACKEND_URL défini : useTTS bascule sur le backend serveur
+      # (qualité supérieure à Web Speech API). Sinon : fallback Web Speech.
+      TTS_BACKEND_URL:                 ${TTS_BACKEND_URL:-}
+      TTS_DEFAULT_VOICE:               ${TTS_DEFAULT_VOICE:-larynx:siwis-glow_tts}
+
       # ---- Agents autonomes sidecar (optionnel) ----
       AGENTS_API_KEY:                  ${AGENTS_API_KEY:-}
       AGENTS_BASE_URL:                 ${AGENTS_BASE_URL:-http://aibox-agents:8000}
