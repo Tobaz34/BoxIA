@@ -115,6 +115,32 @@ export const AGENTS: Record<string, AgentConfig> = {
       "Réponds à un avis Google négatif (3 étoiles, livraison)",
     ],
   },
+  // Concierge BoxIA — agent IA orchestrateur qui pilote l'admin (active
+  // connecteurs, installe workflows/agents, vérifie healthcheck) via le
+  // Custom Tool « BoxIA Concierge Tools » attaché côté Dify. Le client
+  // utilise ce concierge pour configurer SA box en langage naturel,
+  // sans avoir à naviguer dans /connectors, /workflows, /integrations/mcp.
+  concierge: {
+    slug: "concierge",
+    name: "Concierge BoxIA",
+    icon: "🛎️",
+    description: "Configure votre BoxIA en langage naturel — connecteurs, workflows, MCP, sans paramétrage manuel",
+    envVar: "DIFY_AGENT_CONCIERGE_API_KEY",
+    openingStatement:
+      "🛎️ Bonjour ! Je suis votre Concierge BoxIA. Je peux configurer votre " +
+      "box pour vous : connecter vos données (Outlook, Drive, Pennylane…), " +
+      "installer des workflows d'automatisation, ajouter des assistants " +
+      "spécialisés. Dites-moi ce que vous voulez faire en français naturel.",
+    suggestedQuestions: [
+      "Tu peux automatiser ma comptabilité ?",
+      "Quels assistants français sont disponibles ?",
+      "Connecte mon NAS pour indexer les documents partagés",
+      "Tout fonctionne bien dans la box ?",
+    ],
+    // Concierge réservé aux admins — il peut INSTALLER des workflows et
+    // des agents, donc seul l'admin doit pouvoir l'utiliser.
+    allowedRoles: ["admin"],
+  },
 };
 
 /** Métadonnées publiques (sans clé API) — sûr à exposer côté client. */

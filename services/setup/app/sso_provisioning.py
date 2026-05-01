@@ -780,11 +780,67 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
         return {"ok": False, "error": str(e)}
 
 
+def _fetch_concierge_tools(c: httpx.Client, base: str) -> list[dict[str, Any]]:
+    """Récupère la liste des tools du provider 'BoxIA Concierge Tools' pour
+    pouvoir les attacher à l'agent concierge en mode agent-chat.
+
+    Endpoint Dify (capturé via console devtools) :
+        GET /console/api/workspaces/current/tool-provider/api/get?provider=NAME
+    Retourne {provider, tools: [{name, description, ...}], ...}.
+
+    Renvoie une liste prête à insérer dans `agent_mode.tools` du
+    model-config (format : provider_id, provider_name, provider_type=api,
+    tool_name, tool_label, tool_parameters, enabled).
+    """
+    try:
+        get_url = (
+            f"{base}/console/api/workspaces/current/tool-provider/api/get"
+            f"?provider=BoxIA Concierge Tools"
+        )
+        r = c.get(get_url)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        # Récupère aussi le provider_id depuis tool-providers (nécessaire
+        # pour le format agent_mode.tools)
+        provider_id = ""
+        try:
+            r2 = c.get(f"{base}/console/api/workspaces/current/tool-providers")
+            providers = r2.json() if isinstance(r2.json(), list) else r2.json().get("data", [])
+            for p in providers:
+                if isinstance(p, dict) and (p.get("name") == "BoxIA Concierge Tools"
+                                            or p.get("provider") == "BoxIA Concierge Tools"):
+                    provider_id = p.get("id", "")
+                    break
+        except Exception:
+            pass
+
+        tools = []
+        for t in data.get("tools", []):
+            name = t.get("name") or t.get("operation_id")
+            if not name:
+                continue
+            tools.append({
+                "provider_id": provider_id or "BoxIA Concierge Tools",
+                "provider_name": "BoxIA Concierge Tools",
+                "provider_type": "api",
+                "tool_name": name,
+                "tool_label": t.get("label", {}).get("en_US") if isinstance(t.get("label"), dict) else (t.get("description", "")[:60] or name),
+                "tool_parameters": {},
+                "enabled": True,
+            })
+        return tools
+    except Exception as e:
+        log.warning("fetch concierge tools failed: %s", e)
+        return []
+
+
 def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
                            model_name: str,
                            pre_prompt: str | None = None,
                            opening_statement: str | None = None,
-                           dataset_ids: list[str] | None = None) -> dict[str, Any]:
+                           dataset_ids: list[str] | None = None,
+                           agent_tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Configure le modèle par défaut sur une app Dify (mode chat).
 
     Le endpoint /console/api/apps/{id}/model-config attend toute la
@@ -813,7 +869,14 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
         "text_to_speech": {"enabled": False, "voice": "", "language": "fr"},
         "retriever_resource": {"enabled": True},
         "sensitive_word_avoidance": {"enabled": False, "type": "", "configs": []},
-        "agent_mode": {"enabled": False, "tools": []},
+        # Mode agent : si on passe des tools (cas concierge), on active
+        # automatiquement le mode agent function-calling. Sinon mode chat.
+        "agent_mode": {
+            "enabled": bool(agent_tools),
+            "max_iteration": 5,
+            "strategy": "function_call",
+            "tools": agent_tools or [],
+        },
         "model": {
             "provider": "langgenius/ollama/ollama",
             "name": model_name,
@@ -1180,12 +1243,27 @@ def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
             if not app_id:
                 return {"ok": False, "error": "no app id returned"}
 
-        # 3. Configure le modèle + pre_prompt + opening_statement + datasets
+        # 3. Configure le modèle + pre_prompt + opening_statement + datasets.
+        # Pour le concierge (slug="concierge"), on attache aussi les tools
+        # du provider « BoxIA Concierge Tools » → l'agent peut directement
+        # appeler les endpoints /api/agents-tools/* sans setup manuel.
+        agent_tools: list[dict[str, Any]] | None = None
+        if agent.get("slug") == "concierge":
+            agent_tools = _fetch_concierge_tools(c, base)
+            if agent_tools:
+                log.info("Concierge: %d tools attachés depuis le provider",
+                         len(agent_tools))
+            else:
+                log.warning("Concierge: aucun tool trouvé dans le provider "
+                            "« BoxIA Concierge Tools » (vérifie qu'il a été "
+                            "provisionné AVANT cet appel)")
+
         cfg = _set_app_default_model(
             c, base, app_id, model_name,
             pre_prompt=agent["pre_prompt"],
             opening_statement=agent["opening_statement"],
             dataset_ids=dataset_ids,
+            agent_tools=agent_tools,
         )
         # On continue même si la config échoue (l'app reste utilisable
         # mais avec le pre_prompt précédent)
@@ -1771,6 +1849,114 @@ def setup_dify_concierge_tool(env: dict[str, str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Authentik : branding "AI Box" au lieu de "authentik" sur le login
+# ---------------------------------------------------------------------------
+def setup_authentik_branding(env: dict[str, str]) -> dict[str, Any]:
+    """Customise le brand Authentik pour cacher la marque "authentik"
+    et présenter "AI Box" au client (page de login OIDC).
+
+    PATCH le brand par défaut (`/api/v3/core/brands/<uuid>/`) avec :
+      - branding_title : "AI Box"
+      - branding_custom_css : cache le logo Authentik + remplace par
+        un titre "AI Box"
+      - (favicon / logo : on garde les SVG par défaut Authentik à défaut
+        d'avoir un asset client custom dans le repo)
+
+    Idempotent : si déjà patché, le PATCH retourne 200 sans rien changer.
+    """
+    token = _ak_admin_token(env)
+    if not token:
+        return {"ok": False, "reason": "Authentik admin token unavailable"}
+
+    base = "http://aibox-authentik-server:9000"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        with httpx.Client(timeout=10) as c:
+            # 1. Récupère le brand par défaut
+            r = c.get(f"{base}/api/v3/core/brands/", headers=headers)
+            if r.status_code != 200:
+                return {"ok": False, "step": "list",
+                        "status": r.status_code, "body": r.text[:200]}
+            brands = r.json().get("results", [])
+            default_brand = next((b for b in brands if b.get("default")), None)
+            if not default_brand:
+                return {"ok": False, "error": "no default brand found"}
+
+            brand_uuid = default_brand["brand_uuid"]
+
+            # 2. CSS custom pour masquer le logo Authentik et afficher "AI Box"
+            # On force le PATCH à chaque appel pour permettre les évolutions
+            # du CSS d'être propagées (Authentik PATCH est idempotent au sens
+            # « pas d'erreur si valeur identique »).
+            # à la place. On cible les éléments du flow par défaut.
+            custom_css = """
+/* AI Box branding override — remplace "Welcome to authentik!" + logo. */
+
+/* 1. Masque le logo Authentik dans le header de la page */
+img[alt="authentik"],
+.pf-c-brand img,
+ak-brand-link img {
+  display: none !important;
+}
+
+/* 2. Remplace le texte du H1 "Welcome to authentik!" : on cache le
+      contenu (font-size:0) puis on injecte le titre AI Box via ::before. */
+.pf-c-login__main-header h1,
+ak-flow-executor h1 {
+  font-size: 0 !important;        /* cache le contenu enfant */
+  line-height: 0 !important;
+}
+.pf-c-login__main-header h1::before,
+ak-flow-executor h1::before {
+  content: "Bienvenue sur AI Box";
+  display: block;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #2563eb;
+}
+
+/* 3. Remplace la marque dans le coin haut-gauche par "🤖 AI Box" */
+.pf-c-brand,
+ak-brand-link {
+  font-size: 0 !important;
+}
+.pf-c-brand::before,
+ak-brand-link::before {
+  content: "🤖 AI Box";
+  display: inline-block;
+  font-size: 28px;
+  font-weight: 700;
+  color: #2563eb;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+""".strip()
+
+            # 3. PATCH le brand
+            payload = {
+                "branding_title": "AI Box",
+                "branding_custom_css": custom_css,
+            }
+            r = c.patch(
+                f"{base}/api/v3/core/brands/{brand_uuid}/",
+                headers=headers,
+                json=payload,
+            )
+            if r.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "brand_uuid": brand_uuid,
+                    "branding_title": "AI Box",
+                    "css_injected": True,
+                }
+            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
@@ -1782,16 +1968,21 @@ def provision_all(env: dict[str, str], host: str) -> dict[str, Any]:
     dify_tool: dict[str, Any] = {"ok": False, "error": "skipped (admin failed)"}
     dify_concierge_tool: dict[str, Any] = {"ok": False, "error": "skipped"}
     if dify_admin.get("ok"):
-        dify_agent = setup_dify_default_agent(env)
-        # Le tool ne dépend pas des agents — on peut le provisionner même si
-        # un des 4 agents a foiré. Mais on a besoin d'un workspace existant.
+        # IMPORTANT — ordre des appels :
+        # 1. Tools (providers Dify) AVANT les agents qui les utilisent.
+        #    L'agent Concierge attache automatiquement les tools du provider
+        #    « BoxIA Concierge Tools » au moment de sa configuration ; il
+        #    faut donc que le provider existe déjà.
+        # 2. setup_dify_default_agent (crée tous les agents, dont concierge
+        #    qui récupère les tools du provider via _fetch_concierge_tools).
         dify_tool = setup_dify_agents_tool(env)
-        # Tool concierge — utilisé par l'agent « Concierge BoxIA »
         dify_concierge_tool = setup_dify_concierge_tool(env)
+        dify_agent = setup_dify_default_agent(env)
 
     return {
         "aibox_app":   setup_aibox_app_oidc(env, host),
         "open_webui":  setup_owui_oidc(env, host),
+        "authentik_branding": setup_authentik_branding(env),
         "dify":        dify_admin,
         "dify_agent":  dify_agent,
         "dify_concierge_tool": dify_concierge_tool,
