@@ -74,6 +74,12 @@ const TOOLS = [
     description: "Génère un lien profond vers une page admin (connecteurs/workflows/marketplace). L'admin clique pour finaliser.",
     confirmation_required: false,
   },
+  {
+    slug: "web_search",
+    method: "POST",
+    description: "Cherche sur le web via SearXNG (méta-moteur agrégeant Google/Bing/DuckDuckGo/Wikipedia/Qwant). Body: { query: string, max_results?: number (1-15, def 5), lang?: string (def fr) }. Retourne titre/url/snippet pour chaque résultat. Utiliser pour : convention collective récente, info entreprise/SIRET, veille concurrentielle, vérification fait, etc.",
+    confirmation_required: false,
+  },
 ];
 
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";

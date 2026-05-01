@@ -10,9 +10,15 @@
  *
  * Communique avec le parent via callbacks (selection, refresh).
  */
-import { Plus, Trash2, MessageSquare, MoreHorizontal, Wand2, Tag } from "lucide-react";
+import { Plus, Trash2, MessageSquare, MoreHorizontal, Wand2, Tag, Folder, FolderPlus, FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { TagEditPopover } from "./TagEditPopover";
+
+interface FolderEntry {
+  id: string;
+  name: string;
+  color: string;
+}
 
 // Inline (pas d'import depuis lib/conversation-tags qui touche à node:fs).
 // Couleur stable basée sur hash du tag → badges visuellement distincts.
@@ -111,6 +117,62 @@ export function ConversationsList({
   const [tagsByConv, setTagsByConv] = useState<Record<string, string[]>>({});
   const [allTags, setAllTags] = useState<{ tag: string; count: number }[]>([]);
   const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [folders, setFolders] = useState<FolderEntry[]>([]);
+  const [folderAssignments, setFolderAssignments] = useState<Record<string, string | null>>({});
+  const [filterFolder, setFilterFolder] = useState<string | null>(null);
+  const [moveSubmenuFor, setMoveSubmenuFor] = useState<string | null>(null);
+
+  const reloadFolders = useCallback(async () => {
+    try {
+      const r = await fetch("/api/conversations/folders", { cache: "no-store" });
+      if (!r.ok) return;
+      const j = (await r.json()) as {
+        folders?: FolderEntry[];
+        assignments?: Record<string, string | null>;
+      };
+      setFolders(j.folders || []);
+      setFolderAssignments(j.assignments || {});
+    } catch { /* silencieux */ }
+  }, []);
+
+  useEffect(() => { void reloadFolders(); }, [reloadFolders]);
+
+  const createFolder = useCallback(async () => {
+    const name = window.prompt("Nom du dossier (max 40 chars) :");
+    if (!name?.trim()) return;
+    await fetch("/api/conversations/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "create", name: name.trim() }),
+    });
+    await reloadFolders();
+  }, [reloadFolders]);
+
+  const deleteFolder = useCallback(async (folderId: string) => {
+    if (!confirm("Supprimer ce dossier ? Les conversations seront déplacées vers la racine.")) return;
+    await fetch("/api/conversations/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete", folder_id: folderId }),
+    });
+    if (filterFolder === folderId) setFilterFolder(null);
+    await reloadFolders();
+  }, [filterFolder, reloadFolders]);
+
+  const assignToFolder = useCallback(async (convId: string, folderId: string | null) => {
+    await fetch("/api/conversations/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "assign",
+        conversation_id: convId,
+        folder_id: folderId,
+      }),
+    });
+    setMoveSubmenuFor(null);
+    setOpenMenu(null);
+    await reloadFolders();
+  }, [reloadFolders]);
 
   // Charge la map convId → tags + la liste agrégée des tags du user
   // (pour les pills filtre en haut). Refetch quand la liste de
@@ -139,11 +201,11 @@ export function ConversationsList({
     setTagPopoverFor(convId);
   }, []);
 
-  // Filtrage : si un tag pill est sélectionné, on n'affiche que les
-  // conversations qui le contiennent.
-  const visibleConvs = filterTag
-    ? conversations.filter((c) => (tagsByConv[c.id] || []).includes(filterTag))
-    : conversations;
+  // Filtrage combiné : tag ET folder. Les 2 filtres peuvent être actifs
+  // simultanément (genre filtre folder=ACME + tag=urgent).
+  const visibleConvs = conversations
+    .filter((c) => !filterTag || (tagsByConv[c.id] || []).includes(filterTag))
+    .filter((c) => !filterFolder || folderAssignments[c.id] === filterFolder);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -155,6 +217,75 @@ export function ConversationsList({
           <Plus size={16} />
           Nouvelle conversation
         </button>
+      </div>
+
+      {/* Section Dossiers — accordion compact en haut de la sidebar.
+          Chaque dossier est cliquable pour filtrer ; bouton + pour
+          créer ; bouton × pour supprimer (visible au hover). */}
+      <div className="px-2 py-1.5 border-b border-border">
+        <div className="flex items-center justify-between mb-1 px-1">
+          <span className="text-[10px] uppercase tracking-wide text-muted font-medium">
+            Dossiers
+          </span>
+          <button
+            onClick={createFolder}
+            className="p-0.5 rounded hover:bg-muted/30 text-muted"
+            title="Nouveau dossier"
+          >
+            <FolderPlus size={12} />
+          </button>
+        </div>
+        {folders.length === 0 && (
+          <div className="px-1 text-[10px] text-muted">
+            Aucun dossier. <button onClick={createFolder} className="underline hover:text-foreground">Créer</button>.
+          </div>
+        )}
+        <div className="flex flex-col gap-0.5">
+          {filterFolder && (
+            <button
+              onClick={() => setFilterFolder(null)}
+              className="text-left text-[11px] px-1 py-0.5 rounded text-muted hover:text-foreground"
+            >
+              ✕ Voir tous les dossiers
+            </button>
+          )}
+          {folders.map((f) => {
+            const active = filterFolder === f.id;
+            const count = Object.values(folderAssignments).filter(
+              (fid) => fid === f.id,
+            ).length;
+            return (
+              <div
+                key={f.id}
+                className={
+                  "group flex items-center gap-1.5 px-1 py-0.5 rounded text-[11px] cursor-pointer transition-default " +
+                  (active
+                    ? "bg-muted/40 text-foreground"
+                    : "hover:bg-muted/20 text-foreground/80")
+                }
+                onClick={() => setFilterFolder(active ? null : f.id)}
+              >
+                {active ? (
+                  <FolderOpen size={11} style={{ color: f.color }} />
+                ) : (
+                  <Folder size={11} style={{ color: f.color }} />
+                )}
+                <span className="flex-1 truncate">{f.name}</span>
+                <span className="text-[9px] text-muted">{count}</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void deleteFolder(f.id);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-500/20 text-muted hover:text-red-400"
+                  title="Supprimer le dossier"
+                >
+                  <Trash2 size={10} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Filtre par tag — pills horizontales, scroll-x si beaucoup. */}
@@ -290,6 +421,52 @@ export function ConversationsList({
                         >
                           <Tag size={12} /> Tags…
                         </button>
+                        {/* Sous-menu Déplacer vers : liste des folders + Racine */}
+                        <div className="relative">
+                          <button
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-default"
+                            onClick={() => setMoveSubmenuFor(moveSubmenuFor === c.id ? null : c.id)}
+                          >
+                            <Folder size={12} />
+                            Déplacer vers…
+                            {folderAssignments[c.id] && (
+                              <span className="ml-auto text-[9px] text-muted">
+                                {folders.find((f) => f.id === folderAssignments[c.id])?.name}
+                              </span>
+                            )}
+                          </button>
+                          {moveSubmenuFor === c.id && (
+                            <div className="absolute right-full top-0 mr-1 w-44 rounded-md border border-border bg-card shadow-lg py-1 max-h-60 overflow-auto">
+                              {folderAssignments[c.id] && (
+                                <button
+                                  onClick={() => assignToFolder(c.id, null)}
+                                  className="w-full text-left px-3 py-1 text-xs text-muted hover:bg-muted/30"
+                                >
+                                  ✕ Retirer du dossier
+                                </button>
+                              )}
+                              {folders.length === 0 && (
+                                <div className="px-3 py-2 text-[11px] text-muted">
+                                  Aucun dossier. Crée-en un d&apos;abord.
+                                </div>
+                              )}
+                              {folders.map((f) => (
+                                <button
+                                  key={f.id}
+                                  onClick={() => assignToFolder(c.id, f.id)}
+                                  className={
+                                    "w-full flex items-center gap-2 px-3 py-1 text-xs hover:bg-muted/30 " +
+                                    (folderAssignments[c.id] === f.id ? "bg-muted/30" : "")
+                                  }
+                                >
+                                  <Folder size={11} style={{ color: f.color }} />
+                                  <span className="truncate">{f.name}</span>
+                                  {folderAssignments[c.id] === f.id && <span className="ml-auto">✓</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         <button
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 transition-default"
                           onClick={async () => {

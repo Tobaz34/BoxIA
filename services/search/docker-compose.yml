@@ -1,0 +1,60 @@
+# =============================================================================
+# Service Web Search — SearXNG self-hosted
+# =============================================================================
+#
+# Pourquoi SearXNG ?
+#   - Métamoteur open-source (agrège 70+ moteurs : Google, Bing, DuckDuckGo,
+#     Wikipedia, Qwant, Startpage…) sans collecter de données utilisateur
+#   - 100% local, aucune clé API à payer (DuckDuckGo / Qwant côté CSE
+#     gratuit jusqu'à un quota raisonnable, Google Scholar inclus)
+#   - JSON API native (`format=json`) → parse trivial côté agent
+#   - Image officielle searxng/searxng:latest, ~150 MB
+#
+# Usage côté BoxIA :
+#   - Le Concierge BoxIA reçoit un nouveau tool `web_search` qui POST
+#     `/api/agents-tools/web_search` (cf. provisioning auto)
+#   - Cas d'usage TPE/PME : « cherche le RIB du fournisseur ACME sur leur
+#     site », « trouve la convention collective de la métallurgie 2026 »,
+#     « extrait les 3 derniers articles sur la TVA déductible 2026 »
+#
+# Sécurité :
+#   - Bind localhost only — pas exposé hors box
+#   - Limit 1k req/h (anti-abuse)
+#   - User-agent neutre (pas d'identification BoxIA → pas de blocage Google)
+# =============================================================================
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: aibox-searxng
+    restart: unless-stopped
+    networks: [aibox_net]
+    ports:
+      # Exposé localhost only (aibox-app en network_mode: host)
+      - "127.0.0.1:8888:8080"
+    environment:
+      # Base URL pour les liens absolus dans les résultats
+      BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8888/}
+      INSTANCE_NAME: "AI Box Search"
+      # Secret pour signature inter-engine (auto-gen au déploiement)
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-please_change_me_in_prod_64chars_min_xxxxxxxxxxxxxxxxxxxxxxxxxxxx}
+    # Bind-mount d'un settings.yml préparé (le process searxng tourne
+    # en non-root et ne peut pas créer le fichier dans /etc/searxng
+    # depuis le template image — bug connu). Le volume est mode :ro
+    # pour empêcher toute écriture côté container.
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  aibox_net:
+    external: true

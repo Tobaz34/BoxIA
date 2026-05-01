@@ -160,6 +160,46 @@ paths:
       responses:
         "200": { description: OK }
 
+  /web_search:
+    post:
+      operationId: webSearch
+      summary: Cherche sur le web via SearXNG (méta-moteur multi-sources).
+      description: |
+        Agrège les résultats de Google/Bing/DuckDuckGo/Wikipedia/Qwant
+        sans collecter de données utilisateur (SearXNG self-hosted local).
+        Utilise pour :
+          - convention collective récente (« CCN métallurgie 2026 PDF »)
+          - vérification d'un SIRET / d'une raison sociale
+          - veille concurrentielle (« avis ACME Conseil 2026 »)
+          - extraction d'info publique (« RIB fournisseur XYZ site »)
+        Cite TOUJOURS les URLs des sources dans la réponse finale.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: La recherche en langage naturel (FR ou EN).
+                  minLength: 2
+                max_results:
+                  type: integer
+                  description: Nombre de résultats (1-15, défaut 5).
+                  default: 5
+                  minimum: 1
+                  maximum: 15
+                lang:
+                  type: string
+                  description: Langue (codes ISO type fr, en, es). Défaut fr.
+                  default: fr
+      responses:
+        "200": { description: OK avec résultats }
+        "503": { description: Service web search non configuré }
+
 components:
   securitySchemes:
     bearerAuth:

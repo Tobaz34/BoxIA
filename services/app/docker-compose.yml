@@ -114,6 +114,11 @@ services:
       TTS_BACKEND_URL:                 ${TTS_BACKEND_URL:-}
       TTS_DEFAULT_VOICE:               ${TTS_DEFAULT_VOICE:-larynx:siwis-glow_tts}
 
+      # ---- SearXNG web search (optionnel, tool Concierge) ----
+      # Si SEARXNG_URL défini : le tool /api/agents-tools/web_search
+      # devient fonctionnel. Sinon : retourne 503 search_disabled.
+      SEARXNG_URL:                     ${SEARXNG_URL:-}
+
       # ---- Agents autonomes sidecar (optionnel) ----
       AGENTS_API_KEY:                  ${AGENTS_API_KEY:-}
       AGENTS_BASE_URL:                 ${AGENTS_BASE_URL:-http://aibox-agents:8000}
