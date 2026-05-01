@@ -167,8 +167,20 @@ export async function installBoxiaFrTemplate(
   }
 
   // 2. Configure le model + prompt + opening + suggested_questions
+  // qwen3 a un mode CoT activé par défaut qui expose son raisonnement
+  // en anglais (<think>...</think>). On ajoute /no_think au pre_prompt
+  // pour les agents qui tournent sur qwen3*. Détection conservative :
+  // par défaut tous les templates BoxIA-FR utilisent le LLM_MAIN qui
+  // depuis 2026-05-01 est qwen3:14b → on patche systématiquement.
+  const NO_THINK_SUFFIX =
+    "\n\nIMPORTANT : réponds toujours en français, directement, sans " +
+    "exposer ton raisonnement intermédiaire ni de balises `<think>` " +
+    "ou `<thinking>`. /no_think";
+  const prePrompt = tpl.system_prompt.includes("/no_think")
+    ? tpl.system_prompt
+    : tpl.system_prompt.trimEnd() + NO_THINK_SUFFIX;
   const modelConfig = {
-    pre_prompt: tpl.system_prompt,
+    pre_prompt: prePrompt,
     prompt_type: "simple",
     chat_prompt_config: {},
     completion_prompt_config: {},

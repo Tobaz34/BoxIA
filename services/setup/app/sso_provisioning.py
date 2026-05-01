@@ -1335,9 +1335,23 @@ def _setup_one_dify_agent(c: httpx.Client, base: str, agent: dict[str, str],
                             "« BoxIA Concierge Tools » (vérifie qu'il a été "
                             "provisionné AVANT cet appel)")
 
+        # qwen3 a un mode chain-of-thought activé par défaut qui expose
+        # son raisonnement en anglais entre <think>...</think>. Très moche
+        # côté UX. Solution officielle : ajouter `/no_think` à la fin du
+        # system prompt → désactive le mode CoT, réponse directe FR.
+        # On l'applique pour tous les agents text-only qwen* (pas qwen2.5vl
+        # qui n'a pas ce mode et serait perturbé).
+        pre_prompt = agent["pre_prompt"]
+        if "qwen3" in model_name.lower() or "qwen2.5:" in model_name.lower():
+            pre_prompt = pre_prompt.rstrip() + (
+                "\n\nIMPORTANT : réponds toujours en français, directement, "
+                "sans exposer ton raisonnement intermédiaire ni de balises "
+                "`<think>` ou `<thinking>`. /no_think"
+            )
+
         cfg = _set_app_default_model(
             c, base, app_id, model_name,
-            pre_prompt=agent["pre_prompt"],
+            pre_prompt=pre_prompt,
             opening_statement=agent["opening_statement"],
             dataset_ids=dataset_ids,
             agent_tools=agent_tools,

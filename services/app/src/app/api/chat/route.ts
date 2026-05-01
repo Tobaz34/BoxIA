@@ -17,6 +17,7 @@ import {
   startTrace,
   updateTrace,
 } from "@/lib/langfuse";
+import { stripThinkFromSSE } from "@/lib/strip-think";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +106,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Filtre proxy : strip <think>...</think> exposés par qwen3 (mode CoT
+  // activé par défaut, le `/no_think` dans le pre_prompt est ignoré
+  // par Ollama). Defense-in-depth : même si un agent n'a pas /no_think,
+  // l'utilisateur ne verra jamais le raisonnement intermédiaire.
+  const filteredUpstream = stripThinkFromSSE(upstream.body);
+
   // Tee le stream pour : (1) client SSE, (2) capture pour mémorisation
   // mem0 ET update de trace Langfuse avec l'output final. On utilise un
   // SEUL tee même si une seule des 2 features est active, pour ne pas
@@ -112,7 +119,7 @@ export async function POST(req: NextRequest) {
   const needsCapture =
     (isMemoryEnabled() && ctx.user) || (isLangfuseEnabled() && traceId);
   if (needsCapture) {
-    const [clientStream, captureStream] = upstream.body.tee();
+    const [clientStream, captureStream] = filteredUpstream.tee();
     void captureAssistantReply(captureStream).then((assistantText) => {
       if (assistantText && isMemoryEnabled() && ctx.user) {
         addUserMemory(ctx.user, body.agent || "default", [
@@ -138,7 +145,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  return new Response(upstream.body, {
+  return new Response(filteredUpstream, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
