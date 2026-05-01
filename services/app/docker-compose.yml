@@ -32,6 +32,11 @@ services:
       # Utilisé par /api/workflows/import-templates pour push les
       # workflows pré-écrits dans n8n en 1 clic depuis /workflows.
       - /srv/ai-stack/templates:/templates:ro
+      # CHANGELOG.md du repo bind-mounté pour /api/version qui l'expose
+      # à la carte « Version & mises à jour » de /settings. Avantage par
+      # rapport à un COPY au build : le changelog peut être mis à jour
+      # sans rebuilder l'image.
+      - /srv/ai-stack/CHANGELOG.md:/CHANGELOG.md:ro
     environment:
       # En host mode, on doit dire à Next.js d'écouter sur le port custom
       PORT: "${APP_PORT:-3100}"
