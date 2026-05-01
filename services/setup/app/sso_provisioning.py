@@ -1393,7 +1393,7 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
     if not email or not pwd:
         return {"ok": False, "error": "ADMIN_EMAIL / ADMIN_PASSWORD requis"}
 
-    model_name = env.get("LLM_MAIN", "qwen2.5:14b")
+    model_name = env.get("LLM_MAIN", "qwen3:14b")
     vision_model_name = env.get("LLM_VISION", "qwen2.5vl:7b")
     embed_name = env.get("LLM_EMBED", "bge-m3:latest")
 

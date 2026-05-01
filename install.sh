@@ -289,14 +289,19 @@ HW_PROFILE=${HW_PROFILE}
 GPU_VRAM_GB=${GPU_VRAM_GB}
 
 # ----- MODÈLES OLLAMA -----
-# Modèle principal — qwen2.5:14b (~9 GB VRAM, MMLU ~78%, function calling
-# propre via Ollama, moins de biais multilingue qu'en 7B). Compromis :
-# nécessite 12 GB VRAM (RTX 4070 Super OK). Si GPU plus petit (8 GB max),
-# changer en qwen2.5:7b dans .env post-install.
-LLM_MAIN=qwen2.5:14b
+# Modèle principal — qwen3:14b (~9 GB VRAM, drop-in remplaçant qwen2.5:14b).
+# Avantages mesurés vs qwen2.5:14b (audit BentoML 2026-05-01) :
+#   - Multilingue FR natif (119 langues vs ~10 chez qwen2.5)
+#   - Function calling natif (résout la lenteur Concierge sur ReAct)
+#   - Mode thinking/non-thinking switchable au runtime
+#   - Qwen3-14B base ≈ Qwen2.5-32B base sur MMLU
+# Compromis : 12 GB VRAM (RTX 4070 Super OK). Si GPU plus petit (8 GB),
+# changer en qwen3:8b dans .env post-install (gain latence + Phi-4 battu).
+LLM_MAIN=qwen3:14b
 LLM_EMBED=bge-m3
 # Modèle vision — utilisé pour les agents avec vision:true (analyse
-# d'images, captures d'écran, photos). qwen2.5vl:7b est multimodal natif.
+# d'images, captures d'écran, photos). qwen2.5vl:7b est multimodal natif
+# (qwen3vl pas encore stable sur Ollama au 2026-05-01 — switch quand dispo).
 LLM_VISION=qwen2.5vl:7b
 LLM_CODE=
 

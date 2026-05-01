@@ -269,11 +269,13 @@ async def configure(payload: WizardSubmit):
         f"ADMIN_EMAIL={payload.admin_email}",
         f"ADMIN_PASSWORD={shell_escape(payload.admin_password)}",
         f"HW_PROFILE={payload.hw_profile}",
-        # Modèle principal : qwen2.5:14b (9 GB VRAM) pour la qualité.
-        # Repli auto sur qwen2.5:7b si le GPU < 12 GB (à override par
-        # l'admin post-install si besoin).
-        "LLM_MAIN=qwen2.5:14b",
-        # Modèle vision pour les agents avec vision:true.
+        # Modèle principal : qwen3:14b (9 GB VRAM, drop-in qwen2.5:14b).
+        # Avantages 2026-05 (audit BentoML) : function calling natif,
+        # multilingue FR top-tier, thinking/non-thinking switchable.
+        # Repli qwen3:8b si GPU < 12 GB (override .env post-install).
+        "LLM_MAIN=qwen3:14b",
+        # Modèle vision pour les agents avec vision:true (qwen3vl pas
+        # encore stable sur Ollama au 2026-05 — on garde qwen2.5vl).
         "LLM_VISION=qwen2.5vl:7b",
         "LLM_EMBED=bge-m3",
         f"PG_DIFY_PASSWORD={pg_dify}",
