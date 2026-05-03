@@ -48,6 +48,17 @@ interface AttachedFile {
   /** Extension détectée (ex: "pdf", "docx") — utilisée pour afficher
    *  une étiquette explicite dans la preview. */
   extension?: string;
+  /** BUG-023 : texte extrait côté Next.js pour les documents (PDF, DOCX,
+   *  XLSX, TXT, MD, CSV). Sera concaténé en préfixe de la query au prochain
+   *  envoi de message — sinon Dify ne pousse JAMAIS le contenu du fichier
+   *  au LLM (pas de Knowledge Dataset RAG ni de nœud Document Extractor),
+   *  et le LLM hallucine sur des données inventées. */
+  extracted_text?: string | null;
+  /** BUG-023 : raison si l'extraction a échoué (PDF scanné sans couche
+   *  texte → "pdf_no_text_layer", format non supporté → "unsupported...",
+   *  etc.). Affiché en banner orange anti-hallucination. */
+  extraction_error?: string | null;
+  extracted_pages?: number | null;
 }
 
 interface Message {
@@ -413,6 +424,10 @@ export function Chat() {
           size: j.size || f.size,
           extension: j.extension,
           data_url: dataUrl,
+          // BUG-023 : on stocke le texte extrait pour le concat à l'envoi
+          extracted_text: j.extracted_text || null,
+          extraction_error: j.extraction_error || null,
+          extracted_pages: j.extracted_pages || null,
         }]);
       }
     } finally {
@@ -508,13 +523,29 @@ export function Chat() {
     // nouvelle conversation (Dify garde le contexte ensuite).
     const ci = readCustomInstructions().trim();
     const isNewConversation = !conversationId;
-    const queryForDify =
-      ci && isNewConversation
-        ? `[Contexte utilisateur, à garder en tête pour toutes les réponses :\n${ci}]\n\n${q}`
-        : q;
 
     // Capture les pièces jointes (images + documents) pour ce message
     const filesAtSend = attached.slice();
+
+    // BUG-023 : concat le texte extrait des documents en préfixe de la query.
+    // Sans cela, Dify upload bien le file dans son storage mais ne pousse
+    // JAMAIS le contenu au LLM (pas de Knowledge Dataset RAG ni de
+    // Document Extractor node) → l'agent hallucine sur des données inventées.
+    // On insère sous des balises explicites pour que le LLM identifie
+    // clairement le contenu fichier vs la question utilisateur.
+    const docContext = filesAtSend
+      .filter((a) => a.kind === "document" && a.extracted_text)
+      .map((a) =>
+        `--- CONTENU FICHIER ${a.name}${a.extracted_pages ? ` (${a.extracted_pages} pages)` : ""} ---\n` +
+        `${a.extracted_text}\n` +
+        `--- FIN ${a.name} ---`)
+      .join("\n\n");
+
+    const ciPrefix = ci && isNewConversation
+      ? `[Contexte utilisateur, à garder en tête pour toutes les réponses :\n${ci}]\n\n`
+      : "";
+    const docPrefix = docContext ? `${docContext}\n\n` : "";
+    const queryForDify = `${ciPrefix}${docPrefix}${q}`;
 
     const userMsg: Message = {
       id: uid(), role: "user", content: q, createdAt: Date.now(),
@@ -1125,6 +1156,24 @@ export function Chat() {
         )}
 
         <div className="border-t border-border bg-card p-4">
+          {/* BUG-023 — Banner orange anti-hallucination si au moins un
+              document attaché n'a pas pu être extrait. Sans cette extraction,
+              le LLM aurait juste l'upload_file_id (sans contenu) et
+              halluciner sur des données inventées au lieu d'admettre qu'il
+              ne peut pas lire le fichier. */}
+          {attached.some((a) => a.extraction_error) && (
+            <div className="max-w-3xl mx-auto mb-2 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs px-3 py-2">
+              ⚠ Document(s) non lisible(s) :{" "}
+              {attached
+                .filter((a) => a.extraction_error)
+                .map((a) => `${a.name} (${a.extraction_error})`)
+                .join(", ")}
+              . L'IA répondra sans le contenu de ce(s) fichier(s).{" "}
+              {attached.some((a) => a.extraction_error?.startsWith("pdf_no_text_layer")) &&
+                "Pour les PDF scannés ou images dans un PDF, utilisez l'Assistant vision."}
+            </div>
+          )}
+
           {/* Preview des pièces jointes (images + documents) avant envoi */}
           {attached.length > 0 && (
             <div className="max-w-3xl mx-auto mb-2 flex flex-wrap gap-2">
@@ -1142,11 +1191,23 @@ export function Chat() {
                   ) : (
                     <div className="h-16 px-3 flex items-center gap-2 text-xs">
                       <FileText size={20} className="text-primary shrink-0" />
-                      <div className="min-w-0 max-w-[180px]">
+                      <div className="min-w-0 max-w-[200px]">
                         <div className="truncate font-medium">{a.name}</div>
                         <div className="text-[10px] text-muted">
                           {(a.size / 1024).toFixed(0)} Ko
                           {a.extension && ` · .${a.extension}`}
+                          {/* BUG-023 : feedback visuel sur l'extraction */}
+                          {a.extracted_text && (
+                            <span className="text-emerald-400">
+                              {" "}· ✓ {(a.extracted_text.length / 1000).toFixed(0)}k car extraits
+                              {a.extracted_pages ? ` · ${a.extracted_pages}p` : ""}
+                            </span>
+                          )}
+                          {a.extraction_error && (
+                            <span className="text-yellow-400" title={a.extraction_error}>
+                              {" "}· ⚠ non lisible
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

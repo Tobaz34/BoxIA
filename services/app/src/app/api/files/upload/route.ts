@@ -15,6 +15,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireDifyContext, DIFY_BASE_URL } from "@/lib/dify";
+import { extractDocument, type ExtractResult } from "@/lib/extract-doc";
 
 export const dynamic = "force-dynamic";
 export const config = { api: { bodyParser: false } };
@@ -102,12 +103,33 @@ export async function POST(req: NextRequest) {
     );
   }
   const j = await r.json();
+
+  // BUG-023 — Extraction texte préventive pour les documents.
+  // Dify n'extrait pas le contenu des PDF/DOCX/XLSX par défaut quand on
+  // n'a ni Knowledge Dataset RAG ni nœud Document Extractor dans un
+  // workflow. Sans cette extraction côté Next.js, le LLM reçoit juste
+  // l'upload_file_id sans contenu utile et hallucine.
+  // Le texte extrait est renvoyé au client qui le concatène en préfixe
+  // de la query au prochain /api/chat (cf. components/Chat.tsx).
+  let extracted: ExtractResult | null = null;
+  if (kind === "document") {
+    try {
+      const buf = Buffer.from(await file.arrayBuffer());
+      extracted = await extractDocument(buf, file.type, file.name);
+    } catch (e) {
+      extracted = { ok: false, reason: "extraction_failed:" + String(e).slice(0, 100) };
+    }
+  }
+
   return NextResponse.json({
     id: j.id,
-    kind,                    // ← nouveau : à passer dans `files[].type` au /api/chat
+    kind,                    // ← à passer dans `files[].type` au /api/chat
     name: j.name,
     size: j.size,
     extension: j.extension,
     mime_type: j.mime_type,
+    extracted_text: extracted?.ok ? extracted.text : null,
+    extracted_pages: extracted?.ok ? extracted.pages : null,
+    extraction_error: extracted && !extracted.ok ? extracted.reason : null,
   });
 }
