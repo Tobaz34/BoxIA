@@ -18,8 +18,11 @@ ACCESS.md
 deploy.log
 reset.log
 
-# Claude Code interne (settings locaux, pas pertinent pour le repo produit)
-.claude/
+# Claude Code : on ignore tout sauf settings.json (project-level, partagé
+# entre toutes les sessions — contient les hooks de garde-fou définis dans
+# CLAUDE.md). settings.local.json (perso) reste ignoré.
+.claude/*
+!.claude/settings.json
 
 # Volumes data Docker (montés par compose)
 data/
