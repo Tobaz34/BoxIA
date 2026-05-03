@@ -35,9 +35,13 @@ LOCK_FILE="$SERVER_REPO/.deploy.lock"
 DEPLOY_LOG="$SERVER_REPO/data/deploys.log"
 LOCK_TTL_MIN=10
 COMPOSE_FILE="services/app/docker-compose.yml"
+ENV_FILE="$SERVER_REPO/.env"  # CRITIQUE : compose -f sans --env-file cherche
+                              # le .env dans le dir du compose (services/app/)
+                              # qui n'existe pas → vars vides → app cassée
 SERVICE_NAME="app"  # nom du service dans services/app/docker-compose.yml
-HEALTH_PATH="/healthz"
-HEALTH_PORT="3000"  # port interne du container aibox-app
+CONTAINER_NAME="aibox-app"
+HEALTH_PATH="/"
+HEALTH_PORT="3100"  # port externe (Next.js en network_mode: host sur APP_PORT=3100)
 
 SESSION_ID="${USER:-claude}-$(hostname)-$$"
 TS=$(date +%s)
@@ -150,8 +154,10 @@ reset_to_branch() {
 
 rebuild_app() {
   log "docker compose build + up $SERVICE_NAME (image rebuild peut prendre 3-5 min)"
-  ssh_cmd "cd $SERVER_REPO && docker compose -f $COMPOSE_FILE build $SERVICE_NAME 2>&1 | tail -10" >&2
-  ssh_cmd "cd $SERVER_REPO && docker compose -f $COMPOSE_FILE up -d $SERVICE_NAME 2>&1 | tail -3" >&2
+  # --env-file CRITIQUE : sinon vars NEXTAUTH_SECRET/AUTHENTIK_* sont vides
+  # côté container et l'auth crash avec NO_SECRET. Vu en prod 2026-05-03.
+  ssh_cmd "cd $SERVER_REPO && docker compose -f $COMPOSE_FILE --env-file $ENV_FILE build $SERVICE_NAME 2>&1 | tail -10" >&2
+  ssh_cmd "cd $SERVER_REPO && docker compose -f $COMPOSE_FILE --env-file $ENV_FILE up -d $SERVICE_NAME 2>&1 | tail -3" >&2
   ok "Container redémarré"
 }
 
@@ -168,15 +174,18 @@ run_pending_migrations() {
 
 smoke_test() {
   log "Smoke test : attente du healthcheck sur port $HEALTH_PORT"
-  local i
+  local i code
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if ssh_cmd "curl -fsS -o /dev/null -w '%{http_code}' http://localhost:$HEALTH_PORT$HEALTH_PATH" 2>/dev/null | grep -qE '^(200|204)$'; then
-      ok "Smoke test OK (HTTP 200 sur $HEALTH_PATH)"
+    # Next.js + middleware NextAuth → / renvoie 307 redirect vers /api/auth/signin
+    # quand pas authentifié. C'est OK : ça prouve que le serveur tourne.
+    code=$(ssh_cmd "curl -s -o /dev/null -w '%{http_code}' http://localhost:$HEALTH_PORT$HEALTH_PATH" 2>/dev/null || echo "000")
+    if echo "$code" | grep -qE '^(200|204|307|308)$'; then
+      ok "Smoke test OK (HTTP $code sur $HEALTH_PATH)"
       return 0
     fi
     sleep 3
   done
-  fail "Smoke test failed après 30s — container peut-être crashé. Voir 'docker logs aibox-app-app'"
+  fail "Smoke test failed après 30s — container peut-être crashé. Voir 'docker logs $CONTAINER_NAME'"
 }
 
 log_deploy() {
