@@ -600,7 +600,14 @@ export function Chat() {
               if (data.message_id && !collectedMessageId) {
                 collectedMessageId = data.message_id;
               }
-              if (data.event === "message" && typeof data.answer === "string") {
+              // Les agents en mode `agent-chat` (Concierge avec tools)
+              // émettent `agent_message` au lieu de `message`. Sans ce
+              // doublon, m.content reste vide → ThinkingIndicator coincé
+              // sur "Je structure la réponse…" (BUG-018).
+              if (
+                (data.event === "message" || data.event === "agent_message") &&
+                typeof data.answer === "string"
+              ) {
                 // Streaming fluide : on chunk les gros deltas Dify en
                 // 1-3 chars avec 5ms de pause → effet « tape comme un
                 // humain » (cf lib/smooth-stream.ts, pattern Open-WebUI).

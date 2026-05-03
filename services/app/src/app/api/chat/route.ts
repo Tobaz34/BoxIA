@@ -187,7 +187,12 @@ async function captureAssistantReply(stream: ReadableStream<Uint8Array>): Promis
         if (!payload || payload === "[DONE]") continue;
         try {
           const evt = JSON.parse(payload);
-          if (evt.event === "message" && typeof evt.answer === "string") {
+          // Inclut `agent_message` (mode agent-chat / Concierge avec tools)
+          // — sinon Langfuse + mem0 voient des outputs vides.
+          if (
+            (evt.event === "message" || evt.event === "agent_message") &&
+            typeof evt.answer === "string"
+          ) {
             answer += evt.answer;
           }
         } catch {
