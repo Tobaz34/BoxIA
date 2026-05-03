@@ -78,3 +78,6 @@ services/connectors/**/.pytest_cache/
 
 # État local des migrations DB (par-installation, jamais commit)
 tools/migrations/_state.json
+
+# Corpus de test multimodal (récupérable depuis le serveur xefia, pas du repo)
+tests/benchmark-multimodal/corpus/

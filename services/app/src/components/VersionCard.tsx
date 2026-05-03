@@ -10,8 +10,8 @@
  * UX : version + branch en gros, build date relative, expand pour voir
  * les changements récents en markdown rendu (titres, listes Added/Fixed/etc).
  */
-import { useEffect, useState } from "react";
-import { Tag, GitBranch, Calendar, ChevronDown, ChevronRight, Info } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Tag, GitBranch, Calendar, ChevronDown, ChevronRight, Info, RefreshCw, Download, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 
 interface VersionInfo {
   app_version: string;
@@ -33,6 +33,28 @@ interface ApiResponse {
   incomplete: boolean;
   version: VersionInfo;
   changelog: ChangelogEntry[];
+}
+
+interface UpdateCheck {
+  up_to_date?: boolean;
+  behind_count?: number;
+  local_sha?: string;
+  remote_sha?: string;
+  commits?: { sha: string; short: string; date: string; author: string; message: string }[];
+  error?: string;
+}
+
+interface UpdateStatus {
+  state: "idle" | "requested" | "running" | "done" | "failed";
+  step?: string;
+  message?: string;
+  requested_at?: string;
+  requested_by?: string;
+  started_at?: string;
+  finished_at?: string;
+  branch?: string;
+  exit_code?: number;
+  log_tail?: string[];
 }
 
 function relTime(iso: string): string {
@@ -86,17 +108,223 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function UpdateBanner({
+  check, checking, status, triggering, onCheck, onUpdate,
+}: {
+  check: UpdateCheck | null;
+  checking: boolean;
+  status: UpdateStatus;
+  triggering: boolean;
+  onCheck: () => void;
+  onUpdate: () => void;
+}) {
+  // Mise à jour en cours / récemment terminée → bandeau de progression
+  if (status.state === "requested" || status.state === "running") {
+    return (
+      <div className="mb-3 px-3 py-2.5 rounded border border-blue-500/30 bg-blue-500/10 text-xs">
+        <div className="flex items-center gap-2 font-medium text-blue-300">
+          <Loader2 size={13} className="animate-spin" />
+          Mise à jour en cours
+          {status.step && <span className="text-blue-400/70 font-normal">— {status.step}</span>}
+        </div>
+        {status.message && (
+          <div className="mt-1 text-blue-200/80">{status.message}</div>
+        )}
+        {status.log_tail && status.log_tail.length > 0 && (
+          <pre className="mt-2 text-[10px] text-blue-100/60 font-mono overflow-x-auto whitespace-pre-wrap">
+            {status.log_tail.slice(-3).join("\n")}
+          </pre>
+        )}
+      </div>
+    );
+  }
+  if (status.state === "done") {
+    return (
+      <div className="mb-3 px-3 py-2.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-xs flex items-start gap-2">
+        <CheckCircle2 size={13} className="text-emerald-400 mt-0.5 shrink-0" />
+        <div>
+          <div className="font-medium text-emerald-300">Mise à jour terminée</div>
+          <div className="text-emerald-200/80 mt-0.5">
+            {status.message || "Le service a redémarré sur la nouvelle version."}
+            {status.finished_at && <> — {relTime(status.finished_at)}</>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (status.state === "failed") {
+    return (
+      <div className="mb-3 px-3 py-2.5 rounded border border-red-500/30 bg-red-500/10 text-xs">
+        <div className="flex items-center gap-2 font-medium text-red-300">
+          <AlertTriangle size={13} />
+          Échec de la mise à jour
+          {typeof status.exit_code === "number" && (
+            <span className="text-red-400/70 font-normal">— exit {status.exit_code}</span>
+          )}
+        </div>
+        {status.message && (
+          <div className="mt-1 text-red-200/80">{status.message}</div>
+        )}
+        {status.log_tail && status.log_tail.length > 0 && (
+          <pre className="mt-2 text-[10px] text-red-100/60 font-mono overflow-x-auto whitespace-pre-wrap">
+            {status.log_tail.slice(-5).join("\n")}
+          </pre>
+        )}
+        <div className="mt-2">
+          <button
+            onClick={onCheck}
+            className="px-2 py-1 rounded border border-border hover:bg-muted/15 text-xs"
+          >
+            Re-vérifier
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // État idle : bouton "Vérifier" + résultat
+  const upToDate = check && check.up_to_date;
+  const behind = check && !check.up_to_date && (check.behind_count ?? 0) > 0;
+  const checkErr = check?.error;
+  return (
+    <div className="mb-3 flex items-start gap-3 flex-wrap">
+      <button
+        onClick={onCheck}
+        disabled={checking}
+        className="px-3 py-1.5 rounded border border-border hover:bg-muted/15 text-xs flex items-center gap-1.5 disabled:opacity-50"
+      >
+        {checking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+        Vérifier les mises à jour
+      </button>
+      {upToDate && (
+        <div className="text-xs text-emerald-400 flex items-center gap-1.5">
+          <CheckCircle2 size={13} /> À jour ({check.local_sha?.slice(0, 7) || "?"})
+        </div>
+      )}
+      {behind && (
+        <>
+          <div className="text-xs text-amber-300 flex items-center gap-1.5">
+            <AlertTriangle size={13} />
+            {check!.behind_count} commit{(check!.behind_count ?? 0) > 1 ? "s" : ""} de retard
+            {check!.commits && check!.commits[0] && (
+              <span className="text-muted ml-1 line-clamp-1 max-w-md">
+                — dernier : {check!.commits[0].message}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onUpdate}
+            disabled={triggering}
+            className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {triggering ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+            Mettre à jour maintenant
+          </button>
+        </>
+      )}
+      {check && !upToDate && !behind && (check.behind_count ?? 0) === -1 && (
+        <div className="text-xs text-muted">
+          Commit local introuvable côté distant (build de dev local ?)
+        </div>
+      )}
+      {checkErr && (
+        <div className="text-xs text-red-400 flex items-center gap-1.5">
+          <AlertTriangle size={13} /> {checkErr}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function VersionCard() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
+  const [triggering, setTriggering] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetch("/api/version", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => setData(j))
       .catch((e) => setError(String(e)));
+    // Au mount, on lit le statut courant pour reprendre une MAJ en cours
+    // (utile si l'admin recharge la page pendant un déploiement).
+    fetch("/api/system/update-status", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s: UpdateStatus | null) => {
+        if (s && s.state !== "idle") {
+          setStatus(s);
+          startPolling();
+        }
+      })
+      .catch(() => {});
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function startPolling() {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch("/api/system/update-status", { cache: "no-store" });
+        if (!r.ok) return;
+        const s: UpdateStatus = await r.json();
+        setStatus(s);
+        if (s.state === "idle" || s.state === "done" || s.state === "failed") {
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+        }
+      } catch {
+        // poll suivant
+      }
+    }, 2000);
+  }
+
+  async function handleCheck() {
+    setChecking(true);
+    setCheck(null);
+    try {
+      const r = await fetch("/api/system/check-updates", { cache: "no-store" });
+      const j: UpdateCheck = await r.json();
+      setCheck(j);
+    } catch (e) {
+      setCheck({ error: String(e instanceof Error ? e.message : e) });
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function handleUpdate() {
+    if (!confirm("Lancer la mise à jour ? Le service redémarrera ~3-5 min, certaines actions seront indisponibles pendant ce temps.")) {
+      return;
+    }
+    setTriggering(true);
+    try {
+      const r = await fetch("/api/system/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branch: "main" }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert(`Erreur : ${j.error || r.status}`);
+        return;
+      }
+      const s: UpdateStatus = await r.json();
+      setStatus(s);
+      startPolling();
+    } finally {
+      setTriggering(false);
+    }
+  }
 
   if (error) {
     return (
@@ -170,6 +398,16 @@ export function VersionCard() {
           </span>
         </div>
       )}
+
+      {/* Bandeau MAJ : statut en cours OU bouton vérifier */}
+      <UpdateBanner
+        check={check}
+        checking={checking}
+        status={status}
+        triggering={triggering}
+        onCheck={handleCheck}
+        onUpdate={handleUpdate}
+      />
 
       {/* Changelog récent */}
       {data.changelog.length > 0 && (

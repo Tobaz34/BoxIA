@@ -1,0 +1,23 @@
+[Unit]
+Description=AI Box update watcher (UI-triggered self-update)
+Documentation=https://github.com/Tobaz34/BoxIA/blob/main/tools/update-watcher.sh
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=clikinfo
+Group=clikinfo
+WorkingDirectory=/srv/ai-stack
+Environment=AIBOX_SERVER_REPO=/srv/ai-stack
+ExecStart=/usr/bin/env bash /srv/ai-stack/tools/update-watcher.sh
+Restart=on-failure
+RestartSec=10
+# Le watcher écrit dans /srv/ai-stack/data/.update-* qui est un volume Docker
+# partagé avec aibox-app. Pas de capabilities particulières — juste l'accès
+# au filesystem + à docker via l'utilisateur clikinfo.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
