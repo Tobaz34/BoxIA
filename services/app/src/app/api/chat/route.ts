@@ -27,6 +27,7 @@ import {
 } from "@/lib/langfuse";
 import { stripThinkFromSSE } from "@/lib/strip-think";
 import { wrapStreamWithFileDetector } from "@/lib/chat-stream-files";
+import { wrapStreamWithCloudFallbackHint } from "@/lib/local-failure-detect";
 
 export const dynamic = "force-dynamic";
 
@@ -125,11 +126,18 @@ export async function POST(req: NextRequest) {
   // dans /data/generated/UUID, et remplace le bloc par un marker
   // `{{file:UUID:nom:size:mime}}` que MessageMarkdown.tsx rend en chip
   // download cliquable. Patch additif (chain post strip-think).
-  const filteredUpstream = wrapStreamWithFileDetector(stripped, {
+  const fileDetected = wrapStreamWithFileDetector(stripped, {
     user: ctx.user,
     outputDir: "/data/generated",
     conversationId: body.conversation_id || undefined,
   });
+  // Cloud fallback wire — intercepte les events `error` SSE Dify qui
+  // signalent un OOM Ollama / context overflow / model unavailable, et
+  // émet en plus un event `cloud_fallback_needed` que l'UI Chat.tsx
+  // intercepte pour proposer le fallback cloud BYOK avec autorisation
+  // explicite. Pas de bypass automatique : l'utilisateur doit confirmer
+  // (RGPD + coût). Cf. lib/local-failure-detect.ts + components/CloudFallbackModal.tsx
+  const filteredUpstream = wrapStreamWithCloudFallbackHint(fileDetected, body.agent || null);
 
   // Tee le stream pour : (1) client SSE, (2) capture pour mémorisation
   // mem0 ET update de trace Langfuse avec l'output final. On utilise un

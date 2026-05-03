@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Cpu, MemoryStick, HardDrive, Zap, type LucideIcon } from "lucide-react";
+import { Cpu, MemoryStick, HardDrive, Zap, Cloud, type LucideIcon } from "lucide-react";
 
 const HISTORY_LEN = 60;        // 60 points × 5 s = 5 min
 const POLL_MS     = 5000;
@@ -186,6 +186,69 @@ function MetricRow({ icon: Icon, label, values, current, hue }: MetricRowProps) 
   );
 }
 
+/** Liste compacte des providers cloud configurés, à droite des sparklines.
+ *  Vert → configuré (clé OK) ; gris → pas configuré. Hover = tooltip avec
+ *  modèles activés et coût mensuel actuel.
+ *
+ *  Demande user 2026-05-03 : "lorsqu'une IA cloud est paramétrée, voir
+ *  son icône en mode On (vert) au niveau des graphiques de consommation".
+ */
+function CloudProvidersBadges() {
+  const [providers, setProviders] = useState<Array<{
+    id: "openai" | "anthropic" | "mistral";
+    label: string;
+    configured: boolean;
+    cost_eur_this_month?: number;
+  }>>([]);
+
+  useEffect(() => {
+    const labels = { openai: "OpenAI", anthropic: "Anthropic", mistral: "Mistral" };
+    fetch("/api/cloud-providers", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (!j) return;
+        const ids = ["openai", "anthropic", "mistral"] as const;
+        setProviders(ids.map((id) => ({
+          id,
+          label: labels[id],
+          configured: j.providers?.[id]?.configured === true,
+          cost_eur_this_month: j.providers?.[id]?.cost_eur_this_month,
+        })));
+      })
+      .catch(() => { /* silent */ });
+  }, []);
+
+  if (providers.length === 0) return null;
+  const anyConfigured = providers.some((p) => p.configured);
+  if (!anyConfigured) return null;  // Pas de bruit si rien
+
+  return (
+    <div className="hidden lg:flex items-center gap-1 px-3 border-l border-border">
+      <Cloud size={12} className="text-muted shrink-0" />
+      {providers.map((p) => (
+        <span
+          key={p.id}
+          title={
+            p.configured
+              ? `${p.label} : configuré${p.cost_eur_this_month
+                  ? ` · ${p.cost_eur_this_month.toFixed(2)}€ ce mois` : ""}`
+              : `${p.label} : non configuré`
+          }
+          className={
+            "inline-flex items-center justify-center w-6 h-5 rounded text-[9px] font-bold tracking-tight " +
+            (p.configured
+              ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40"
+              : "bg-muted/10 text-muted/50")
+          }
+          aria-label={`${p.label} ${p.configured ? "actif" : "inactif"}`}
+        >
+          {p.id === "openai" ? "AI" : p.id === "anthropic" ? "An" : "Mi"}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function SystemMetricsWidget() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [series, setSeries] = useState<MetricSeries>(EMPTY_SERIES);
@@ -248,6 +311,7 @@ export function SystemMetricsWidget() {
         current={metrics?.gpu_pct ?? null}
         hue="330 85% 65%"
       />
+      <CloudProvidersBadges />
     </div>
   );
 }
