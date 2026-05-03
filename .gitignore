@@ -75,3 +75,6 @@ services/memory/**/*.pyc
 services/connectors/**/__pycache__/
 services/connectors/**/*.pyc
 services/connectors/**/.pytest_cache/
+
+# État local des migrations DB (par-installation, jamais commit)
+tools/migrations/_state.json
