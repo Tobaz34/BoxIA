@@ -145,12 +145,12 @@ export const AGENTS: Record<string, AgentConfig> = {
   // sans avoir à naviguer dans /connectors, /workflows, /integrations/mcp.
   concierge: {
     slug: "concierge",
-    name: "Concierge BoxIA",
+    name: "Concierge AI Box",
     icon: "🛎️",
-    description: "Configure votre BoxIA en langage naturel — connecteurs, workflows, MCP, sans paramétrage manuel",
+    description: "Configure votre AI Box en langage naturel — connecteurs, workflows, MCP, sans paramétrage manuel",
     envVar: "DIFY_AGENT_CONCIERGE_API_KEY",
     openingStatement:
-      "🛎️ Bonjour ! Je suis votre Concierge BoxIA. Je peux configurer votre " +
+      "🛎️ Bonjour ! Je suis votre Concierge AI Box. Je peux configurer votre " +
       "box pour vous : connecter vos données (Outlook, Drive, Pennylane…), " +
       "installer des workflows d'automatisation, ajouter des assistants " +
       "spécialisés. Dites-moi ce que vous voulez faire en français naturel.",

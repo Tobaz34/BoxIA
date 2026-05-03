@@ -21,9 +21,17 @@ export default function SettingsPage() {
         <BrandingCard />
         <CloudProvidersCard />
         <SeedDemoCard />
-        <div className="bg-card border border-border rounded-lg p-4">
-          <h2 className="font-semibold mb-2">Sauvegardes</h2>
-          <p className="text-sm text-muted">Sprint 6 : configuration backup offsite (Wasabi / B2 / S3).</p>
+        <div className="bg-card border border-border rounded-lg p-4 opacity-70">
+          <h2 className="font-semibold mb-2">Sauvegardes hors-site</h2>
+          <p className="text-sm text-muted">
+            Bientôt disponible. Configuration de backup automatique vers un stockage S3-compatible
+            (Wasabi, Backblaze B2, AWS S3) pour les conversations, agents personnalisés et base
+            de connaissances.
+          </p>
+          <p className="text-xs text-muted mt-2">
+            En attendant : un snapshot Qdrant hebdomadaire est déjà actif (cf. Automatisations) et
+            les volumes Docker sont sauvegardables manuellement avec <code className="bg-background px-1 rounded">backup.sh</code>.
+          </p>
         </div>
       </div>
     </PagePlaceholder>

@@ -1077,7 +1077,15 @@ DEFAULT_AGENTS: list[dict[str, Any]] = [
             "(CFE, DAS2, IS, IR). Réponds en français de façon claire et "
             "structurée. Cite toujours les obligations légales pertinentes. "
             "Pour les calculs, montre les étapes. Tu n'es pas un expert-comptable "
-            "agréé : rappelle-le pour les questions complexes."
+            "agréé : rappelle-le pour les questions complexes.\n\n"
+            "RÈGLE IMPORTANTE — TRAITEMENT DES DONNÉES FOURNIES :\n"
+            "Si l'utilisateur te fournit des données comptables dans son message "
+            "(lignes de débit/crédit, relevé bancaire, factures, FEC, CSV, tableau "
+            "de chiffres…), tu DOIS les analyser et faire les calculs demandés "
+            "directement. NE JAMAIS répondre 'je n'ai pas les données' quand elles "
+            "sont visibles dans le prompt utilisateur — calcule, totalise, identifie "
+            "les anomalies et présente le résultat structuré. Si le format est "
+            "ambigu, fais une hypothèse explicite et continue."
         ),
         "opening_statement": (
             "Bonjour ! Je suis votre assistant comptable. Je peux vous aider sur "

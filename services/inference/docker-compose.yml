@@ -42,6 +42,14 @@ services:
       # le même modèle (gain x2-3 sur throughput multi-user). Limité à
       # 2 sur GPU 12 GB pour ne pas saturer la VRAM avec les vols KV.
       OLLAMA_NUM_PARALLEL: "2"
+      # Plafond modèles simultanés en VRAM. Sur GPU 12 GB, on peut
+      # cohabiter au max 2 modèles légers (ex: bge-m3 1.1G + qwen2.5vl
+      # 5.6G ou bge-m3 + qwen3:14b 10.6G). Mettre à 2 force Ollama à
+      # décharger LRU dès qu'un 3e modèle est demandé. Sans ce plafond
+      # explicite (défaut 3+), on tombait en `model failed to load` au
+      # switch agent texte → vision (BUG-022 : qwen3:14b déjà chargé +
+      # qwen2.5vl à charger = 16+ GB demandés sur 12 dispo).
+      OLLAMA_MAX_LOADED_MODELS: "2"
       # Flash Attention — accélère le KV cache de 30-40% et économise
       # ~20% VRAM. Active par défaut depuis Ollama 0.5+ mais on
       # explicite pour clarté + compat futurs versions.

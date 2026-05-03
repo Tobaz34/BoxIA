@@ -72,7 +72,7 @@ export default function HelpPage() {
             <FeatureRow icon={Slash}     title="Commandes /"
               hint="Tapez « / » pour ouvrir le menu : /new, /regen, /agent, /export, /summarize…" />
             <FeatureRow icon={Bot}       title="Plusieurs agents"
-              hint="Sélectionnez l'agent en haut de la liste de conversations : général, comptable, RH, support." />
+              hint="Sélectionnez l'agent en haut de la liste de conversations : général, vision, comptable, RH, support, juridique, concierge." />
           </div>
         </section>
 
@@ -122,9 +122,11 @@ export default function HelpPage() {
           <h2 className="text-lg font-semibold mb-3">FAQ</h2>
           <div className="space-y-3 text-sm">
             <Faq q="L'IA ne répond pas / met du temps">
-              Le 1<sup>er</sup> message d'une nouvelle conversation peut prendre 5-10s (chargement
-              du modèle en VRAM). Les suivants sont quasi-instantanés. Si ça reste bloqué &gt; 30s,
+              Le 1<sup>er</sup> message d'une nouvelle conversation peut prendre 10-20s (chargement
+              du modèle en VRAM). Les suivants sont quasi-instantanés. Si ça reste bloqué &gt; 60s,
               vérifiez « Ollama » dans <a href="/system" className="text-primary hover:underline">État du serveur</a>.
+              Si vous switchez d'un agent texte vers Vision (ou inversement), un fallback cloud
+              peut être proposé si la VRAM ne suffit pas pour les deux modèles en parallèle.
             </Faq>
             <Faq q="Mes données quittent-elles le serveur ?">
               <strong>Non.</strong> Tout reste sur votre AI Box : conversations, documents, agents.
@@ -138,18 +140,21 @@ export default function HelpPage() {
               {" "}<code className="bg-background px-1.5 py-0.5 rounded text-xs">sudo ./recover-admin-password.sh --random</code>
             </Faq>
             <Faq q="Comment ajouter un assistant personnalisé ?">
-              Pour l'instant, les 4 agents par défaut (général, comptable, RH, support) sont fixes.
-              Pour personnaliser leur comportement, allez dans <a href="/agents" className="text-primary hover:underline">Mes assistants</a> et
-              cliquez « Configurer ». La création d'agents 100&nbsp;% custom est sur la roadmap.
+              Allez dans <a href="/agents" className="text-primary hover:underline">Mes assistants</a> et
+              cliquez « Nouvel assistant » pour créer un agent 100&nbsp;% custom (nom, icône, pre-prompt,
+              modèle, rôles autorisés). Pour modifier l'un des 7 agents par défaut (général, vision,
+              comptable, RH, support, concierge, juridique), cliquez « Configurer » sur sa carte.
+              Vous pouvez aussi activer en 1 clic un template depuis la <a href="/agents/marketplace" className="text-primary hover:underline">Marketplace IA</a>.
             </Faq>
             <Faq q="Mes documents sont-ils utilisés pour entraîner le modèle ?">
               <strong>Non.</strong> Vos documents sont indexés via embeddings (RAG) pour permettre
-              à l'IA de les citer comme sources, mais aucun fine-tuning n'est effectué. Le modèle
-              qwen2.5:7b reste celui livré avec la box.
+              à l'IA de les citer comme sources, mais aucun fine-tuning n'est effectué. Les modèles
+              IA livrés (qwen3:14b pour le texte, qwen2.5vl:7b pour la vision) restent intacts.
             </Faq>
             <Faq q="Quelle est la limite de taille pour un fichier ?">
-              <strong>20 Mo</strong> par document, <strong>8 Mo</strong> par image. Pour des fichiers
-              plus gros, splittez-les ou utilisez un connecteur cloud.
+              <strong>15 Mo</strong> par document texte (PDF, DOCX, XLSX, CSV, MD…) et
+              <strong> 8 Mo</strong> par image (PNG, JPG). Pour des fichiers plus gros, splittez-les
+              ou utilisez un connecteur cloud (Drive, SharePoint, NAS…).
             </Faq>
             <Faq q="Comment exporter une conversation ?">
               Tapez <code>/export</code> dans le chat ou cliquez l'icône télécharger en haut de la

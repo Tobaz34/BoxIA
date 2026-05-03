@@ -357,8 +357,8 @@ export default function MarketplacePage() {
           <AlertCircle size={12} className="shrink-0 mt-0.5" />
           <span>
             Templates en français adaptés au marché TPE/PME français : TVA française,
-            code du travail, conventions BTP, RGPD, e-commerce. <strong>Tous configurés
-            sur Qwen2.5-7B local</strong> (pas d&apos;API key externe nécessaire).
+            code du travail, conventions BTP, RGPD, e-commerce. <strong>Tous tournent
+            sur le modèle local livré avec la box</strong> (pas d&apos;API key externe nécessaire).
           </span>
         </div>
       )}
@@ -479,9 +479,9 @@ export default function MarketplacePage() {
                       {t.description || "—"}
                     </p>
                     {t.tags.length > 0 && (
-                      <div className="flex items-center gap-1 flex-wrap mb-2">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-2">
                         {t.tags.slice(0, 4).map((tag) => (
-                          <span key={tag} className="text-[10px] text-muted bg-muted/15 px-1.5 py-0.5 rounded">
+                          <span key={tag} className="text-[10px] text-muted bg-muted/25 px-1.5 py-0.5 rounded">
                             {tag}
                           </span>
                         ))}

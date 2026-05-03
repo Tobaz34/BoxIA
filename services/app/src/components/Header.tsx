@@ -4,9 +4,19 @@ import { signOut, useSession } from "next-auth/react";
 import { LogOut, User, Menu, Sun, Moon, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import Link from "next/link";
-import { SystemMetricsWidget } from "./SystemMetricsWidget";
+import dynamic from "next/dynamic";
 import { useUI, setUI } from "@/lib/ui-store";
 import { useT } from "@/lib/i18n";
+
+// Le widget poll des métriques live (CPU/RAM/GPU + sparklines) toutes les
+// 5 s et fetch /api/system/ollama-status toutes les 10 s. Il manipule
+// Date.now() dans ses tooltips, ce qui causait des hydration mismatches
+// (React #418) à chaque tick → on le force en client-only pour éliminer
+// le SSR de ce sous-arbre, sans toucher au reste du Header.
+const SystemMetricsWidget = dynamic(
+  () => import("./SystemMetricsWidget").then((m) => m.SystemMetricsWidget),
+  { ssr: false },
+);
 
 interface HeaderProps {
   brandName: string;
@@ -83,7 +93,9 @@ export function Header({ brandName, brandLogoUrl }: HeaderProps) {
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full mt-2 w-52 rounded-md bg-card border border-border shadow-lg z-20 py-1">
+              {/* right-0 + max-w garde le menu dans le viewport même
+                  quand des extensions browser réduisent la zone utile. */}
+              <div className="absolute right-0 top-full mt-2 w-52 max-w-[calc(100vw-1rem)] rounded-md bg-card border border-border shadow-lg z-20 py-1">
                 <Link
                   href="/me"
                   className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30"

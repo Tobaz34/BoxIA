@@ -63,9 +63,12 @@ dist/
 build/
 
 # Memory (interne Claude, pas du repo produit) — exception pour services/memory/
+# et pour la route Next.js /api/me/memory/ (code source à versionner).
 memory/
 !services/memory/
 !services/memory/**
+!services/app/src/app/api/me/memory/
+!services/app/src/app/api/me/memory/**
 
 # Exception : exclure pycache de services/memory
 services/memory/**/__pycache__/
