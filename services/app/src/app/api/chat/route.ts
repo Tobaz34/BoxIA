@@ -26,6 +26,7 @@ import {
   updateTrace,
 } from "@/lib/langfuse";
 import { stripThinkFromSSE } from "@/lib/strip-think";
+import { wrapStreamWithFileDetector } from "@/lib/chat-stream-files";
 
 export const dynamic = "force-dynamic";
 
@@ -118,7 +119,17 @@ export async function POST(req: NextRequest) {
   // activé par défaut, le `/no_think` dans le pre_prompt est ignoré
   // par Ollama). Defense-in-depth : même si un agent n'a pas /no_think,
   // l'utilisateur ne verra jamais le raisonnement intermédiaire.
-  const filteredUpstream = stripThinkFromSSE(upstream.body);
+  const stripped = stripThinkFromSSE(upstream.body);
+  // BUG-006 wire — détecte les blocs [FILE:nom.ext]…[/FILE] que l'agent
+  // peut émettre, génère le DOCX/XLSX/PDF/PS1/etc côté serveur, stocke
+  // dans /data/generated/UUID, et remplace le bloc par un marker
+  // `{{file:UUID:nom:size:mime}}` que MessageMarkdown.tsx rend en chip
+  // download cliquable. Patch additif (chain post strip-think).
+  const filteredUpstream = wrapStreamWithFileDetector(stripped, {
+    user: ctx.user,
+    outputDir: "/data/generated",
+    conversationId: body.conversation_id || undefined,
+  });
 
   // Tee le stream pour : (1) client SSE, (2) capture pour mémorisation
   // mem0 ET update de trace Langfuse avec l'output final. On utilise un

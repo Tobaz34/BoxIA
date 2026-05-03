@@ -162,3 +162,99 @@ export class FileDetector {
     }
   }
 }
+
+// =========================================================================
+// Wrapper de stream SSE — BUG-006 patch entry point
+// =========================================================================
+//
+// Patch BUG-006 (proposed-fixes/BUG-006-file-marker.md) :
+//   route.ts ligne ~121 :
+//     const stripped = stripThinkFromSSE(upstream.body);
+//     const filteredUpstream = wrapStreamWithFileDetector(stripped, {
+//       user: ctx.user,
+//       outputDir: "/data/generated",
+//     });
+//
+// Cette fonction parse le SSE Dify ligne par ligne, intercepte les events
+// JSON `message` / `agent_message` qui ont un champ `answer` string, passe
+// ce contenu au FileDetector, et ré-émet l'event modifié vers le client.
+// Les autres events (workflow_started, message_end, error, etc.) sont
+// passthrough sans modification.
+
+interface WrapOptions {
+  /** Email du user (= owner du fichier généré, pour le download check). */
+  user: string;
+  /** Conserve la signature pour conformité au patch .md ; le storage est
+   *  hardcodé à `/data/generated/` côté file-storage.ts. Inutilisé ici. */
+  outputDir?: string;
+  conversationId?: string;
+}
+
+export function wrapStreamWithFileDetector(
+  upstream: ReadableStream<Uint8Array>,
+  opts: WrapOptions,
+): ReadableStream<Uint8Array> {
+  const detector = new FileDetector({
+    ownerEmail: opts.user,
+    conversationId: opts.conversationId,
+  });
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let lineBuffer = "";
+
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    async transform(chunk, controller) {
+      lineBuffer += decoder.decode(chunk, { stream: true });
+      let nlIdx: number;
+      while ((nlIdx = lineBuffer.indexOf("\n")) >= 0) {
+        const line = lineBuffer.slice(0, nlIdx);
+        lineBuffer = lineBuffer.slice(nlIdx + 1);
+        const out = await processSseLine(line, detector);
+        if (out !== null) controller.enqueue(encoder.encode(out + "\n"));
+      }
+    },
+    async flush(controller) {
+      if (lineBuffer.length > 0) {
+        const out = await processSseLine(lineBuffer, detector);
+        if (out !== null) controller.enqueue(encoder.encode(out));
+        lineBuffer = "";
+      }
+      // Cas tolérant : si l'agent a oublié de fermer son [FILE:...] avant
+      // la fin du stream, materializeFile() est appelé quand même par
+      // detector.flush(). On émet alors un event message synthétique avec
+      // le marker pour que l'UI affiche la chip.
+      const tail = await detector.flush();
+      if (tail) {
+        const evt = { event: "message", answer: tail };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
+      }
+    },
+  });
+
+  // Pipe upstream → transform en arrière-plan, retourne le readable
+  upstream.pipeTo(transform.writable).catch((e) => {
+    console.warn("[chat-stream-files] pipe error:", e);
+  });
+  return transform.readable;
+}
+
+async function processSseLine(line: string, detector: FileDetector): Promise<string | null> {
+  if (!line || !line.startsWith("data:")) return line;
+  const payload = line.slice(5).trim();
+  if (!payload || payload === "[DONE]") return line;
+  try {
+    const evt = JSON.parse(payload);
+    if (
+      (evt.event === "message" || evt.event === "agent_message") &&
+      typeof evt.answer === "string" && evt.answer.length > 0
+    ) {
+      const replaced = await detector.push(evt.answer);
+      if (replaced === evt.answer) return line;
+      const newEvt = { ...evt, answer: replaced };
+      return `data: ${JSON.stringify(newEvt)}`;
+    }
+    return line;
+  } catch {
+    return line; // JSON invalide → passthrough
+  }
+}

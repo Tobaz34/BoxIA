@@ -16,8 +16,11 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
-import { Check, Copy, Eye } from "lucide-react";
-import { useState, type ComponentProps } from "react";
+import {
+  Check, Copy, Eye, Download, Loader2,
+  File as FileIcon, FileText, FileType, FileSpreadsheet, FileCode,
+} from "lucide-react";
+import { useMemo, useState, type ComponentProps } from "react";
 import { ArtifactPanel } from "./ArtifactPanel";
 import {
   artifactKindFromLang,
@@ -37,27 +40,9 @@ function CodeBlockHeader({
   onOpenArtifact?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const saveExt = SAVE_EXT_BY_LANG[lang.toLowerCase()];
-
-  function handleSave() {
-    if (!saveExt) return;
-    const isDockerfile = saveExt === "Dockerfile";
-    const filename = isDockerfile
-      ? "Dockerfile"
-      : `script-${Date.now().toString(36)}.${saveExt}`;
-    const mime = saveExt === "json" ? "application/json"
-      : saveExt === "html" ? "text/html"
-      : "text/plain";
-    const blob = new Blob([raw], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
+  // BUG-020 (Save as .ext) : ancien code orphan retiré — la constante
+  // SAVE_EXT_BY_LANG n'a jamais été commit. Le bouton "Save as" sera
+  // ré-ajouté dans une session future si BUG-020 est priorisé.
 
   return (
     <div className="flex items-center justify-between px-3 py-1 text-[11px] text-muted bg-muted/10 border-b border-border">
@@ -231,13 +216,11 @@ function extractText(node: unknown): string {
 }
 
 export function MessageMarkdown({ content }: { content: string }) {
-  // État du panneau Canvas/Artifact — un seul panneau ouvert à la fois,
-  // peu importe combien de blocks rendables il y a dans la réponse.
-  const [artifact, setArtifact] = useState<{
-    kind: ArtifactKind;
-    code: string;
-    title: string;
-  } | null>(null);
+  // BUG-006 — Split le content sur les markers `{{file:UUID:nom:size:mime}}`
+  // injectés par le proxy `/api/chat` quand l'agent émet [FILE:...]. Pour
+  // chaque segment fichier on rend une chip download cliquable, sinon
+  // markdown standard.
+  const segments = useMemo(() => parseFileMarkers(content), [content]);
 
   return (
     <div className="prose-chat">
@@ -251,6 +234,14 @@ export function MessageMarkdown({ content }: { content: string }) {
 }
 
 function MarkdownPart({ content }: { content: string }) {
+  // État du panneau Canvas/Artifact — un seul panneau ouvert à la fois
+  // par segment de message rendu.
+  const [artifact, setArtifact] = useState<{
+    kind: ArtifactKind;
+    code: string;
+    title: string;
+  } | null>(null);
+
   return (
     <div>
       <ReactMarkdown
