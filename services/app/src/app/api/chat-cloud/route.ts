@@ -37,6 +37,7 @@ import {
   recordCloudSuccess,
   recordCloudError,
   classifyCloudError,
+  estimateCallCostEur,
   type CloudProviderId,
 } from "@/lib/cloud-providers";
 import { scrubPII, summarizeScrub } from "@/lib/pii-scrub";
@@ -389,7 +390,7 @@ function convertProviderStreamToDifySSE(
         // Estimation tokens : ~4 chars/token (heuristique standard).
         const inputTokens = Math.ceil(inputQuery.length / 4);
         const outputTokens = Math.ceil(totalAnswer.length / 4);
-        const costEur = estimateCostEur(provider, model, inputTokens, outputTokens);
+        const costEur = estimateCallCostEur(model, inputTokens, outputTokens);
 
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({
           event: "message_end",
@@ -425,36 +426,8 @@ function convertProviderStreamToDifySSE(
   });
 }
 
-/** Tarifs approximatifs en € par 1M tokens (input/output).
- *  Valeurs 2026 indicatives — utilisées uniquement pour le compteur
- *  cost_eur_this_month et les seuils d'alerte budget UI. Les vraies
- *  factures viennent du dashboard du provider.
- */
-const PRICING_EUR_PER_1M_TOKENS: Record<string, { in: number; out: number }> = {
-  // OpenAI
-  "gpt-4o":            { in: 2.30, out: 9.20 },
-  "gpt-4o-mini":       { in: 0.14, out: 0.55 },
-  // Anthropic
-  "claude-sonnet-4-5": { in: 2.80, out: 14.0 },
-  "claude-haiku-4-5":  { in: 0.74, out: 3.70 },
-  "claude-opus-4-7":   { in: 14.0, out: 70.0 },
-  // Google Gemini (gratuit jusqu'à un certain quota, mais on estime quand même)
-  "gemini-2.5-flash":  { in: 0.07, out: 0.28 },
-  "gemini-2.5-pro":    { in: 1.15, out: 4.60 },
-  // Mistral
-  "mistral-large-latest": { in: 1.84, out: 5.52 },
-  "mistral-small-latest": { in: 0.18, out: 0.55 },
-};
-
-function estimateCostEur(
-  provider: CloudProviderId, model: string,
-  inputTokens: number, outputTokens: number,
-): number {
-  const pricing = PRICING_EUR_PER_1M_TOKENS[model] || { in: 1.0, out: 3.0 };
-  const cost = (inputTokens * pricing.in + outputTokens * pricing.out) / 1_000_000;
-  void provider; // pricing keyed by model; provider just for logs
-  return Math.round(cost * 10000) / 10000;  // 4 décimales (sub-cent visible)
-}
+// Pricing : centralisé dans @/lib/cloud-providers (estimateCallCostEur)
+// pour rester DRY avec l'UI /settings qui affiche les tarifs par modèle.
 
 function extractAnswerChunk(provider: CloudProviderId, evt: unknown): string {
   const e = evt as Record<string, unknown>;

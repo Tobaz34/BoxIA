@@ -18,6 +18,9 @@ import {
   removeProviderConfig,
   setBudget,
   setPiiScrub,
+  setProviderEnabledModels,
+  resetProviderCounters,
+  PRICING_EUR_PER_1M_TOKENS,
   type CloudProviderId,
 } from "@/lib/cloud-providers";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
@@ -38,6 +41,7 @@ export async function GET() {
     state: state.providers,
     budget_monthly_eur: state.budget_monthly_eur,
     pii_scrub_enabled: state.pii_scrub_enabled,
+    pricing: PRICING_EUR_PER_1M_TOKENS,  // €/1M tokens par modèle (UI cost mgmt)
   });
 }
 
@@ -45,6 +49,10 @@ interface PostBody {
   id?: string;
   api_key?: string;
   enabled_models?: string[];
+  // Action ciblée provider (mode "patch" sans api_key)
+  // - "reset_counters" : remet à zéro cost / requests / last_error / last_success
+  // - "update_models"  : met à jour enabled_models[] sans toucher la clé
+  action?: "reset_counters" | "update_models";
   // Settings globaux (mode "update settings only")
   budget_monthly_eur?: number;
   pii_scrub_enabled?: boolean;
@@ -87,6 +95,41 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  // Mode "action ciblée" (reset_counters / update_models) — pas de clé requise
+  if (body.action === "reset_counters") {
+    const id = body.id as CloudProviderId;
+    await resetProviderCounters(id);
+    await logAction("settings.update", session.user.email, {
+      target: "cloud-providers",
+      action: "reset_counters",
+      provider: id,
+    }, ipFromHeaders(req));
+    return NextResponse.json({ ok: true, reset: id });
+  }
+
+  if (body.action === "update_models") {
+    const id = body.id as CloudProviderId;
+    if (!Array.isArray(body.enabled_models)) {
+      return NextResponse.json(
+        { error: "missing_enabled_models" }, { status: 400 });
+    }
+    const updated = await setProviderEnabledModels(id, body.enabled_models);
+    if (!updated) {
+      return NextResponse.json(
+        { error: "provider_not_configured",
+          message: "Configure d'abord la clé API avant d'éditer les modèles." },
+        { status: 400 });
+    }
+    await logAction("settings.update", session.user.email, {
+      target: "cloud-providers",
+      action: "update_models",
+      provider: id,
+      models: body.enabled_models,
+    }, ipFromHeaders(req));
+    return NextResponse.json({ ok: true, state: updated });
+  }
+
   if (!body.api_key || typeof body.api_key !== "string" || body.api_key.length < 20) {
     return NextResponse.json(
       { error: "missing_api_key", hint: "Saisis ta clé API du provider (≥ 20 caractères)" },

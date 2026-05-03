@@ -357,6 +357,90 @@ export async function recordCloudError(
   await writeCloudProvidersState(s);
 }
 
+/** Met à jour uniquement la liste des modèles activés (sans toucher la clé).
+ *  Utilisé par /settings → toggle d'activation par modèle, qui ne demande
+ *  pas de re-saisir la clé. Si le provider n'est pas encore configuré on
+ *  ne fait rien (pas d'enabled_models sans clé). */
+export async function setProviderEnabledModels(
+  id: CloudProviderId,
+  enabled_models: string[],
+): Promise<CloudProviderState | null> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur || !cur.configured) return null;
+  s.providers[id] = { ...cur, enabled_models };
+  await writeCloudProvidersState(s);
+  return s.providers[id];
+}
+
+/** Reset des compteurs mensuels pour un provider (cost_eur_this_month,
+ *  requests_this_month, tokens_this_month, last_error, last_success_at).
+ *  Utile pour redémarrer un cycle de facturation, ou clear un état "rouge"
+ *  après résolution manuelle (rotation de clé, top-up de crédits). */
+export async function resetProviderCounters(id: CloudProviderId): Promise<void> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur) return;
+  s.providers[id] = {
+    ...cur,
+    tokens_this_month: 0,
+    cost_eur_this_month: 0,
+    requests_this_month: 0,
+    last_error: undefined,
+    last_success_at: undefined,
+  };
+  await writeCloudProvidersState(s);
+}
+
+// =========================================================================
+// Pricing modèles cloud (€/1M tokens, valeurs 2026 indicatives)
+// =========================================================================
+// Source de vérité : utilisée par /api/chat-cloud pour estimer le coût à
+// chaque appel (cost_eur incrémenté dans cost_eur_this_month) ET par l'UI
+// /settings pour afficher le tarif en regard de chaque modèle activable.
+//
+// Les vraies factures viennent du dashboard du provider — cette table sert
+// uniquement à donner une visibilité au client + déclencher les seuils
+// d'alerte budget (80% warning, 100% block).
+export interface ModelPricing {
+  /** € par 1M tokens en input (prompt). */
+  in: number;
+  /** € par 1M tokens en output (génération). */
+  out: number;
+}
+
+export const PRICING_EUR_PER_1M_TOKENS: Record<string, ModelPricing> = {
+  // OpenAI
+  "gpt-4o":            { in: 2.30, out: 9.20 },
+  "gpt-4o-mini":       { in: 0.14, out: 0.55 },
+  // Anthropic Claude 4.x (rebrand 2026)
+  "claude-sonnet-4-5": { in: 2.80, out: 14.0 },
+  "claude-haiku-4-5":  { in: 0.74, out: 3.70 },
+  "claude-opus-4-7":   { in: 14.0, out: 70.0 },
+  // Google Gemini
+  "gemini-2.5-flash":  { in: 0.07, out: 0.28 },
+  "gemini-2.5-pro":    { in: 1.15, out: 4.60 },
+  // Mistral
+  "mistral-large-latest": { in: 1.84, out: 5.52 },
+  "mistral-small-latest": { in: 0.18, out: 0.55 },
+};
+
+/** Tarif fallback (modèle inconnu) — moyenne raisonnable. */
+const DEFAULT_PRICING: ModelPricing = { in: 1.0, out: 3.0 };
+
+export function getModelPricing(model: string): ModelPricing {
+  return PRICING_EUR_PER_1M_TOKENS[model] || DEFAULT_PRICING;
+}
+
+/** Estime le coût d'un appel à partir des tokens input/output. */
+export function estimateCallCostEur(
+  model: string, inputTokens: number, outputTokens: number,
+): number {
+  const p = getModelPricing(model);
+  const cost = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
+  return Math.round(cost * 10000) / 10000;  // 4 décimales
+}
+
 /** Classifie un message d'erreur HTTP du provider en code stable utilisable
  *  par computeProviderHealth (et par l'UI pour message localisé). */
 export function classifyCloudError(
