@@ -147,7 +147,20 @@ create_backup_tag() {
 reset_to_branch() {
   local branch="$1"
   log "git fetch + reset --hard origin/$branch sur xefia"
-  ssh_cmd "cd $SERVER_REPO && git fetch origin --quiet && git reset --hard origin/$branch" \
+  # GITHUB_TOKEN local (env du watcher ou shell dev) → on le pousse à la
+  # session SSH et on configure un credential.helper inline qui tape
+  # x-access-token:$GITHUB_TOKEN pour le git fetch HTTPS. Indispensable si
+  # le repo Tobaz34/BoxIA passe privé. Sans token : git fetch reste anonyme
+  # (OK pour repo public).
+  local cred_helper=''
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    cred_helper="-c credential.helper='!f() { sleep 0.1; echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f'"
+  fi
+  ssh_cmd "cd $SERVER_REPO && \
+    [ -f $ENV_FILE ] && set -a && . $ENV_FILE && set +a; \
+    GITHUB_TOKEN=\${GITHUB_TOKEN:-${GITHUB_TOKEN:-}} \
+    git $cred_helper fetch origin --quiet && \
+    git reset --hard origin/$branch" \
     | tail -3 >&2
   ok "Working tree synchronisé"
 }

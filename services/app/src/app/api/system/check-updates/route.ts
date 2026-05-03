@@ -16,6 +16,7 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { getActiveGitHubToken } from "@/lib/github-token";
 
 export const dynamic = "force-dynamic";
 
@@ -51,16 +52,14 @@ async function readLocalVersion(): Promise<VersionInfo> {
   return {};
 }
 
-async function fetchGithubCommits(branch: string): Promise<{ sha: string; commit: { author: { date: string; name: string }; message: string } }[]> {
+async function fetchGithubCommits(branch: string, token: string | null): Promise<{ sha: string; commit: { author: { date: string; name: string }; message: string } }[]> {
   const url = `https://api.github.com/repos/${REPO}/commits?sha=${encodeURIComponent(branch)}&per_page=20`;
-  const r = await fetch(url, {
-    headers: {
-      "Accept": "application/vnd.github+json",
-      "User-Agent": "aibox-app/check-updates",
-    },
-    // Cache désactivé : on a déjà notre cache mémoire en amont.
-    cache: "no-store",
-  });
+  const headers: Record<string, string> = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "aibox-app/check-updates",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const r = await fetch(url, { headers, cache: "no-store" });
   if (!r.ok) {
     throw new Error(`GitHub API ${r.status}: ${await r.text().catch(() => "")}`);
   }
@@ -76,9 +75,23 @@ export async function GET() {
   const localSha = (local.commit_sha || "").trim();
   const branch = (local.branch || FALLBACK_BRANCH).trim() || FALLBACK_BRANCH;
 
+  // Token GitHub : sans token sur repo privé, GitHub renvoie 404 ; sur
+  // repo public, marche mais limité à 60/h. Avec token, 5000/h.
+  const active = await getActiveGitHubToken();
+  if (!active) {
+    return NextResponse.json({
+      error: "no_github_token",
+      hint: "Connecte un token GitHub dans /settings (carte Connexion GitHub)",
+      up_to_date: false,
+      behind_count: 0,
+      local_sha: localSha,
+      remote_sha: "",
+    });
+  }
+
   let payload: unknown;
   try {
-    const commits = await fetchGithubCommits(branch);
+    const commits = await fetchGithubCommits(branch, active.token);
     if (commits.length === 0) {
       payload = { error: "no_commits_found", up_to_date: true, behind_count: 0, local_sha: localSha, remote_sha: "" };
     } else {

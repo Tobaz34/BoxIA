@@ -23,7 +23,24 @@ FLAG="$DATA_DIR/.update-requested"
 STATUS="$DATA_DIR/.update-status"
 LOG_FILE="$DATA_DIR/update-watcher.log"
 DEPLOY_LOG="$DATA_DIR/last-deploy.log"
+ENV_FILE="$REPO/.env"
+RUNTIME_TOKEN="$DATA_DIR/.github-token-runtime"
 POLL_SEC=5
+
+# Charge GITHUB_TOKEN en cascade :
+#   1. .env (provisioning master)
+#   2. /data/.github-token-runtime (saisie UI, écrit par /api/system/github-token)
+load_github_token() {
+  unset GITHUB_TOKEN
+  if [[ -f "$ENV_FILE" ]]; then
+    # Lit la variable sans tout exporter (set -a) pour ne pas polluer le shell.
+    GITHUB_TOKEN=$(grep -E '^GITHUB_TOKEN=' "$ENV_FILE" | head -1 | cut -d= -f2- | sed 's/^"//; s/"$//')
+  fi
+  if [[ -z "${GITHUB_TOKEN:-}" && -f "$RUNTIME_TOKEN" ]]; then
+    GITHUB_TOKEN=$(cat "$RUNTIME_TOKEN" 2>/dev/null || true)
+  fi
+  export GITHUB_TOKEN
+}
 
 mkdir -p "$DATA_DIR"
 touch "$LOG_FILE"
@@ -70,7 +87,8 @@ run_deploy() {
   write_status "running" "starting" "Démarrage du déploiement…" "$extra"
 
   # On lance deploy-to-xefia.sh en redirigeant tout vers DEPLOY_LOG.
-  # Le watcher continue de poller le log et écrit le step courant.
+  # GITHUB_TOKEN exporté pour que le git fetch ait l'auth si repo privé.
+  load_github_token
   : >"$DEPLOY_LOG"
   (
     cd "$REPO"

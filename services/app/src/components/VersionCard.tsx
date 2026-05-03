@@ -11,7 +11,7 @@
  * les changements récents en markdown rendu (titres, listes Added/Fixed/etc).
  */
 import { useEffect, useRef, useState } from "react";
-import { Tag, GitBranch, Calendar, ChevronDown, ChevronRight, Info, RefreshCw, Download, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { Tag, GitBranch, Calendar, ChevronDown, ChevronRight, Info, RefreshCw, Download, CheckCircle2, AlertTriangle, Loader2, Github, Link2, Link2Off, KeyRound } from "lucide-react";
 
 interface VersionInfo {
   app_version: string;
@@ -55,6 +55,18 @@ interface UpdateStatus {
   branch?: string;
   exit_code?: number;
   log_tail?: string[];
+}
+
+interface GitHubStatus {
+  connected: boolean;
+  source?: "env" | "file" | null;
+  login?: string;
+  scopes?: string[];
+  saved_at?: string;
+  saved_by?: string;
+  last_validated_at?: string;
+  validation_error?: string;
+  rate_limit?: { remaining: number; limit: number; reset_at: string };
 }
 
 function relTime(iso: string): string {
@@ -108,13 +120,162 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function GitHubConnectionPanel({
+  gh, onSave, onDelete, onRevalidate,
+}: {
+  gh: GitHubStatus | null;
+  onSave: (token: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onDelete: () => Promise<void>;
+  onRevalidate: () => void;
+}) {
+  const [showInput, setShowInput] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+
+  if (gh === null) {
+    return (
+      <div className="mb-3 px-3 py-2 rounded border border-border bg-muted/5 text-xs text-muted">
+        <Loader2 size={12} className="inline animate-spin mr-1.5" />
+        Chargement de l'état GitHub…
+      </div>
+    );
+  }
+
+  // Connecté
+  if (gh.connected) {
+    return (
+      <div className="mb-3 px-3 py-2.5 rounded border border-border bg-muted/5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Github size={14} className="text-emerald-400" />
+          <span className="text-xs font-medium text-emerald-300">
+            GitHub connecté{gh.login ? ` — @${gh.login}` : ""}
+          </span>
+          <span className="text-[10px] text-muted">
+            (source : {gh.source === "env" ? "provisioning .env" : "saisie UI"})
+          </span>
+          {gh.rate_limit && (
+            <span className="text-[10px] text-muted">
+              rate {gh.rate_limit.remaining}/{gh.rate_limit.limit}
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={onRevalidate}
+              className="text-[11px] text-muted hover:text-foreground flex items-center gap-1"
+              title="Re-valider le token (ping /user)"
+            >
+              <RefreshCw size={10} /> Tester
+            </button>
+            {gh.source === "file" && (
+              <button
+                onClick={onDelete}
+                className="text-[11px] text-red-400/80 hover:text-red-300 flex items-center gap-1"
+                title="Supprimer le token stocké"
+              >
+                <Link2Off size={10} /> Déconnecter
+              </button>
+            )}
+          </div>
+        </div>
+        {gh.validation_error && (
+          <div className="mt-2 text-[11px] text-red-400 flex items-start gap-1.5">
+            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+            Validation échouée : {gh.validation_error}
+          </div>
+        )}
+        {gh.scopes && gh.scopes.length > 0 && (
+          <div className="mt-1 text-[10px] text-muted font-mono">
+            scopes : {gh.scopes.join(", ")}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Non connecté
+  return (
+    <div className="mb-3 px-3 py-2.5 rounded border border-amber-500/30 bg-amber-500/5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Github size={14} className="text-amber-400" />
+        <span className="text-xs font-medium text-amber-300">
+          GitHub non connecté
+        </span>
+        <span className="text-[11px] text-amber-200/70">
+          — sans token, pas de vérification ni de mise à jour
+        </span>
+        <button
+          onClick={() => setShowInput((s) => !s)}
+          className="ml-auto px-2 py-1 rounded border border-border hover:bg-muted/15 text-[11px] flex items-center gap-1"
+        >
+          <KeyRound size={11} /> {showInput ? "Annuler" : "Connecter un token"}
+        </button>
+      </div>
+      {showInput && (
+        <div className="mt-2.5 space-y-2">
+          <div className="text-[11px] text-muted">
+            Crée un fine-grained PAT sur{" "}
+            <a
+              href="https://github.com/settings/personal-access-tokens/new"
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-400 hover:underline"
+            >
+              github.com/settings/personal-access-tokens/new
+            </a>{" "}
+            avec accès <code className="text-foreground">Tobaz34/BoxIA</code> en lecture
+            (Repository permissions → Contents : Read-only).
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={tokenInput}
+              onChange={(e) => { setTokenInput(e.target.value); setSaveErr(null); }}
+              placeholder="github_pat_… ou ghp_…"
+              className="flex-1 px-2.5 py-1.5 rounded border border-border bg-card text-xs font-mono"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              disabled={saving || !tokenInput.trim()}
+              onClick={async () => {
+                setSaving(true);
+                setSaveErr(null);
+                const res = await onSave(tokenInput.trim());
+                setSaving(false);
+                if (res.ok) {
+                  setTokenInput("");
+                  setShowInput(false);
+                } else {
+                  setSaveErr(res.error);
+                }
+              }}
+              className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs flex items-center gap-1.5"
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
+              Tester & enregistrer
+            </button>
+          </div>
+          {saveErr && (
+            <div className="text-[11px] text-red-400 flex items-start gap-1.5">
+              <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+              {saveErr}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UpdateBanner({
-  check, checking, status, triggering, onCheck, onUpdate,
+  check, checking, status, triggering, ghConnected, onCheck, onUpdate,
 }: {
   check: UpdateCheck | null;
   checking: boolean;
   status: UpdateStatus;
   triggering: boolean;
+  ghConnected: boolean;
   onCheck: () => void;
   onUpdate: () => void;
 }) {
@@ -190,8 +351,9 @@ function UpdateBanner({
     <div className="mb-3 flex items-start gap-3 flex-wrap">
       <button
         onClick={onCheck}
-        disabled={checking}
-        className="px-3 py-1.5 rounded border border-border hover:bg-muted/15 text-xs flex items-center gap-1.5 disabled:opacity-50"
+        disabled={checking || !ghConnected}
+        title={!ghConnected ? "Connecte d'abord un token GitHub ci-dessus" : undefined}
+        className="px-3 py-1.5 rounded border border-border hover:bg-muted/15 text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {checking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
         Vérifier les mises à jour
@@ -244,7 +406,15 @@ export function VersionCard() {
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
   const [triggering, setTriggering] = useState(false);
+  const [gh, setGh] = useState<GitHubStatus | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function refreshGh(revalidate = false) {
+    fetch(`/api/system/github-status${revalidate ? "?revalidate=1" : ""}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: GitHubStatus | null) => setGh(j))
+      .catch(() => {});
+  }
 
   useEffect(() => {
     fetch("/api/version", { cache: "no-store" })
@@ -262,11 +432,39 @@ export function VersionCard() {
         }
       })
       .catch(() => {});
+    refreshGh(false);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleSaveToken(token: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const r = await fetch("/api/system/github-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        return { ok: false, error: j.details || j.hint || j.error || `HTTP ${r.status}` };
+      }
+      refreshGh(true);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e instanceof Error ? e.message : e) };
+    }
+  }
+
+  async function handleDeleteToken() {
+    if (!confirm("Supprimer le token GitHub ? Le bouton « Vérifier les mises à jour » ne fonctionnera plus.")) {
+      return;
+    }
+    await fetch("/api/system/github-token", { method: "DELETE" });
+    refreshGh(false);
+    setCheck(null);
+  }
 
   function startPolling() {
     if (pollRef.current) return;
@@ -399,12 +597,21 @@ export function VersionCard() {
         </div>
       )}
 
+      {/* Section "Connexion GitHub" : pré-requis pour le check + update */}
+      <GitHubConnectionPanel
+        gh={gh}
+        onSave={handleSaveToken}
+        onDelete={handleDeleteToken}
+        onRevalidate={() => refreshGh(true)}
+      />
+
       {/* Bandeau MAJ : statut en cours OU bouton vérifier */}
       <UpdateBanner
         check={check}
         checking={checking}
         status={status}
         triggering={triggering}
+        ghConnected={gh?.connected || false}
         onCheck={handleCheck}
         onUpdate={handleUpdate}
       />
