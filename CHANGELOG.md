@@ -7,6 +7,29 @@
 
 ---
 
+## [0.2.1] — 2026-05-03
+
+### Added
+- **Self-update depuis l'UI** : carte « Version & mises à jour » de
+  `/settings` propose maintenant un bouton « Vérifier les mises à jour »
+  (compare le commit local au tip de main via GitHub API) et, si retard,
+  un bouton « Mettre à jour maintenant » qui déclenche un déploiement
+  complet (git fetch + rebuild + smoke test) sans accès SSH au serveur.
+- **Connexion GitHub master** : carte « Connexion GitHub » (env-first +
+  saisie UI d'un fine-grained PAT, scope minimal Contents Read sur
+  Tobaz34/BoxIA). Pré-requis pour le bouton de mise à jour : « pas de
+  compte, pas de MAJ ». Token chiffré AES-256-GCM at-rest.
+
+### Fixed
+- **Migration `0001_dify_max_tokens_8192`** : flow d'auth Dify ≥1.10
+  (cookies httpOnly + X-CSRF-TOKEN au lieu du token dans le body de /login).
+- **`tools/deploy-to-xefia.sh`** : `run-pending.py` n'était plus skippé
+  silencieusement (`-x` → `-f`), `.env` chargé pour les vars admin requises
+  par les migrations, `BUILD_COMMIT_*` exporté pour que `version.json` ait
+  le bon commit_sha.
+
+---
+
 ## [0.2.0] — 2026-05-01
 
 ### Added
