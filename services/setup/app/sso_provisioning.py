@@ -811,8 +811,8 @@ def _add_ollama_model(c: httpx.Client, base: str, model_name: str,
                 "credentials": {
                     "mode": "chat",
                     "model": model_name,
-                    "context_size": "4096",
-                    "max_tokens": "4096",
+                    "context_size": "8192",
+                    "max_tokens": "8192",
                     "base_url": ollama_url,
                 },
             },
@@ -940,13 +940,15 @@ def _set_app_default_model(c: httpx.Client, base: str, app_id: str,
             "completion_params": {
                 "temperature": 0.7,
                 "top_p": 1,
-                # 2048 (vs 1024 historique) : qwen3:14b et qwen2.5vl:7b
-                # peuvent générer des réponses longues (calcul détaillé,
-                # plan d'amortissement, audit RGPD checklist…). Le 1024
-                # tronquait à mi-réponse sur les prompts complexes du
-                # protocole de tests. Pas de risque mémoire significatif
-                # à cette taille de contexte (4K base).
-                "max_tokens": 2048,
+                # 8192 : qwen3:14b consomme 1500-2000 tokens en `<think>`
+                # avant de produire la vraie réponse (CoT activé par défaut).
+                # Avec 2048 cap, le texte utile était tronqué (BUG-013 :
+                # tableaux comptables coupés à la 1ʳᵉ ligne). Le filtre
+                # strip-think côté proxy retire le think — mais Ollama l'a
+                # déjà compté. 8K = marge confortable pour réponses longues
+                # (audits RGPD, plans d'amortissement) sans risque mémoire
+                # à 8K context.
+                "max_tokens": 8192,
             },
         },
         "dataset_configs": {
