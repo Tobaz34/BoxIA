@@ -164,8 +164,14 @@ rebuild_app() {
 run_pending_migrations() {
   if ssh_cmd "test -d $SERVER_REPO/tools/migrations"; then
     log "Re-joue les migrations DB pendantes (tools/migrations/run-pending.py)"
-    if ssh_cmd "test -x $SERVER_REPO/tools/migrations/run-pending.py"; then
-      ssh_cmd "cd $SERVER_REPO && python3 tools/migrations/run-pending.py" >&2 || warn "Migrations ont échoué — investiguer"
+    # NB: test -f, pas -x — git check-out à 100644 (pas de bit exec), on
+    # invoque toujours via python3 explicite donc c'est ok.
+    # ENV_FILE chargé pour ADMIN_EMAIL/PASSWORD/etc. requis par les migrations.
+    # DIFY_CONSOLE_API forcé sur localhost:8081 (nginx mappé) car
+    # aibox-dify-api:5001 n'est pas résolvable depuis le host xefia (DNS
+    # interne docker uniquement).
+    if ssh_cmd "test -f $SERVER_REPO/tools/migrations/run-pending.py"; then
+      ssh_cmd "cd $SERVER_REPO && set -a && . $ENV_FILE && set +a && DIFY_CONSOLE_API=\${DIFY_CONSOLE_API:-http://localhost:8081/console/api} python3 tools/migrations/run-pending.py" >&2 || warn "Migrations ont échoué — investiguer"
     else
       warn "tools/migrations/ existe mais run-pending.py absent — skip"
     fi
