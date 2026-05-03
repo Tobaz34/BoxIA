@@ -440,11 +440,11 @@ export default function WorkflowsMarketplacePage() {
                   )}
 
                   <div className="flex items-center justify-between gap-2 mt-auto">
-                    <div className="flex items-center gap-1 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {w.boxia_services.map((s) => (
                         <span
                           key={s}
-                          className="text-[10px] text-muted bg-muted/15 px-1.5 py-0.5 rounded"
+                          className="text-[10px] text-muted bg-muted/25 px-1.5 py-0.5 rounded"
                         >
                           {s}
                         </span>

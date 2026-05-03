@@ -304,7 +304,7 @@ export function CloudProvidersCard() {
           <div className="text-[11px] text-muted">
             Conso ce mois : <strong>{totalCost.toFixed(3)} €</strong> /{" "}
             {data.budget_monthly_eur} € ({budgetPct}%) ·{" "}
-            <strong>{totalRequests}</strong> requêtes
+            <strong>{totalRequests}</strong> {totalRequests <= 1 ? "requête" : "requêtes"}
             {budgetPct >= 80 && (
               <span className={"ml-2 " + (budgetPct >= 100 ? "text-red-400" : "text-amber-400")}>
                 {budgetPct >= 100 ? "⛔ Plafond atteint" : "⚠ Approche du plafond"}

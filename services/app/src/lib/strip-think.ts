@@ -28,6 +28,20 @@ const CLOSE_RE = /<\/think(?:ing)?>/gi;
 // on bufferise jusqu'à un nb max de chars puis on flush si rien match.
 const MAX_BUFFER = 64;
 
+// Format ReAct interne (qwen function calling). On strip les préfixes
+// "Action:", "Thought:", "Observation:", "Action Input:" qui fuient
+// parfois côté user quand l'agent est en mode tool-use et que le LLM
+// recopie le format brut au lieu d'émettre un appel structuré.
+// Match seulement en début de ligne pour éviter les faux positifs en FR.
+const REACT_PREFIX_RE = /^(?:Action(?:\s+Input)?|Thought|Observation)\s*:\s*/gim;
+
+/** Retire les préfixes ReAct fuités. Sûr car appliqué uniquement en
+ *  début de ligne, et ces mots-clés sont en anglais — peu de risque
+ *  de faux positif sur du contenu utilisateur français. */
+export function stripReactArtifacts(text: string): string {
+  return text.replace(REACT_PREFIX_RE, "");
+}
+
 /**
  * Crée un transformer qui prend en entrée des chunks de texte (= les
  * `answer` Dify, accumulés tels quels), et qui émet les chunks filtrés
@@ -186,7 +200,7 @@ function filterEvent(rawEvent: string, stripper: ThinkStripper): string | null {
         (evt.event === "message" || evt.event === "agent_message") &&
         typeof evt.answer === "string"
       ) {
-        const filtered = stripper.push(evt.answer);
+        const filtered = stripReactArtifacts(stripper.push(evt.answer));
         if (filtered) {
           evt.answer = filtered;
           out.push("data: " + JSON.stringify(evt));

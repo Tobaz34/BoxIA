@@ -50,6 +50,7 @@ interface HealthService {
   status?: number;
   error?: string;
   version?: string;
+  optional?: boolean;
 }
 interface HealthResponse {
   overall: "ok" | "degraded" | "down";
@@ -145,14 +146,22 @@ export function SystemDashboard() {
       )}
 
       {/* Services backend (Dify, Ollama, Authentik, n8n, Prometheus) */}
-      {health && (
+      {health && (() => {
+        // Optional sidecars that are down (feature OFF). On les compte
+        // pour l'affichage du label "X service(s) optionnel(s) inactif(s)"
+        // afin que le statut global ne contredise pas la liste.
+        const optionalDown = health.services.filter((s) => s.optional && !s.ok);
+        const optionalDownCount = optionalDown.length;
+        return (
         <Section title="Services backend">
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 text-sm">
               <OverallDot overall={health.overall} />
               <span className="font-medium">
                 {health.overall === "ok"
-                  ? "Tous les services sont opérationnels"
+                  ? optionalDownCount > 0
+                    ? `Services principaux opérationnels (${optionalDownCount} service${optionalDownCount > 1 ? "s" : ""} optionnel${optionalDownCount > 1 ? "s" : ""} inactif${optionalDownCount > 1 ? "s" : ""})`
+                    : "Tous les services sont opérationnels"
                   : health.overall === "down"
                   ? "Tous les services sont injoignables"
                   : `${health.summary.up}/${health.summary.total} services opérationnels`}
@@ -171,7 +180,8 @@ export function SystemDashboard() {
             </div>
           </div>
         </Section>
-      )}
+        );
+      })()}
 
       {/* Ressources hardware */}
       <Section title="Ressources">
@@ -358,15 +368,30 @@ function OverallDot({ overall }: { overall: "ok" | "degraded" | "down" }) {
 }
 
 function ServiceRow({ svc }: { svc: HealthService }) {
-  const Icon = svc.ok ? CheckCircle2 : XCircle;
-  const color = svc.ok ? "text-accent" : "text-red-400";
+  // Pour un service optionnel down, on baisse la dramatisation visuelle :
+  // c'est un sidecar feature-flag qu'on n'a juste pas activé pour ce
+  // déploiement, pas un vrai problème.
+  const isOptionalDown = svc.optional && !svc.ok;
+  const Icon = svc.ok ? CheckCircle2 : isOptionalDown ? Server : XCircle;
+  const color = svc.ok
+    ? "text-accent"
+    : isOptionalDown
+    ? "text-muted"
+    : "text-red-400";
   return (
     <div className="px-4 py-2.5 flex items-center gap-3 text-sm">
       <Server size={14} className="text-muted shrink-0" />
-      <span className="font-medium">{svc.name}</span>
+      <span className={"font-medium " + (isOptionalDown ? "text-muted" : "")}>
+        {svc.name}
+      </span>
       {svc.version && (
         <span className="text-[10px] text-muted bg-muted/15 px-1.5 py-0.5 rounded">
           v{svc.version}
+        </span>
+      )}
+      {svc.optional && (
+        <span className="text-[10px] text-muted bg-muted/15 px-1.5 py-0.5 rounded">
+          optionnel
         </span>
       )}
       <span className="flex-1" />
@@ -377,10 +402,13 @@ function ServiceRow({ svc }: { svc: HealthService }) {
       )}
       {!svc.ok && svc.error && (
         <span
-          className="text-[10px] text-red-400 truncate max-w-[200px]"
+          className={
+            "text-[10px] truncate max-w-[200px] " +
+            (isOptionalDown ? "text-muted" : "text-red-400")
+          }
           title={svc.error}
         >
-          {svc.error}
+          {isOptionalDown ? "non activé" : svc.error}
         </span>
       )}
       <Icon size={16} className={color + " shrink-0"} />
