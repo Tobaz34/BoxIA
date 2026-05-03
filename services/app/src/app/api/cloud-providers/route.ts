@@ -14,6 +14,7 @@ import {
   CLOUD_PROVIDERS,
   readCloudProvidersState,
   setProviderConfigured,
+  setProviderApiKeyLocal,
   removeProviderConfig,
   setBudget,
   setPiiScrub,
@@ -100,27 +101,32 @@ export async function POST(req: Request) {
       ? body.enabled_models
       : provider.default_models;
 
-  // Push la clé à Dify (provider configuration)
-  // Endpoint : POST /console/api/workspaces/current/model-providers/<provider>
-  // Body : { credentials: { <provider-specific-fields>: <values> } }
-  // On utilise une fonction dédiée côté lib qui appelle Dify console API.
+  // Stratégie dual-store :
+  //   1. Pousse la clé à Dify (chiffrement at-rest côté Dify) — utile si
+  //      le plugin <provider> est installé (Dify peut alors invoker le
+  //      modèle via son orchestration).
+  //   2. Stocke aussi la clé chiffrée localement (AES-256-GCM via
+  //      NEXTAUTH_SECRET) pour permettre les appels directs du provider
+  //      via /api/chat-cloud quand Dify n'a pas le plugin (cas BoxIA
+  //      self-hosted sans accès marketplace.dify.ai).
+  //
+  // Si Dify rejette (plugin absent), on continue quand même (warning)
+  // pour que le bouton "Utiliser cette fois" de la modale fonctionne.
+  let difyOk = false;
+  let difyError: string | null = null;
   try {
     const { configureCloudProviderInDify } = await import("@/lib/dify-cloud-providers");
     const r = await configureCloudProviderInDify(id, body.api_key, enabled_models);
-    if (!r.ok) {
-      return NextResponse.json(
-        { error: "dify_config_failed", detail: r.error },
-        { status: 502 },
-      );
-    }
+    difyOk = r.ok;
+    if (!r.ok) difyError = r.error;
   } catch (e) {
-    return NextResponse.json(
-      { error: "dify_config_failed", detail: String(e).slice(0, 300) },
-      { status: 502 },
-    );
+    difyError = String(e).slice(0, 300);
   }
 
-  // Persiste l'état local (préfixe seulement, jamais la clé en clair)
+  // Stocke localement (chiffré). Toujours fait, indépendamment de Dify.
+  await setProviderApiKeyLocal(id, body.api_key);
+
+  // Met à jour l'état (préfixe pour ID UI + flag configured = true)
   const key_prefix = body.api_key.slice(0, 8) + "…";
   const state = await setProviderConfigured(id, key_prefix, enabled_models);
 
@@ -130,9 +136,20 @@ export async function POST(req: Request) {
     provider: id,
     models: enabled_models,
     key_prefix,
+    dify_ok: difyOk,
+    dify_error: difyError,
   }, ipFromHeaders(req));
 
-  return NextResponse.json({ ok: true, state });
+  return NextResponse.json({
+    ok: true,
+    state,
+    dify_ok: difyOk,
+    dify_error: difyError,
+    local_store: true,
+    note: !difyOk
+      ? "Plugin Dify indisponible. La clé est stockée localement et utilisable via le bouton 'Utiliser cette fois' de la modale fallback cloud."
+      : undefined,
+  });
 }
 
 export async function DELETE(req: Request) {

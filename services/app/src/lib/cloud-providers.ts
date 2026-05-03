@@ -23,11 +23,12 @@
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const STATE_DIR = process.env.CONNECTORS_STATE_DIR || "/data";
 const STATE_FILE = path.join(STATE_DIR, "cloud-providers.json");
 
-export type CloudProviderId = "openai" | "anthropic" | "mistral";
+export type CloudProviderId = "openai" | "anthropic" | "google" | "mistral";
 
 export interface CloudProviderConfig {
   /** Id du provider (slug stable). */
@@ -57,9 +58,21 @@ export const CLOUD_PROVIDERS: CloudProviderConfig[] = [
     id: "anthropic",
     name: "Anthropic (Claude Pro / Team)",
     dify_provider: "langgenius/anthropic/anthropic",
-    default_models: ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
+    // Modèles 2026 (rebrand Claude 4.x). Les "*-latest" alias n'existent
+    // plus pour les versions récentes — il faut un id complet.
+    default_models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-7"],
     api_keys_url: "https://console.anthropic.com/settings/keys",
     key_format_hint: "sk-ant-api03-... (95+ caractères)",
+  },
+  {
+    id: "google",
+    name: "Google AI (Gemini)",
+    dify_provider: "langgenius/google/google",
+    // Gemini 2.5 Flash : quota gratuit généreux (15 req/min, 1500 req/jour)
+    // Gemini 2.5 Pro : payant mais context 2M tokens
+    default_models: ["gemini-2.5-flash", "gemini-2.5-pro"],
+    api_keys_url: "https://aistudio.google.com/apikey",
+    key_format_hint: "AIza... (39 caractères)",
   },
   {
     id: "mistral",
@@ -88,6 +101,12 @@ export interface CloudProviderState {
   tokens_this_month?: number;
   /** Coût estimé ce mois (€). */
   cost_eur_this_month?: number;
+  /** Clé API chiffrée AES-256-GCM avec NEXTAUTH_SECRET (ou DIFY_SECRET_KEY
+   *  en fallback). Stockée localement uniquement pour permettre les
+   *  appels directs aux providers cloud quand les plugins Dify ne sont
+   *  pas installés (cas BoxIA self-hosted sans accès marketplace.dify.ai).
+   *  Format : `iv_hex:tag_hex:ciphertext_hex`. */
+  api_key_local_encrypted?: string;
 }
 
 interface StateFile {
@@ -164,4 +183,82 @@ export async function setPiiScrub(enabled: boolean): Promise<void> {
   const s = await readCloudProvidersState();
   s.pii_scrub_enabled = enabled;
   await writeCloudProvidersState(s);
+}
+
+// =========================================================================
+// Encryption locale des clés API (BUG-022 cloud fallback bypass Dify)
+// =========================================================================
+// Permet à /api/chat-cloud d'appeler directement le provider cloud sans
+// dépendre du plugin Dify (qui peut être absent : marketplace.dify.ai
+// inaccessible depuis xefia, ou plugin non installé). Clé chiffrée
+// AES-256-GCM avec une dérivation HKDF de NEXTAUTH_SECRET.
+//
+// At-rest : la clé en clair n'est JAMAIS écrite. Le ciphertext est dans
+// `api_key_local_encrypted` (CloudProviderState). Si NEXTAUTH_SECRET
+// change, les clés deviennent illisibles → l'admin doit les ressaisir.
+
+function getEncryptionKey(): Buffer {
+  const secret = process.env.NEXTAUTH_SECRET
+    || process.env.DIFY_SECRET_KEY
+    || "boxia-default-secret-CHANGE-ME-IN-ENV";
+  // HKDF simple : sha256(secret + "cloud-providers-v1") → 32 bytes
+  return crypto.createHash("sha256")
+    .update(secret + "cloud-providers-v1")
+    .digest();
+}
+
+export function encryptApiKey(plaintext: string): string {
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12);  // GCM standard 96-bit IV
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("hex")}:${tag.toString("hex")}:${ct.toString("hex")}`;
+}
+
+export function decryptApiKey(blob: string): string | null {
+  try {
+    const [ivHex, tagHex, ctHex] = blob.split(":");
+    if (!ivHex || !tagHex || !ctHex) return null;
+    const key = getEncryptionKey();
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm", key, Buffer.from(ivHex, "hex"));
+    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+    const pt = Buffer.concat([
+      decipher.update(Buffer.from(ctHex, "hex")),
+      decipher.final(),
+    ]);
+    return pt.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Stocke la clé chiffrée localement (en plus du push à Dify côté caller). */
+export async function setProviderApiKeyLocal(
+  id: CloudProviderId, plaintextKey: string,
+): Promise<void> {
+  const s = await readCloudProvidersState();
+  const existing = s.providers[id] || {
+    id, configured: false, enabled_models: [],
+  };
+  s.providers[id] = {
+    ...existing,
+    api_key_local_encrypted: encryptApiKey(plaintextKey),
+    configured: true,
+    key_prefix: plaintextKey.slice(0, 12),
+    configured_at: existing.configured_at ?? Date.now(),
+  };
+  await writeCloudProvidersState(s);
+}
+
+/** Lit la clé en clair depuis le state (déchiffre AES-GCM). null si absent
+ *  ou déchiffrement impossible (NEXTAUTH_SECRET changé). */
+export async function getProviderApiKeyLocal(
+  id: CloudProviderId,
+): Promise<string | null> {
+  const s = await readCloudProvidersState();
+  const blob = s.providers[id]?.api_key_local_encrypted;
+  if (!blob) return null;
+  return decryptApiKey(blob);
 }

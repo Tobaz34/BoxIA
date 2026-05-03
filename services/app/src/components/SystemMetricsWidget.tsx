@@ -12,6 +12,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Cpu, MemoryStick, HardDrive, Zap, Cloud, type LucideIcon } from "lucide-react";
+import { ProviderLogo, PROVIDER_LABELS } from "@/lib/cloud-provider-logos";
+import type { CloudProviderId } from "@/lib/cloud-providers";
 
 const HISTORY_LEN = 60;        // 60 points × 5 s = 5 min
 const POLL_MS     = 5000;
@@ -193,26 +195,100 @@ function MetricRow({ icon: Icon, label, values, current, hue }: MetricRowProps) 
  *  Demande user 2026-05-03 : "lorsqu'une IA cloud est paramétrée, voir
  *  son icône en mode On (vert) au niveau des graphiques de consommation".
  */
+/** Badge "IA locale" : affiche le modèle Ollama actuellement chargé en VRAM
+ *  + son occupation mémoire + un point vert pulse "Active". Permet à
+ *  l'utilisateur de voir d'un coup d'œil :
+ *    - Si l'IA locale est prête (modèle loadé)
+ *    - Quel modèle est en mémoire (qwen3:14b vs qwen2.5vl:7b)
+ *    - Combien de VRAM est consommée
+ *
+ *  Demande user 2026-05-03 : "élément visuel dans la barre en haut avec
+ *  les suivi des perf de l'IA LOCAL". Symétrique à CloudProvidersBadges.
+ */
+function LocalAiBadge() {
+  const [info, setInfo] = useState<{
+    loaded: Array<{ name: string; size_mb: number; processor: string }>;
+    refreshed_at: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch("/api/system/ollama-status", { cache: "no-store" });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        setInfo({ loaded: j.loaded || [], refreshed_at: Date.now() });
+      } catch { /* silent */ }
+    }
+    load();
+    const t = setInterval(load, 10_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  if (!info) return null;
+  const isReady = info.loaded.length > 0;
+  const totalVramMb = info.loaded.reduce((a, m) => a + (m.size_mb || 0), 0);
+
+  // Modèle texte principal = celui qui n'est pas embedding (bge-*)
+  const mainModel = info.loaded.find(
+    (m) => !m.name.startsWith("bge") && !m.name.startsWith("nomic"),
+  ) || info.loaded[0];
+
+  return (
+    <div
+      className="hidden lg:flex items-center gap-1.5 px-3 border-l border-border"
+      title={
+        isReady
+          ? `IA locale active — ${info.loaded.length} modèle(s) chargé(s) :\n` +
+            info.loaded.map((m) =>
+              `  • ${m.name} : ${(m.size_mb / 1024).toFixed(1)} GB (${m.processor})`,
+            ).join("\n")
+          : "Aucun modèle local chargé. Le 1er chat va déclencher un cold-start ~5-10s."
+      }
+    >
+      <span
+        className={
+          "inline-block w-2 h-2 rounded-full " +
+          (isReady
+            ? "bg-emerald-500 ring-2 ring-emerald-500/30 animate-pulse"
+            : "bg-muted")
+        }
+        aria-hidden
+      />
+      <span className="text-xs text-muted">Local</span>
+      {mainModel && (
+        <>
+          <span className="text-xs font-medium text-foreground/80 truncate max-w-[8em]">
+            {mainModel.name}
+          </span>
+          <span className="text-[10px] text-muted tabular-nums">
+            {(totalVramMb / 1024).toFixed(1)}G
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function CloudProvidersBadges() {
   const [providers, setProviders] = useState<Array<{
-    id: "openai" | "anthropic" | "mistral";
-    label: string;
+    id: CloudProviderId;
     configured: boolean;
     cost_eur_this_month?: number;
   }>>([]);
 
   useEffect(() => {
-    const labels = { openai: "OpenAI", anthropic: "Anthropic", mistral: "Mistral" };
     fetch("/api/cloud-providers", { cache: "no-store" })
       .then((r) => r.ok ? r.json() : null)
       .then((j) => {
         if (!j) return;
-        const ids = ["openai", "anthropic", "mistral"] as const;
+        const stateMap = j.state || {};
+        const ids: CloudProviderId[] = ["openai", "anthropic", "mistral"];
         setProviders(ids.map((id) => ({
           id,
-          label: labels[id],
-          configured: j.providers?.[id]?.configured === true,
-          cost_eur_this_month: j.providers?.[id]?.cost_eur_this_month,
+          configured: stateMap[id]?.configured === true,
+          cost_eur_this_month: stateMap[id]?.cost_eur_this_month,
         })));
       })
       .catch(() => { /* silent */ });
@@ -223,26 +299,26 @@ function CloudProvidersBadges() {
   if (!anyConfigured) return null;  // Pas de bruit si rien
 
   return (
-    <div className="hidden lg:flex items-center gap-1 px-3 border-l border-border">
-      <Cloud size={12} className="text-muted shrink-0" />
+    <div className="hidden lg:flex items-center gap-1.5 px-3 border-l border-border">
+      <Cloud size={12} className="text-muted shrink-0" aria-hidden />
       {providers.map((p) => (
         <span
           key={p.id}
           title={
             p.configured
-              ? `${p.label} : configuré${p.cost_eur_this_month
+              ? `${PROVIDER_LABELS[p.id]} : actif${p.cost_eur_this_month
                   ? ` · ${p.cost_eur_this_month.toFixed(2)}€ ce mois` : ""}`
-              : `${p.label} : non configuré`
+              : `${PROVIDER_LABELS[p.id]} : non configuré`
           }
           className={
-            "inline-flex items-center justify-center w-6 h-5 rounded text-[9px] font-bold tracking-tight " +
+            "inline-flex items-center justify-center w-6 h-6 rounded transition-default " +
             (p.configured
-              ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40"
-              : "bg-muted/10 text-muted/50")
+              ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/40"
+              : "opacity-30 grayscale")
           }
-          aria-label={`${p.label} ${p.configured ? "actif" : "inactif"}`}
+          aria-label={`${PROVIDER_LABELS[p.id]} ${p.configured ? "actif" : "inactif"}`}
         >
-          {p.id === "openai" ? "AI" : p.id === "anthropic" ? "An" : "Mi"}
+          <ProviderLogo id={p.id} size={14} colored={p.configured} />
         </span>
       ))}
     </div>
@@ -311,6 +387,7 @@ export function SystemMetricsWidget() {
         current={metrics?.gpu_pct ?? null}
         hue="330 85% 65%"
       />
+      <LocalAiBadge />
       <CloudProvidersBadges />
     </div>
   );
