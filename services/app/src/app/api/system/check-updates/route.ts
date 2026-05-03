@@ -20,7 +20,10 @@ import path from "node:path";
 export const dynamic = "force-dynamic";
 
 const REPO = process.env.AIBOX_REPO_SLUG || "Tobaz34/BoxIA";
-const BRANCH = process.env.AIBOX_REPO_BRANCH || "main";
+// Branche par défaut si version.json n'a pas de branch (build sans
+// BUILD_BRANCH = info perdue). Comparaison toujours contre main pour
+// éviter de coincer un client sur une feature branch oubliée.
+const FALLBACK_BRANCH = process.env.AIBOX_REPO_BRANCH || "main";
 
 const VERSION_JSON_PATHS = [
   path.join(process.cwd(), "public", "version.json"),
@@ -30,6 +33,7 @@ const VERSION_JSON_PATHS = [
 interface VersionInfo {
   commit_sha?: string;
   commit_short?: string;
+  branch?: string;
 }
 
 let cache: { fetched_at: number; payload: unknown } | null = null;
@@ -47,8 +51,8 @@ async function readLocalVersion(): Promise<VersionInfo> {
   return {};
 }
 
-async function fetchGithubCommits(): Promise<{ sha: string; commit: { author: { date: string; name: string }; message: string } }[]> {
-  const url = `https://api.github.com/repos/${REPO}/commits?sha=${encodeURIComponent(BRANCH)}&per_page=20`;
+async function fetchGithubCommits(branch: string): Promise<{ sha: string; commit: { author: { date: string; name: string }; message: string } }[]> {
+  const url = `https://api.github.com/repos/${REPO}/commits?sha=${encodeURIComponent(branch)}&per_page=20`;
   const r = await fetch(url, {
     headers: {
       "Accept": "application/vnd.github+json",
@@ -70,10 +74,11 @@ export async function GET() {
 
   const local = await readLocalVersion();
   const localSha = (local.commit_sha || "").trim();
+  const branch = (local.branch || FALLBACK_BRANCH).trim() || FALLBACK_BRANCH;
 
   let payload: unknown;
   try {
-    const commits = await fetchGithubCommits();
+    const commits = await fetchGithubCommits(branch);
     if (commits.length === 0) {
       payload = { error: "no_commits_found", up_to_date: true, behind_count: 0, local_sha: localSha, remote_sha: "" };
     } else {
