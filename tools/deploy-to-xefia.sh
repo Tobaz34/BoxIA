@@ -156,7 +156,16 @@ rebuild_app() {
   log "docker compose build + up $SERVICE_NAME (image rebuild peut prendre 3-5 min)"
   # --env-file CRITIQUE : sinon vars NEXTAUTH_SECRET/AUTHENTIK_* sont vides
   # côté container et l'auth crash avec NO_SECRET. Vu en prod 2026-05-03.
-  ssh_cmd "cd $SERVER_REPO && docker compose -f $COMPOSE_FILE --env-file $ENV_FILE build $SERVICE_NAME 2>&1 | tail -10" >&2
+  # On exporte aussi BUILD_COMMIT_* depuis git pour que le Dockerfile (via
+  # docker-compose.yml args) génère un public/version.json complet — sinon
+  # /api/system/check-updates ne peut pas comparer au tip de main.
+  # tail -10 du build pour voir les éventuelles erreurs (TS, npm install).
+  ssh_cmd "cd $SERVER_REPO && \
+    export BUILD_COMMIT_SHA=\$(git rev-parse HEAD) && \
+    export BUILD_COMMIT_DATE=\$(git log -1 --format=%cI) && \
+    export BUILD_COMMIT_MESSAGE=\$(git log -1 --format=%s | head -c 200) && \
+    export BUILD_BRANCH=\$(git rev-parse --abbrev-ref HEAD) && \
+    docker compose -f $COMPOSE_FILE --env-file $ENV_FILE build $SERVICE_NAME 2>&1 | tail -10" >&2
   ssh_cmd "cd $SERVER_REPO && docker compose -f $COMPOSE_FILE --env-file $ENV_FILE up -d $SERVICE_NAME 2>&1 | tail -3" >&2
   ok "Container redémarré"
 }

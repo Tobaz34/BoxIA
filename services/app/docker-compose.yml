@@ -28,6 +28,18 @@ services:
   app:
     build:
       context: .
+      # Build-args remontés au Dockerfile pour générer public/version.json
+      # avec le vrai commit_sha + date + message + branch. Sans ça, le
+      # bouton « Vérifier les mises à jour » de /settings ne peut pas
+      # comparer le commit local au tip de main (cf
+      # services/app/src/app/api/system/check-updates).
+      # tools/deploy-to-xefia.sh exporte ces vars depuis git rev-parse
+      # avant d'invoquer compose build.
+      args:
+        BUILD_COMMIT_SHA: "${BUILD_COMMIT_SHA:-}"
+        BUILD_COMMIT_DATE: "${BUILD_COMMIT_DATE:-}"
+        BUILD_COMMIT_MESSAGE: "${BUILD_COMMIT_MESSAGE:-}"
+        BUILD_BRANCH: "${BUILD_BRANCH:-}"
     container_name: aibox-app
     depends_on:
       data-init:
