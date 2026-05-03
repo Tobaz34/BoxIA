@@ -64,11 +64,15 @@ docker_test_file() {
 #   2. /data/.github-token-runtime via docker exec (saisie UI)
 load_github_token() {
   unset GITHUB_TOKEN
+  # Pipefail + set -e + grep qui ne matche rien (token absent de .env) =
+  # script die silencieusement. `|| true` à la fin du pipe pour absorber
+  # le code retour quand GITHUB_TOKEN n'est pas dans .env (cas standard
+  # quand l'admin a saisi via l'UI).
   if [[ -r "$ENV_FILE" ]]; then
-    GITHUB_TOKEN=$(grep -E '^GITHUB_TOKEN=' "$ENV_FILE" | head -1 | cut -d= -f2- | sed 's/^"//; s/"$//')
+    GITHUB_TOKEN=$(grep -E '^GITHUB_TOKEN=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^"//; s/"$//' || true)
   fi
   if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-    GITHUB_TOKEN=$(docker_read_file "$RUNTIME_TOKEN_PATH_IN_CONTAINER")
+    GITHUB_TOKEN=$(docker_read_file "$RUNTIME_TOKEN_PATH_IN_CONTAINER" || true)
   fi
   export GITHUB_TOKEN
 }
