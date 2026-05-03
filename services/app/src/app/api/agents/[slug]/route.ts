@@ -20,6 +20,9 @@ import {
 import {
   getCustomAgent, deleteCustomAgent, updateCustomAgent,
 } from "@/lib/custom-agents";
+import {
+  getInstalledAgent, removeInstalledAgent,
+} from "@/lib/installed-agents";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
 export const dynamic = "force-dynamic";
@@ -35,10 +38,11 @@ async function requireAdminCheck() {
   return null;
 }
 
-/** Résout le mapping slug → { app_id, source: builtin|custom, meta }. */
+/** Résout le mapping slug → { app_id, source: builtin|custom|installed, meta }. */
 async function resolveAgentAppId(slug: string): Promise<
   | { kind: "builtin"; meta: typeof AGENTS[string]; app_id: string }
   | { kind: "custom"; meta: NonNullable<Awaited<ReturnType<typeof getCustomAgent>>> }
+  | { kind: "installed"; meta: NonNullable<Awaited<ReturnType<typeof getInstalledAgent>>> }
   | { kind: "not_found" }
 > {
   const builtin = AGENTS[slug];
@@ -49,6 +53,11 @@ async function resolveAgentAppId(slug: string): Promise<
   }
   const custom = await getCustomAgent(slug);
   if (custom) return { kind: "custom", meta: custom };
+  // Fallback : agent installé via la marketplace IA (BUG-015). Avant ce
+  // fallback, /api/agents/[slug] retournait `unknown_agent` pour tout
+  // agent activé dynamiquement, rendant la modale Configurer inopérante.
+  const installed = await getInstalledAgent(slug);
+  if (installed) return { kind: "installed", meta: installed };
   return { kind: "not_found" };
 }
 
@@ -83,6 +92,26 @@ export async function GET(
       available: !!process.env[meta.envVar],
       custom: false,
       app_id: appId,
+      pre_prompt: detail.model_config?.pre_prompt || "",
+      opening_statement: detail.model_config?.opening_statement || "",
+      suggested_questions: detail.model_config?.suggested_questions || [],
+      model: detail.model_config?.model || null,
+      max_tokens: detail.model_config?.model?.completion_params?.max_tokens ?? null,
+    });
+  }
+  if (resolved.kind === "installed") {
+    const inst = resolved.meta;
+    return NextResponse.json({
+      slug: inst.slug,
+      name: inst.name,
+      icon: inst.icon,
+      description: inst.description,
+      allowedRoles: inst.allowed_roles || [],
+      isDefault: false,
+      available: true,
+      custom: false,
+      installed: true,
+      app_id: inst.app_id,
       pre_prompt: detail.model_config?.pre_prompt || "",
       opening_statement: detail.model_config?.opening_statement || "",
       suggested_questions: detail.model_config?.suggested_questions || [],
@@ -192,17 +221,23 @@ export async function DELETE(
       { status: 400 });
   }
   const c = await getCustomAgent(slug);
-  if (!c) {
+  if (c) {
+    await deleteDifyApp(c.app_id).catch(() => false);
+    await deleteCustomAgent(slug);
+    await logAction("settings.update", `agent_delete:${slug}`, {
+      name: c.name, app_id: c.app_id,
+    }, ipFromHeaders(req));
+    return NextResponse.json({ ok: true });
+  }
+  // Agent installé via marketplace : on désactive juste l'entrée locale,
+  // on garde l'app Dify (template marketplace réutilisable).
+  const inst = await getInstalledAgent(slug);
+  if (!inst) {
     return NextResponse.json({ error: "unknown_agent" }, { status: 404 });
   }
-
-  // Best-effort : supprimer l'app Dify d'abord (si elle existe encore)
-  await deleteDifyApp(c.app_id).catch(() => false);
-  await deleteCustomAgent(slug);
-
-  await logAction("settings.update", `agent_delete:${slug}`, {
-    name: c.name, app_id: c.app_id,
+  await removeInstalledAgent(slug);
+  await logAction("settings.update", `agent_uninstall:${slug}`, {
+    name: inst.name, app_id: inst.app_id,
   }, ipFromHeaders(req));
-
   return NextResponse.json({ ok: true });
 }
