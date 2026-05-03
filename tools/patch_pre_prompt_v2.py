@@ -93,14 +93,17 @@ EXEMPLES (à reproduire systématiquement) :
 
 """
 
-# Agents à patcher. Les autres (Concierge, agents marketplace dynamiques) sont skip.
+# Agents à patcher avec la règle de génération de fichiers.
+# - Vision : EXCLU (il analyse les images, ne génère pas de fichiers ; le
+#   prompt overhead 1.5k chars + qwen2.5vl context limité = pollution).
+# - Concierge : EXCLU (mode agent-chat avec ses propres tools).
+# - Marketplace dynamiques : EXCLU (créés à la volée par l'admin).
 TARGET_AGENTS = {
     "Assistant général",
     "Assistant comptable",
     "Assistant RH",
     "Support clients",
     "Assistant juridique CGV/RGPD",
-    "Assistant vision",
     "Assistant tri emails",
     "Assistant Q&R documents",
 }
