@@ -38,7 +38,12 @@ export async function configureCloudProviderInDify(
   if (id === "anthropic") credentials.anthropic_api_key = apiKey;
   if (id === "mistral") credentials.mistralai_api_key = apiKey;
 
-  const credPath = `/console/api/workspaces/current/model-providers/${provider.dify_provider}`;
+  // BUG fix 2026-05-03 : Dify ≥ 1.10 exige `/credentials` à la fin pour
+  // PERSISTER (sans, le POST sur la racine du provider renvoie 405
+  // method_not_allowed). Pareil pattern que `models/credentials` qui
+  // persiste vs `models` qui renvoie success vide.
+  const basePath = `/console/api/workspaces/current/model-providers/${provider.dify_provider}`;
+  const credPath = `${basePath}/credentials`;
   try {
     const r = await consoleFetch(credPath, {
       method: "POST",
@@ -55,21 +60,27 @@ export async function configureCloudProviderInDify(
     return { ok: false, error: `Dify provider config: ${String(e).slice(0, 200)}` };
   }
 
-  // 2. Activer les modèles recommandés (best-effort, on ignore les erreurs)
-  // Endpoint : POST /console/api/workspaces/current/model-providers/<provider>/models/credentials
-  // body : { model, model_type: "llm", credentials: { ... } }
-  for (const model of enabledModels) {
-    try {
-      await consoleFetch(`${credPath}/models/credentials`, {
-        method: "POST",
-        body: JSON.stringify({
-          model,
-          model_type: "llm",
-          credentials: { api_key: apiKey, mode: "chat" },
-        }),
-      });
-    } catch {
-      // best-effort : on continue même si un modèle ne peut pas être ajouté
+  // 2. Activer les modèles recommandés (best-effort, on ignore les erreurs).
+  //    Pour les providers cloud "officiels" (OpenAI/Anthropic/Mistral),
+  //    Dify expose nativement la liste des modèles via le credential
+  //    POST ci-dessus — pas besoin de re-POSTer chaque modèle.
+  //    Pour Ollama (custom provider), il faut un POST par modèle. Ici
+  //    on ne le fait QUE si le provider est ollama (skip pour cloud
+  //    où c'est inutile + génère des 405).
+  if (provider.dify_provider.includes("ollama")) {
+    for (const model of enabledModels) {
+      try {
+        await consoleFetch(`${basePath}/models/credentials`, {
+          method: "POST",
+          body: JSON.stringify({
+            model,
+            model_type: "llm",
+            credentials: { api_key: apiKey, mode: "chat" },
+          }),
+        });
+      } catch {
+        // best-effort
+      }
     }
   }
 
