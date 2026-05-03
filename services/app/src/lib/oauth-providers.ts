@@ -26,6 +26,9 @@ export type OAuthProviderId = "google" | "microsoft";
 export interface OAuthProviderConfig {
   id: OAuthProviderId;
   name: string;
+  /** OIDC Authorization Code + PKCE (flow recommandé prod). */
+  authorize_endpoint: string;
+  /** Device Authorization Grant (RFC 8628, fallback LAN sans domaine HTTPS). */
   device_endpoint: string;
   token_endpoint: string;
   userinfo_endpoint?: string;
@@ -38,15 +41,24 @@ export interface OAuthProviderConfig {
   connector_scopes?: Record<string, string[]>;
   /** Doc / lien pour le client final. */
   console_url?: string;
+  /** Pour les providers qui exigent `prompt=consent` à chaque login pour
+   *  garantir le refresh_token (Google notamment). */
+  requires_consent_prompt?: boolean;
+  /** Pour Google : `access_type=offline` est nécessaire pour avoir un
+   *  refresh_token via auth code flow. */
+  requires_offline_access?: boolean;
 }
 
 export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
   google: {
     id: "google",
     name: "Google",
+    authorize_endpoint: "https://accounts.google.com/o/oauth2/v2/auth",
     device_endpoint: "https://oauth2.googleapis.com/device/code",
     token_endpoint: "https://oauth2.googleapis.com/token",
     userinfo_endpoint: "https://openidconnect.googleapis.com/v1/userinfo",
+    requires_consent_prompt: true,
+    requires_offline_access: true,
     client_id_env: "GOOGLE_OAUTH_CLIENT_ID",
     client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
     // NB: pour TVs and Limited Input devices, client_secret est requis par
@@ -80,6 +92,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
     id: "microsoft",
     name: "Microsoft 365",
     // tenant=common = multi-tenant + comptes personnels
+    authorize_endpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
     device_endpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode",
     token_endpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     userinfo_endpoint: "https://graph.microsoft.com/v1.0/me",

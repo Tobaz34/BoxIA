@@ -1,149 +1,21 @@
 /**
- * OAuth 2.0 Device Authorization Grant (RFC 8628) — flow approprié pour
- * une appliance LAN sans URL publique de callback.
+ * OAuth 2.0 Device Authorization Grant (RFC 8628).
  *
- * Le pattern : la box demande un code à un provider OAuth, l'admin entre
- * ce code sur n'importe quel device (téléphone, autre PC), autorise, et
- * la box poll le provider jusqu'à recevoir un access_token + refresh_token.
+ * Fallback pour les déploiements LAN sans domaine HTTPS public (où le
+ * flow OIDC standard ne marche pas car Google/Microsoft refusent les
+ * redirect_uri non-HTTPS hors localhost).
  *
- * Providers supportés (registry dans lib/oauth-providers.ts) :
- *   - Google (TVs and Limited Input devices) — Drive, Gmail, Calendar
- *   - Microsoft (Azure AD avec public client flow activé) — Graph API
- *   - GitHub (déjà géré séparément en lib/github-token.ts pour le compte master)
- *
- * Token storage chiffré AES-256-GCM (mêmes pattern que cloud-providers et
- * github-token), persisté dans /data/oauth-connections.json. Refresh
- * automatique dans getAccessToken() si proche de l'expiration.
+ * Le storage des tokens est dans lib/oauth-storage.ts (commun avec
+ * oauth-oidc.ts). Ici uniquement la logique device flow : start +
+ * poll + refresh.
  */
-import { promises as fs } from "node:fs";
 import * as crypto from "node:crypto";
 import { OAUTH_PROVIDERS, type OAuthProviderId } from "./oauth-providers";
-
-const STORE_PATH = "/data/oauth-connections.json";
-
-export interface OAuthConnection {
-  /** Identifiant unique : `${providerId}:${connectorSlug}` (ex: google:google-drive). */
-  id: string;
-  provider_id: OAuthProviderId;
-  connector_slug: string;
-  scopes: string[];
-  /** Token chiffré (cf encryptToken). */
-  access_token_encrypted: string;
-  refresh_token_encrypted?: string;
-  expires_at?: number;     // ms epoch
-  /** Métadonnées /userinfo pour afficher "Connecté en tant que X". */
-  account_email?: string;
-  account_name?: string;
-  connected_at: number;
-  connected_by?: string;
-  last_refreshed_at?: number;
-}
-
-interface DeviceCodePending {
-  /** Identifiant du flux en cours côté boîte. UUID. */
-  request_id: string;
-  provider_id: OAuthProviderId;
-  connector_slug: string;
-  scopes: string[];
-  device_code: string;
-  user_code: string;
-  verification_url: string;
-  verification_url_complete?: string;
-  expires_at: number;        // ms epoch
-  interval: number;          // poll interval seconds
-  initiated_at: number;
-  initiated_by?: string;
-}
-
-interface OAuthStore {
-  connections: Record<string, OAuthConnection>;
-  /** Demandes device-flow en cours (purgées après expires_at + 1 min). */
-  pending: Record<string, DeviceCodePending>;
-}
-
-// =========================================================================
-// Encryption
-// =========================================================================
-
-function getEncryptionKey(): Buffer {
-  const secret = process.env.NEXTAUTH_SECRET
-    || process.env.DIFY_SECRET_KEY
-    || "boxia-default-secret-CHANGE-ME-IN-ENV";
-  return crypto.createHash("sha256")
-    .update(secret + "oauth-tokens-v1")
-    .digest();
-}
-
-export function encryptToken(plaintext: string): string {
-  const key = getEncryptionKey();
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString("hex")}:${tag.toString("hex")}:${ct.toString("hex")}`;
-}
-
-export function decryptToken(blob: string): string | null {
-  try {
-    const [ivHex, tagHex, ctHex] = blob.split(":");
-    if (!ivHex || !tagHex || !ctHex) return null;
-    const key = getEncryptionKey();
-    const decipher = crypto.createDecipheriv(
-      "aes-256-gcm", key, Buffer.from(ivHex, "hex"));
-    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
-    const pt = Buffer.concat([
-      decipher.update(Buffer.from(ctHex, "hex")),
-      decipher.final(),
-    ]);
-    return pt.toString("utf8");
-  } catch {
-    return null;
-  }
-}
-
-// =========================================================================
-// Storage
-// =========================================================================
-
-async function readStore(): Promise<OAuthStore> {
-  try {
-    const raw = await fs.readFile(STORE_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as OAuthStore;
-    return {
-      connections: parsed.connections || {},
-      pending: parsed.pending || {},
-    };
-  } catch {
-    return { connections: {}, pending: {} };
-  }
-}
-
-async function writeStore(s: OAuthStore): Promise<void> {
-  // Purge des pending expirés (>5 min après expires_at)
-  const now = Date.now();
-  for (const [k, p] of Object.entries(s.pending)) {
-    if (p.expires_at + 5 * 60_000 < now) delete s.pending[k];
-  }
-  const tmp = STORE_PATH + ".tmp";
-  await fs.writeFile(tmp, JSON.stringify(s, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
-  await fs.rename(tmp, STORE_PATH);
-}
-
-export async function listConnections(): Promise<OAuthConnection[]> {
-  const s = await readStore();
-  return Object.values(s.connections);
-}
-
-export async function getConnection(id: string): Promise<OAuthConnection | null> {
-  const s = await readStore();
-  return s.connections[id] || null;
-}
-
-export async function deleteConnection(id: string): Promise<void> {
-  const s = await readStore();
-  delete s.connections[id];
-  await writeStore(s);
-}
+import {
+  encryptToken, decryptToken,
+  _readStore, _writeStore,
+  type OAuthConnection, type DeviceCodePending,
+} from "./oauth-storage";
 
 // =========================================================================
 // Device flow — start
@@ -204,9 +76,9 @@ export async function startDeviceFlow(
     initiated_at: Date.now(),
     initiated_by: initiatedBy,
   };
-  const s = await readStore();
+  const s = await _readStore();
   s.pending[requestId] = pending;
-  await writeStore(s);
+  await _writeStore(s);
   return {
     request_id: requestId,
     user_code: pending.user_code,
@@ -228,12 +100,12 @@ export type PollResult =
   | { state: "error"; error: string };
 
 export async function pollDeviceFlow(requestId: string): Promise<PollResult> {
-  const s = await readStore();
+  const s = await _readStore();
   const pending = s.pending[requestId];
   if (!pending) return { state: "error", error: "unknown_or_expired_request" };
   if (pending.expires_at < Date.now()) {
     delete s.pending[requestId];
-    await writeStore(s);
+    await _writeStore(s);
     return { state: "error", error: "device_code_expired" };
   }
   const provider = OAUTH_PROVIDERS[pending.provider_id];
@@ -254,7 +126,6 @@ export async function pollDeviceFlow(requestId: string): Promise<PollResult> {
   });
   const data = await r.json().catch(() => ({} as Record<string, unknown>));
 
-  // Cas pending standard RFC 8628
   if (!r.ok) {
     const err = String(data.error || "");
     if (err === "authorization_pending") {
@@ -265,22 +136,19 @@ export async function pollDeviceFlow(requestId: string): Promise<PollResult> {
       };
     }
     if (err === "slow_down") {
-      // Le provider demande de ralentir — on bump l'interval
       pending.interval = pending.interval + 5;
-      await writeStore(s);
+      await _writeStore(s);
       return { state: "slow_down", interval: pending.interval };
     }
     delete s.pending[requestId];
-    await writeStore(s);
+    await _writeStore(s);
     return { state: "error", error: err || `token_endpoint_${r.status}` };
   }
 
-  // Succès
   const accessToken = data.access_token as string;
   const refreshToken = data.refresh_token as string | undefined;
   const expiresIn = (data.expires_in as number) || 3600;
 
-  // Optionnel : récupérer email + name pour l'affichage
   let accountEmail: string | undefined;
   let accountName: string | undefined;
   if (provider.userinfo_endpoint) {
@@ -313,7 +181,7 @@ export async function pollDeviceFlow(requestId: string): Promise<PollResult> {
   };
   s.connections[id] = conn;
   delete s.pending[requestId];
-  await writeStore(s);
+  await _writeStore(s);
   return { state: "success", connection: conn };
 }
 
@@ -322,16 +190,14 @@ export async function pollDeviceFlow(requestId: string): Promise<PollResult> {
 // =========================================================================
 
 export async function getAccessToken(id: string): Promise<string | null> {
-  const s = await readStore();
+  const s = await _readStore();
   const conn = s.connections[id];
   if (!conn) return null;
-  // Si expire dans <2 min ET on a un refresh_token → refresh
   const needsRefresh = conn.expires_at && conn.expires_at < Date.now() + 120_000;
   if (!needsRefresh) {
     return decryptToken(conn.access_token_encrypted);
   }
   if (!conn.refresh_token_encrypted) {
-    // Pas de refresh possible, on renvoie l'existant — le caller verra 401
     return decryptToken(conn.access_token_encrypted);
   }
   const refreshToken = decryptToken(conn.refresh_token_encrypted);
@@ -352,7 +218,6 @@ export async function getAccessToken(id: string): Promise<string | null> {
     body: body.toString(),
   });
   if (!r.ok) {
-    // Refresh failed — laisse l'access_token périmé, le caller décidera
     return decryptToken(conn.access_token_encrypted);
   }
   const data = await r.json();
@@ -361,11 +226,13 @@ export async function getAccessToken(id: string): Promise<string | null> {
   conn.access_token_encrypted = encryptToken(newAccess);
   conn.expires_at = Date.now() + newExpiresIn * 1000;
   conn.last_refreshed_at = Date.now();
-  // Google peut renvoyer un nouveau refresh_token (rare)
   if (data.refresh_token) {
     conn.refresh_token_encrypted = encryptToken(data.refresh_token as string);
   }
   s.connections[id] = conn;
-  await writeStore(s);
+  await _writeStore(s);
   return newAccess;
 }
+
+// Re-exports pour compat avec les routes existantes
+export { listConnections, getConnection, deleteConnection } from "./oauth-storage";

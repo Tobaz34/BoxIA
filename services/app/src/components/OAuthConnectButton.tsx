@@ -1,16 +1,14 @@
 "use client";
 
 /**
- * Bouton "Connecter avec <Provider>" + modal Device Flow.
+ * Bouton "Connecter avec <Provider>" — OIDC Authorization Code + PKCE
+ * (popup browser → Google/Microsoft → callback) avec un fallback Device
+ * Flow accessible via un lien discret pour les déploiements LAN sans
+ * domaine HTTPS.
  *
- * Utilisé dans ConnectorsManager quand le connecteur a authMethod
- * google_oauth ou azure_ad. Le bouton dispatch un POST
- * /api/oauth/device/start, montre user_code + verification_url, et
- * polle /api/oauth/device/poll en boucle jusqu'à success ou expiration.
- *
- * Affiche aussi l'état courant : si une connexion OAuth existe déjà
- * pour ce connector_slug + provider, montre "Connecté en tant que X"
- * + bouton "Déconnecter" qui DELETE /api/oauth/connections.
+ * État courant lu depuis /api/oauth/connections (ne fuit jamais les
+ * tokens). Si une connexion existe pour ce {provider, connector_slug},
+ * affiche "Connecté @email" + bouton Déconnecter.
  */
 import { useEffect, useState, useRef, useCallback } from "react";
 import { ExternalLink, Loader2, CheckCircle2, AlertTriangle, Link2Off, Copy } from "lucide-react";
@@ -59,10 +57,12 @@ export function OAuthConnectButton({
 }) {
   const [providers, setProviders] = useState<ProviderInfo[] | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
-  const [flow, setFlow] = useState<DeviceFlowResp | null>(null);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [oidcInProgress, setOidcInProgress] = useState(false);
+
+  // Device flow fallback
+  const [deviceFlow, setDeviceFlow] = useState<DeviceFlowResp | null>(null);
   const [polling, setPolling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -95,9 +95,28 @@ export function OAuthConnectButton({
     };
   }, [refresh]);
 
+  // Listener postMessage — la popup callback envoie le résultat
+  useEffect(() => {
+    function onMessage(ev: MessageEvent) {
+      if (ev.origin !== window.location.origin) return;
+      const data = ev.data as { type?: string; ok?: boolean; error?: string; connection?: Connection };
+      if (data?.type !== "aibox-oauth-result") return;
+      setOidcInProgress(false);
+      if (data.ok && data.connection) {
+        setConnection(data.connection);
+        setOauthError(null);
+        if (onConnected) onConnected(data.connection);
+      } else if (data.error) {
+        setOauthError(data.error);
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onConnected]);
+
   const providerInfo = providers?.find((p) => p.id === provider);
 
-  function stopPolling() {
+  function stopDevicePolling() {
     setPolling(false);
     if (pollTimeoutRef.current) {
       clearTimeout(pollTimeoutRef.current);
@@ -109,7 +128,40 @@ export function OAuthConnectButton({
     }
   }
 
-  async function pollOnce(requestId: string, intervalSec: number) {
+  // ===== OIDC popup flow =====
+
+  function handleConnectOIDC() {
+    setOauthError(null);
+    setOidcInProgress(true);
+    const url = `/api/oauth/start?provider=${encodeURIComponent(provider)}&connector_slug=${encodeURIComponent(connectorSlug)}`;
+    const w = 520;
+    const h = 640;
+    const left = (window.screen.width - w) / 2;
+    const top = (window.screen.height - h) / 2;
+    const popup = window.open(
+      url,
+      "aibox_oauth",
+      `width=${w},height=${h},left=${left},top=${top},toolbar=no,menubar=no,resizable=yes`,
+    );
+    if (!popup) {
+      setOidcInProgress(false);
+      setOauthError("Popup bloquée par le navigateur — autorise les popups pour ce site et réessaie.");
+      return;
+    }
+    // Si l'admin ferme la popup sans completer, on arrête le spinner
+    const watcher = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(watcher);
+        setOidcInProgress(false);
+        // Refresh au cas où le succès ait eu lieu juste avant la fermeture
+        refresh();
+      }
+    }, 500);
+  }
+
+  // ===== Device flow fallback =====
+
+  async function pollDeviceOnce(requestId: string, intervalSec: number) {
     try {
       const r = await fetch("/api/oauth/device/poll", {
         method: "POST",
@@ -118,33 +170,31 @@ export function OAuthConnectButton({
       });
       const j = await r.json();
       if (j.state === "success") {
-        setSuccess(true);
-        stopPolling();
-        setFlow(null);
+        stopDevicePolling();
+        setDeviceFlow(null);
         await refresh();
         if (onConnected && j.connection) onConnected(j.connection as Connection);
         return;
       }
       if (j.state === "error") {
-        setError(j.error || "Erreur inconnue");
-        stopPolling();
-        setFlow(null);
+        setOauthError(j.error || "Erreur inconnue");
+        stopDevicePolling();
+        setDeviceFlow(null);
         return;
       }
       const nextInterval = (j.interval as number) || intervalSec;
       pollTimeoutRef.current = setTimeout(
-        () => pollOnce(requestId, nextInterval),
+        () => pollDeviceOnce(requestId, nextInterval),
         nextInterval * 1000,
       );
     } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
-      stopPolling();
+      setOauthError(String(e instanceof Error ? e.message : e));
+      stopDevicePolling();
     }
   }
 
-  async function handleConnect() {
-    setError(null);
-    setSuccess(false);
+  async function handleConnectDevice() {
+    setOauthError(null);
     try {
       const r = await fetch("/api/oauth/device/start", {
         method: "POST",
@@ -153,22 +203,20 @@ export function OAuthConnectButton({
       });
       const j = await r.json();
       if (!r.ok) {
-        setError(j.error || `HTTP ${r.status}`);
+        setOauthError(j.error || `HTTP ${r.status}`);
         return;
       }
       const f = j as DeviceFlowResp;
-      setFlow(f);
+      setDeviceFlow(f);
       setSecondsLeft(f.expires_in_seconds);
       setPolling(true);
-      countdownRef.current = setInterval(() => {
-        setSecondsLeft((s) => Math.max(0, s - 1));
-      }, 1000);
+      countdownRef.current = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
       pollTimeoutRef.current = setTimeout(
-        () => pollOnce(f.request_id, f.interval),
+        () => pollDeviceOnce(f.request_id, f.interval),
         f.interval * 1000,
       );
     } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
+      setOauthError(String(e instanceof Error ? e.message : e));
     }
   }
 
@@ -179,10 +227,11 @@ export function OAuthConnectButton({
       method: "DELETE",
     });
     setConnection(null);
-    setSuccess(false);
   }
 
-  // État : provider pas configuré côté serveur (client_id absent)
+  // ===== Rendu =====
+
+  // Provider pas configuré
   if (providerInfo && !providerInfo.configured) {
     return (
       <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/90">
@@ -190,9 +239,11 @@ export function OAuthConnectButton({
           <AlertTriangle size={12} /> Provider OAuth « {providerInfo.name} » non configuré
         </div>
         <div>
-          L'admin Tobaz34 doit créer un OAuth client (type « TVs and Limited Input devices »)
-          puis ajouter <code className="text-foreground">{providerInfo.client_id_env}</code> dans{" "}
-          <code className="text-foreground">/srv/ai-stack/.env</code>.
+          L'admin Tobaz34 doit créer un OAuth client (Web application) puis ajouter{" "}
+          <code className="text-foreground">{providerInfo.client_id_env}</code> +{" "}
+          <code className="text-foreground">{providerInfo.client_id_env.replace("_ID", "_SECRET")}</code>{" "}
+          dans <code className="text-foreground">/srv/ai-stack/.env</code>.
+          Redirect URI à enregistrer chez le provider : <code className="text-foreground">{`${typeof window !== "undefined" ? window.location.origin : ""}/api/oauth/callback`}</code>
         </div>
         {providerInfo.console_url && (
           <a
@@ -208,8 +259,8 @@ export function OAuthConnectButton({
     );
   }
 
-  // État : déjà connecté
-  if (connection && !flow) {
+  // Connecté
+  if (connection && !deviceFlow) {
     return (
       <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
@@ -233,8 +284,8 @@ export function OAuthConnectButton({
     );
   }
 
-  // État : flow en cours (modal-like inline)
-  if (flow) {
+  // Device flow modal-inline
+  if (deviceFlow) {
     const expired = secondsLeft <= 0;
     return (
       <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-3 text-xs space-y-2">
@@ -242,28 +293,27 @@ export function OAuthConnectButton({
           {polling && !expired
             ? <Loader2 size={12} className="animate-spin" />
             : <AlertTriangle size={12} />}
-          {expired ? "Code expiré" : "En attente d'autorisation…"}
+          {expired ? "Code expiré" : "En attente d'autorisation (Device Flow)…"}
         </div>
         <div>
           1. Ouvre{" "}
           <a
-            href={flow.verification_url_complete || flow.verification_url}
+            href={deviceFlow.verification_url_complete || deviceFlow.verification_url}
             target="_blank"
             rel="noreferrer"
             className="text-blue-400 hover:underline inline-flex items-center gap-1"
           >
-            {flow.verification_url} <ExternalLink size={10} />
-          </a>{" "}
-          sur n'importe quel device
+            {deviceFlow.verification_url} <ExternalLink size={10} />
+          </a>
         </div>
         <div>
-          2. Entre ce code :
+          2. Entre le code :
           <div className="flex items-center gap-2 mt-1">
             <code className="font-mono text-base px-2 py-1 bg-card border border-border rounded tracking-wider">
-              {flow.user_code}
+              {deviceFlow.user_code}
             </code>
             <button
-              onClick={() => navigator.clipboard?.writeText(flow.user_code)}
+              onClick={() => navigator.clipboard?.writeText(deviceFlow.user_code)}
               className="text-muted hover:text-foreground"
               title="Copier"
             >
@@ -271,16 +321,13 @@ export function OAuthConnectButton({
             </button>
           </div>
         </div>
-        <div className="text-muted">
-          3. Autorise l'accès aux scopes demandés. La box détectera automatiquement (≤ {flow.interval}s).
-        </div>
         {!expired && (
           <div className="text-[10px] text-muted">
-            Code valide encore {Math.floor(secondsLeft / 60)}m{secondsLeft % 60}s
+            Valide encore {Math.floor(secondsLeft / 60)}m{secondsLeft % 60}s
           </div>
         )}
         <button
-          onClick={() => { stopPolling(); setFlow(null); }}
+          onClick={() => { stopDevicePolling(); setDeviceFlow(null); }}
           className="text-[11px] text-muted hover:text-foreground underline"
         >
           Annuler
@@ -289,25 +336,34 @@ export function OAuthConnectButton({
     );
   }
 
-  // État initial : bouton Connecter
+  // État initial : bouton OIDC (primaire) + lien Device Flow (fallback)
   return (
     <div className="space-y-2">
       <button
-        onClick={handleConnect}
-        disabled={!providerInfo}
+        onClick={handleConnectOIDC}
+        disabled={!providerInfo || oidcInProgress}
         className={`w-full px-3 py-2 rounded-md border ${PROVIDER_BRAND[provider].color} bg-card text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50`}
       >
-        <span className="font-bold">{PROVIDER_BRAND[provider].logo}</span>
-        Connecter avec {providerInfo?.name || provider}
+        {oidcInProgress
+          ? <Loader2 size={14} className="animate-spin" />
+          : <span className="font-bold">{PROVIDER_BRAND[provider].logo}</span>}
+        {oidcInProgress
+          ? "Autorisation en cours…"
+          : `Connecter avec ${providerInfo?.name || provider}`}
       </button>
-      {error && (
+      <div className="flex items-center justify-end">
+        <button
+          onClick={handleConnectDevice}
+          disabled={!providerInfo}
+          className="text-[10px] text-muted hover:text-foreground underline"
+          title="Pour les déploiements LAN sans domaine HTTPS public"
+        >
+          ou utiliser un code à entrer sur un autre device
+        </button>
+      </div>
+      {oauthError && (
         <div className="text-[11px] text-red-400 flex items-start gap-1.5">
-          <AlertTriangle size={11} className="mt-0.5 shrink-0" /> {error}
-        </div>
-      )}
-      {success && !connection && (
-        <div className="text-[11px] text-emerald-400 flex items-center gap-1.5">
-          <CheckCircle2 size={11} /> Connecté ! Récupération en cours…
+          <AlertTriangle size={11} className="mt-0.5 shrink-0" /> {oauthError}
         </div>
       )}
     </div>
