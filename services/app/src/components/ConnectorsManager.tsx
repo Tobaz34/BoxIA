@@ -20,6 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connectors";
+import { OAuthConnectButton } from "@/components/OAuthConnectButton";
 
 interface Field {
   key: string;
@@ -476,6 +477,18 @@ export function ConnectorsManager() {
                 <strong>Connecteur en {IMPL_BADGE[editing.implStatus].label.toLowerCase()}.</strong>{" "}
                 Vous pouvez enregistrer la configuration ; le worker de
                 synchronisation sera activé dès qu'il sera disponible.
+              </div>
+            )}
+
+            {/* Bouton OAuth Device Flow si le connecteur le supporte. Le form
+             *  ci-dessous reste visible pour les options non-OAuth (ex: shared
+             *  drive ID). La connexion OAuth est complémentaire, pas exclusive. */}
+            {(editing.authMethod === "google_oauth" || editing.authMethod === "azure_ad") && (
+              <div className="mb-4">
+                <OAuthConnectButton
+                  provider={editing.authMethod === "google_oauth" ? "google" : "microsoft"}
+                  connectorSlug={editing.slug}
+                />
               </div>
             )}
 
