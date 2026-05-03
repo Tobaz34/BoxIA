@@ -15,10 +15,11 @@
 import {
   Plug, Plus, Trash2, EyeOff, Eye, RefreshCw, AlertCircle,
   CheckCircle2, X, Settings as SettingsIcon, Search, Clock,
-  Shield, Lock,
+  Shield, Lock, ArrowLeft, ChevronRight,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
+import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connectors";
 
 interface Field {
   key: string;
@@ -30,9 +31,7 @@ interface Field {
   options?: { value: string; label: string }[];
 }
 
-type Category =
-  | "storage" | "email" | "erp_crm" | "helpdesk" | "comms"
-  | "project" | "finance" | "bi";
+type Category = ConnectorCategory;
 
 type ImplStatus = "implemented" | "beta" | "coming_soon";
 type Status = "active" | "inactive" | "hidden";
@@ -104,6 +103,8 @@ export function ConnectorsManager() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<Category | "">("");
+  // Hub sélectionné = vue drill-down ; null = grille de tuiles métier.
+  const [currentHub, setCurrentHub] = useState<ConnectorHub | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Modal activation
@@ -186,11 +187,18 @@ export function ConnectorsManager() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Une recherche active OU une catégorie filtrée force la vue plate
+  // (les tuiles Hub ne sont pertinentes qu'en navigation libre).
+  const isFlatView =
+    !!search.trim() || !!categoryFilter || currentHub !== null;
+
   const { active, available, hidden } = useMemo(() => {
+    const hubCats = currentHub ? new Set(HUBS[currentHub].categories) : null;
     const items = (data?.connectors || []).filter((c) => {
       if (search && !`${c.name} ${c.description} ${c.slug}`
             .toLowerCase().includes(search.toLowerCase())) return false;
       if (categoryFilter && c.category !== categoryFilter) return false;
+      if (hubCats && !hubCats.has(c.category)) return false;
       return true;
     });
     return {
@@ -198,7 +206,29 @@ export function ConnectorsManager() {
       available: items.filter((c) => c.status === "inactive"),
       hidden:    items.filter((c) => c.status === "hidden"),
     };
-  }, [data, search, categoryFilter]);
+  }, [data, search, categoryFilter, currentHub]);
+
+  /**
+   * Stats par hub pour la grille de tuiles : "X actifs / Y disponibles".
+   * Calculé sur l'ensemble des connecteurs (pas filtré par search/category)
+   * car la grille n'est affichée qu'en navigation libre.
+   */
+  const hubStats = useMemo(() => {
+    const stats: Record<ConnectorHub, { active: number; total: number }> =
+      Object.fromEntries(
+        Object.keys(HUBS).map((h) => [h, { active: 0, total: 0 }]),
+      ) as Record<ConnectorHub, { active: number; total: number }>;
+    for (const c of data?.connectors || []) {
+      for (const [hub, def] of Object.entries(HUBS)) {
+        if (def.categories.includes(c.category)) {
+          stats[hub as ConnectorHub].total += 1;
+          if (c.status === "active") stats[hub as ConnectorHub].active += 1;
+          break;
+        }
+      }
+    }
+    return stats;
+  }, [data]);
 
   function openActivate(c: ConnectorItem) {
     setEditing(c);
@@ -323,8 +353,30 @@ export function ConnectorsManager() {
 
       {loading ? (
         <div className="text-center text-sm text-muted py-12">Chargement…</div>
+      ) : !isFlatView ? (
+        /* ---------- VUE HUB (grille de grandes tuiles métier) ---------- */
+        <HubGrid
+          stats={hubStats}
+          onPick={(h) => setCurrentHub(h)}
+        />
       ) : (
         <>
+          {/* Breadcrumb : si on est dans un hub précis, montre le chemin de retour. */}
+          {currentHub && (
+            <div className="mb-4 flex items-center gap-2 text-sm">
+              <button
+                onClick={() => setCurrentHub(null)}
+                className="inline-flex items-center gap-1 text-muted hover:text-foreground transition-default"
+              >
+                <ArrowLeft size={14} /> Tous les thèmes
+              </button>
+              <ChevronRight size={12} className="text-muted" />
+              <span className="font-medium">
+                {HUBS[currentHub].icon} {HUBS[currentHub].label}
+              </span>
+            </div>
+          )}
+
           {/* ACTIFS */}
           {active.length > 0 && (
             <Section title="Actifs" count={active.length}>
@@ -600,6 +652,59 @@ export function ConnectorsManager() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Grille de tuiles métier — la vue par défaut quand l'admin entre sur
+ * /connectors. Chaque tuile représente un Hub (regroupement de catégories
+ * techniques) et indique combien de connecteurs sont actifs / disponibles.
+ */
+function HubGrid({
+  stats, onPick,
+}: {
+  stats: Record<ConnectorHub, { active: number; total: number }>;
+  onPick: (h: ConnectorHub) => void;
+}) {
+  const hubs = (Object.entries(HUBS) as [ConnectorHub, typeof HUBS[ConnectorHub]][])
+    .sort((a, b) => a[1].order - b[1].order);
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {hubs.map(([key, def]) => {
+        const s = stats[key] || { active: 0, total: 0 };
+        const isActive = s.active > 0;
+        return (
+          <button
+            key={key}
+            onClick={() => onPick(key)}
+            className={
+              "group text-left rounded-lg border bg-card p-4 transition-default " +
+              "hover:border-primary/60 hover:bg-card/80 focus:outline-none focus:border-primary " +
+              (isActive ? "border-primary/40" : "border-border")
+            }
+          >
+            <div className="flex items-start justify-between mb-2">
+              <span className="text-3xl leading-none">{def.icon}</span>
+              {isActive && (
+                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent font-medium">
+                  <CheckCircle2 size={9} /> {s.active} actif{s.active > 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <div className="font-semibold text-base mb-1">{def.label}</div>
+            <p className="text-xs text-muted leading-snug line-clamp-2 mb-3 min-h-[32px]">
+              {def.description}
+            </p>
+            <div className="flex items-center justify-between text-[11px] text-muted">
+              <span>{s.total} connecteur{s.total > 1 ? "s" : ""}</span>
+              <span className="inline-flex items-center gap-0.5 text-muted group-hover:text-primary transition-default">
+                Configurer <ChevronRight size={11} />
+              </span>
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }

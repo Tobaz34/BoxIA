@@ -9,12 +9,31 @@
 export type ConnectorCategory =
   | "storage"
   | "email"
+  | "social"
   | "erp_crm"
   | "helpdesk"
   | "comms"
   | "project"
   | "finance"
+  | "calendar"
+  | "telephony"
   | "bi";
+
+/**
+ * Hub = regroupement métier exposé en grande tuile dans /connectors.
+ * Un hub agrège plusieurs `ConnectorCategory` techniques.
+ * Le client ne pense pas en termes de "erp_crm" vs "helpdesk", il pense
+ * "Logiciels métier".
+ */
+export type ConnectorHub =
+  | "email"
+  | "social"
+  | "business"
+  | "documents"
+  | "finance"
+  | "calendar"
+  | "telephony"
+  | "team_chat";
 
 export type ConnectorImplStatus = "implemented" | "beta" | "coming_soon";
 
@@ -51,13 +70,91 @@ export interface ConnectorSpec {
 export const CATEGORIES: Record<ConnectorCategory, { label: string; icon: string }> = {
   storage:    { label: "Stockage de fichiers", icon: "📁" },
   email:      { label: "Messagerie",            icon: "📧" },
+  social:     { label: "Réseaux sociaux",       icon: "📱" },
   erp_crm:    { label: "ERP / CRM",             icon: "💼" },
   helpdesk:   { label: "Support clients",       icon: "🎧" },
-  comms:      { label: "Communication",         icon: "💬" },
+  comms:      { label: "Messagerie d'équipe",   icon: "💬" },
   project:    { label: "Gestion de projet",     icon: "📋" },
   finance:    { label: "Comptabilité / Paie",   icon: "💰" },
+  calendar:   { label: "Agenda",                icon: "🗓️" },
+  telephony:  { label: "Téléphonie",            icon: "📞" },
   bi:         { label: "Business Intelligence", icon: "📊" },
 };
+
+export const HUBS: Record<ConnectorHub, {
+  label: string;
+  icon: string;
+  description: string;
+  /** Catégories techniques agrégées dans ce hub. */
+  categories: ConnectorCategory[];
+  /** Ordre d'affichage dans la grille (plus petit = plus haut). */
+  order: number;
+}> = {
+  email: {
+    label: "Emails",
+    icon: "📧",
+    description: "Outlook, Gmail, IMAP — tri intelligent, résumés, suggestions de réponse.",
+    categories: ["email"],
+    order: 10,
+  },
+  social: {
+    label: "Réseaux sociaux",
+    icon: "📱",
+    description: "Facebook, Instagram, LinkedIn — publication assistée et planning éditorial.",
+    categories: ["social"],
+    order: 20,
+  },
+  business: {
+    label: "Logiciels métier",
+    icon: "💼",
+    description: "ERP, CRM, support, gestion de projet, BI — Odoo, HubSpot, GLPI, Jira…",
+    categories: ["erp_crm", "helpdesk", "project", "bi"],
+    order: 30,
+  },
+  documents: {
+    label: "Documents",
+    icon: "📁",
+    description: "NAS, SharePoint, Drive, Dropbox — RAG sur tous vos fichiers.",
+    categories: ["storage"],
+    order: 40,
+  },
+  finance: {
+    label: "Comptabilité & finance",
+    icon: "💰",
+    description: "Pennylane, FEC universel, Sage, Cegid — factures, impayés, reporting.",
+    categories: ["finance"],
+    order: 50,
+  },
+  calendar: {
+    label: "Agenda",
+    icon: "🗓️",
+    description: "Outlook, Google Calendar, CalDAV — préparation RDV, résumé de semaine.",
+    categories: ["calendar"],
+    order: 60,
+  },
+  telephony: {
+    label: "Téléphonie",
+    icon: "📞",
+    description: "3CX, Ringover, Aircall — transcription et résumé d'appels.",
+    categories: ["telephony"],
+    order: 70,
+  },
+  team_chat: {
+    label: "Messagerie d'équipe",
+    icon: "💬",
+    description: "Slack, Teams, Mattermost — agent IA dans vos canaux internes.",
+    categories: ["comms"],
+    order: 80,
+  },
+};
+
+/** Retourne le hub auquel appartient une catégorie (premier match). */
+export function hubForCategory(cat: ConnectorCategory): ConnectorHub | null {
+  for (const [hub, def] of Object.entries(HUBS)) {
+    if (def.categories.includes(cat)) return hub as ConnectorHub;
+  }
+  return null;
+}
 
 const SMB_FIELDS: ConnectorField[] = [
   { key: "host",     label: "Serveur (IP ou DNS)", type: "text",
@@ -548,6 +645,168 @@ export const CONNECTORS: ConnectorSpec[] = [
       { key: "api_token", label: "API token", type: "password",
         required: true, secret: true },
     ],
+  },
+
+  // ---------- Réseaux sociaux ----------
+  // Scope Phase 1 : publication / community management.
+  // Pas de scraping, uniquement APIs officielles (Meta Graph + LinkedIn Marketing).
+  {
+    slug: "facebook-pages",
+    name: "Facebook (Pages)",
+    icon: "📘",
+    description: "Publier sur les Pages Facebook, lire les statistiques, modérer les commentaires.",
+    category: "social",
+    implStatus: "coming_soon",
+    authMethod: "oauth2",
+    fields: [
+      { key: "page_id", label: "Page ID", type: "text", required: true,
+        placeholder: "123456789012345" },
+      { key: "page_access_token", label: "Page Access Token (long-lived)",
+        type: "password", required: true, secret: true,
+        helpText: "Meta for Developers → My Apps → Graph API Explorer → token longue durée." },
+    ],
+    docUrl: "https://developers.facebook.com/docs/pages-api",
+  },
+  {
+    slug: "instagram-business",
+    name: "Instagram (Business)",
+    icon: "📸",
+    description: "Publier des posts/stories, lire insights, répondre aux DM et commentaires.",
+    category: "social",
+    implStatus: "coming_soon",
+    authMethod: "oauth2",
+    fields: [
+      { key: "ig_user_id", label: "Instagram Business Account ID",
+        type: "text", required: true },
+      { key: "page_access_token", label: "Page Access Token Facebook lié",
+        type: "password", required: true, secret: true,
+        helpText: "Le compte Instagram doit être lié à une Page Facebook." },
+    ],
+    docUrl: "https://developers.facebook.com/docs/instagram-api",
+  },
+  {
+    slug: "linkedin-pages",
+    name: "LinkedIn (Pages entreprise)",
+    icon: "💼",
+    description: "Publier sur la page entreprise, programmer, lire les analytics.",
+    category: "social",
+    implStatus: "coming_soon",
+    authMethod: "oauth2",
+    fields: [
+      { key: "organization_urn", label: "Organization URN",
+        type: "text", required: true,
+        placeholder: "urn:li:organization:1234567" },
+      { key: "access_token", label: "Access Token (3-legged OAuth)",
+        type: "password", required: true, secret: true,
+        helpText: "Scopes requis : w_organization_social, r_organization_social, rw_organization_admin." },
+    ],
+    docUrl: "https://learn.microsoft.com/en-us/linkedin/marketing/",
+  },
+
+  // ---------- Agenda ----------
+  {
+    slug: "outlook-calendar",
+    name: "Outlook Calendar (M365)",
+    icon: "🗓️",
+    description: "Préparation RDV avec contexte client, résumé de la semaine, suggestions de créneaux.",
+    category: "calendar",
+    implStatus: "coming_soon",
+    authMethod: "azure_ad",
+    fields: [
+      { key: "tenant_id", label: "Tenant Azure AD", type: "text", required: true },
+      { key: "client_id", label: "App ID", type: "text", required: true },
+      { key: "client_secret", label: "App secret", type: "password",
+        required: true, secret: true },
+      { key: "scope", label: "Scope", type: "select",
+        options: [
+          { value: "users", label: "Tous les utilisateurs" },
+          { value: "shared_calendar", label: "Calendrier partagé uniquement" },
+        ],
+        required: true },
+    ],
+  },
+  {
+    slug: "google-calendar",
+    name: "Google Calendar",
+    icon: "📅",
+    description: "Calendrier Google Workspace ou perso — préparation et résumé d'agenda.",
+    category: "calendar",
+    implStatus: "coming_soon",
+    authMethod: "google_oauth",
+    fields: [
+      { key: "service_account_json", label: "Clé service account (JSON)",
+        type: "text", required: true, secret: true },
+      { key: "delegated_user", label: "Utilisateur délégué",
+        type: "text", placeholder: "admin@entreprise.fr",
+        helpText: "Pour le domain-wide delegation Workspace." },
+    ],
+  },
+  {
+    slug: "caldav",
+    name: "CalDAV générique",
+    icon: "📆",
+    description: "N'importe quel serveur CalDAV (Nextcloud, Baïkal, iCloud, OVH…).",
+    category: "calendar",
+    implStatus: "coming_soon",
+    authMethod: "form",
+    fields: [
+      { key: "url",      label: "URL CalDAV", type: "url", required: true,
+        placeholder: "https://cloud.entreprise.fr/remote.php/dav/calendars/user/" },
+      { key: "username", label: "Identifiant", type: "text", required: true },
+      { key: "password", label: "Mot de passe (ou app password)",
+        type: "password", required: true, secret: true },
+    ],
+  },
+
+  // ---------- Téléphonie ----------
+  // Pipeline : webhook fin d'appel → faster-whisper → LLM (résumé + actions)
+  // → push vers CRM / email.
+  {
+    slug: "3cx",
+    name: "3CX",
+    icon: "☎️",
+    description: "Transcription et résumé automatique des appels 3CX.",
+    category: "telephony",
+    implStatus: "coming_soon",
+    authMethod: "form",
+    fields: [
+      { key: "pbx_url", label: "URL du PBX 3CX", type: "url", required: true,
+        placeholder: "https://pbx.entreprise.fr:5001" },
+      { key: "api_key", label: "Clé API REST", type: "password",
+        required: true, secret: true },
+      { key: "recording_path", label: "Dossier enregistrements (UNC ou local)",
+        type: "text", placeholder: "/var/lib/3cxpbx/Instance1/Data/Recordings/" },
+    ],
+  },
+  {
+    slug: "ringover",
+    name: "Ringover",
+    icon: "📞",
+    description: "Récupération auto enregistrements, transcription, push CRM.",
+    category: "telephony",
+    implStatus: "coming_soon",
+    authMethod: "form",
+    fields: [
+      { key: "api_key", label: "Clé API Ringover", type: "password",
+        required: true, secret: true,
+        helpText: "Compte Admin Ringover → Développeur → Clés API." },
+    ],
+    docUrl: "https://developers.ringover.com/",
+  },
+  {
+    slug: "aircall",
+    name: "Aircall",
+    icon: "📲",
+    description: "Webhooks d'appel → transcription Whisper → résumé + action items.",
+    category: "telephony",
+    implStatus: "coming_soon",
+    authMethod: "form",
+    fields: [
+      { key: "api_id",    label: "API ID", type: "text", required: true },
+      { key: "api_token", label: "API Token", type: "password",
+        required: true, secret: true },
+    ],
+    docUrl: "https://developer.aircall.io/",
   },
 ];
 

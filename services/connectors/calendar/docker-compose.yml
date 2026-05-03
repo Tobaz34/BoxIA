@@ -1,0 +1,42 @@
+name: aibox-conn-calendar
+
+services:
+  calendar:
+    build: .
+    image: aibox-conn-calendar:0.1.0
+    container_name: aibox-conn-calendar
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8094:8000"
+    environment:
+      CALENDAR_BACKEND: ${CALENDAR_BACKEND:?CALENDAR_BACKEND required (outlook|google|caldav)}
+      CALENDAR_TOOL_API_KEY: ${CALENDAR_TOOL_API_KEY:?CALENDAR_TOOL_API_KEY required}
+      # Outlook (M365)
+      MS_TENANT_ID: ${MS_TENANT_ID:-}
+      MS_CLIENT_ID: ${MS_CLIENT_ID:-}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:-}
+      MS_TARGET_USER: ${MS_TARGET_USER:-}
+      # Google Workspace
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
+      GOOGLE_DELEGATED_USER: ${GOOGLE_DELEGATED_USER:-}
+      # CalDAV
+      CALDAV_URL: ${CALDAV_URL:-}
+      CALDAV_USERNAME: ${CALDAV_USERNAME:-}
+      CALDAV_PASSWORD: ${CALDAV_PASSWORD:-}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    mem_limit: 384m
+    mem_reservation: 96m
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

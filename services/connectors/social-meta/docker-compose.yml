@@ -1,0 +1,33 @@
+name: aibox-conn-social-meta
+
+services:
+  social-meta:
+    build: .
+    image: aibox-conn-social-meta:0.1.0
+    container_name: aibox-conn-social-meta
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8092:8000"
+    environment:
+      META_PAGE_ACCESS_TOKEN: ${META_PAGE_ACCESS_TOKEN:?META_PAGE_ACCESS_TOKEN required}
+      META_TOOL_API_KEY: ${META_TOOL_API_KEY:?META_TOOL_API_KEY required}
+      META_PAGE_ID: ${META_PAGE_ID:-}
+      META_IG_USER_ID: ${META_IG_USER_ID:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v21.0}
+      TENANT_ID: ${CLIENT_NAME:-default}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    mem_limit: 256m
+    mem_reservation: 64m
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

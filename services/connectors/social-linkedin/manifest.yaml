@@ -1,0 +1,16 @@
+id: social_linkedin
+name: "LinkedIn (Pages entreprise)"
+category: social
+description: "Publication, lecture des posts récents, statistiques d'engagement pour les Pages LinkedIn entreprise."
+status: implemented
+
+required_env:
+  - LINKEDIN_ACCESS_TOKEN      # 3-legged OAuth access token
+  - LINKEDIN_ORGANIZATION_URN  # urn:li:organization:1234567
+  - LINKEDIN_TOOL_API_KEY      # Bearer pour authentifier Dify→ce service
+optional_env:
+  - LINKEDIN_API_VERSION       # défaut: 202410 (header Linkedin-Version)
+
+triggered_by_questionnaire:
+  question: reseaux_sociaux
+  values: ["linkedin"]

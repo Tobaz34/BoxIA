@@ -1,0 +1,29 @@
+id: calendar
+name: "Agenda (Outlook + Google + CalDAV)"
+category: calendar
+description: "Lecture d'événements, recherche de créneaux libres, création de RDV. 3 backends interchangeables : Microsoft 365, Google Workspace, CalDAV."
+status: implemented
+
+required_env:
+  - CALENDAR_BACKEND               # outlook | google | caldav
+  - CALENDAR_TOOL_API_KEY          # Bearer pour authentifier Dify→ce service
+
+# Outlook (M365)
+optional_env:
+  - MS_TENANT_ID
+  - MS_CLIENT_ID
+  - MS_CLIENT_SECRET
+  - MS_TARGET_USER                 # UPN de la boîte ciblée (mode app permission)
+
+  # Google Workspace
+  - GOOGLE_SERVICE_ACCOUNT_JSON    # JSON inline ou chemin fichier
+  - GOOGLE_DELEGATED_USER          # email à impersonner (domain-wide delegation)
+
+  # CalDAV
+  - CALDAV_URL
+  - CALDAV_USERNAME
+  - CALDAV_PASSWORD
+
+triggered_by_questionnaire:
+  question: agenda
+  values: ["outlook", "google", "caldav"]

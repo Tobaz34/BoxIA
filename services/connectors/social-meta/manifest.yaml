@@ -1,0 +1,17 @@
+id: social_meta
+name: "Réseaux sociaux Meta (Facebook + Instagram)"
+category: social
+description: "Publication, lecture des posts, insights pour Pages Facebook et comptes Instagram Business via Graph API."
+status: implemented
+
+required_env:
+  - META_PAGE_ACCESS_TOKEN     # Long-lived Page Access Token (Meta for Developers)
+  - META_TOOL_API_KEY          # Bearer pour authentifier Dify→ce service
+optional_env:
+  - META_PAGE_ID               # Si défini, valeur par défaut quand un endpoint ne précise pas
+  - META_IG_USER_ID            # Idem pour Instagram Business Account ID
+  - META_GRAPH_VERSION         # défaut: v21.0
+
+triggered_by_questionnaire:
+  question: reseaux_sociaux
+  values: ["facebook", "instagram"]
