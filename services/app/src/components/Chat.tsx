@@ -81,6 +81,11 @@ interface Message {
   createdAt: number;
   /** Pièces jointes au moment de l'envoi (user msg). */
   attachments?: { kind: AttachedKind; name: string; url?: string }[];
+  /** BUG-022 V2 — provider cloud utilisé pour répondre à ce message
+   *  (event SSE cloud_response_meta). Affiché en badge cyan ☁️ sur le
+   *  message + bordure cyan. */
+  cloudProvider?: "openai" | "anthropic" | "google" | "mistral";
+  cloudModel?: string;
 }
 
 // Fallback si l'agent ne définit pas ses propres suggestions
@@ -146,8 +151,12 @@ export function Chat() {
   // (OOM Ollama, context overflow, etc). Affiche CloudFallbackModal.
   const [cloudFallback, setCloudFallback] = useState<CloudFallbackContext | null>(null);
   const [configuredCloudProviders, setConfiguredCloudProviders] = useState<
-    Set<"openai" | "anthropic" | "mistral">
+    Set<"openai" | "anthropic" | "google" | "mistral">
   >(new Set());
+  // Mémorise la dernière query envoyée pour pouvoir la re-soumettre au
+  // cloud après autorisation utilisateur (CloudFallbackModal "Utiliser
+  // cette fois").
+  const lastQueryRef = useRef<{ query: string; agent: string | null } | null>(null);
 
   // Voice input (Web Speech API, browser-side, FR par défaut)
   const speech = useSpeech();
@@ -169,10 +178,11 @@ export function Chat() {
     fetch("/api/cloud-providers", { cache: "no-store" })
       .then((r) => r.ok ? r.json() : null)
       .then((j) => {
-        if (!j || !j.providers) return;
-        const set = new Set<"openai" | "anthropic" | "mistral">();
-        for (const p of Object.values(j.providers || {}) as Array<{
-          id: "openai" | "anthropic" | "mistral";
+        // L'API retourne {state: {<id>: {configured, ...}}}, pas {providers}.
+        if (!j || !j.state) return;
+        const set = new Set<"openai" | "anthropic" | "google" | "mistral">();
+        for (const p of Object.values(j.state) as Array<{
+          id: "openai" | "anthropic" | "google" | "mistral";
           configured: boolean;
         }>) {
           if (p.configured) set.add(p.id);
@@ -277,6 +287,75 @@ export function Chat() {
       localStorage.setItem(LS_AGENT_KEY, slug);
     }
     setCurrentAgent(slug);
+  }
+
+  /** BUG-022 V2 — Re-soumet la dernière query au cloud après autorisation
+   *  explicite via CloudFallbackModal. Crée un nouveau message assistant
+   *  marqué cloudProvider/cloudModel pour le badge cyan. */
+  async function useCloudFallback(
+    provider: "openai" | "anthropic" | "google" | "mistral",
+    model: string,
+  ) {
+    const last = lastQueryRef.current;
+    if (!last || !last.query) return;
+    const newAsstMsg: Message = {
+      id: uid(), role: "assistant", content: "", createdAt: Date.now(),
+      cloudProvider: provider, cloudModel: model,
+    };
+    setMessages((m) => [...m, newAsstMsg]);
+    setStreaming(true);
+    try {
+      const r = await fetch("/api/chat-cloud", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent: last.agent,
+          query: last.query,
+          conversation_id: conversationId,
+          provider,
+          model,
+        }),
+      });
+      if (!r.ok || !r.body) {
+        const j = await r.json().catch(() => ({}));
+        setError(j.message || j.error || `Cloud error ${r.status}`);
+        setMessages((m) => m.filter((x) => x.id !== newAsstMsg.id));
+        return;
+      }
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const events = buf.split("\n\n");
+        buf = events.pop() || "";
+        for (const ev of events) {
+          for (const line of ev.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload || payload === "[DONE]") continue;
+            try {
+              const data = JSON.parse(payload);
+              if (data.event === "message" && typeof data.answer === "string") {
+                await smoothEmit(data.answer, (chunk) => {
+                  setMessages((m) =>
+                    m.map((x) => x.id === newAsstMsg.id
+                      ? { ...x, content: x.content + chunk } : x));
+                });
+              } else if (data.event === "error") {
+                setError(data.message || "Erreur cloud");
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    } catch (e) {
+      setError(`Cloud call failed: ${(e as Error).message}`);
+    } finally {
+      setStreaming(false);
+    }
   }
 
   const loadConversation = useCallback(async (id: string) => {
@@ -604,6 +683,8 @@ export function Chat() {
     const docPrefix = docContext ? `${docContext}\n\n` : "";
     const imgPrefix = imagesContext ? `${imagesContext}\n\n` : "";
     const queryForDify = `${ciPrefix}${docPrefix}${imgPrefix}${q}`;
+    // Mémorise pour ré-soumission éventuelle au cloud (CloudFallbackModal)
+    lastQueryRef.current = { query: queryForDify, agent: currentAgent };
 
     const userMsg: Message = {
       id: uid(), role: "user", content: q, createdAt: Date.now(),
@@ -722,6 +803,17 @@ export function Chat() {
                     ),
                   );
                 }
+              } else if (data.event === "cloud_response_meta") {
+                // BUG-022 V2 — Premier event du stream /api/chat-cloud,
+                // marque le message courant comme "réponse cloud" pour
+                // afficher badge cyan ☁️ et bordure colorée.
+                setMessages((m) =>
+                  m.map((x) =>
+                    x.id === asstMsg.id
+                      ? { ...x, cloudProvider: data.provider, cloudModel: data.model }
+                      : x,
+                  ),
+                );
               } else if (data.event === "cloud_fallback_needed") {
                 // Émis par /api/chat quand classifyDifyError détecte
                 // OOM/context_overflow/model_unavailable. On stocke le
@@ -1083,8 +1175,26 @@ export function Chat() {
                         <span className="text-[10px] text-muted">
                           {timeShort(m.createdAt)}
                         </span>
+                        {/* BUG-022 V2 — Badge ☁️ cyan + nom provider/model
+                            quand la réponse vient du cloud (event SSE
+                            cloud_response_meta). */}
+                        {m.role === "assistant" && m.cloudProvider && (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30"
+                            title={`Réponse générée via ${m.cloudProvider} (${m.cloudModel}). Vos données sont sorties du LAN avec PII scrub.`}
+                          >
+                            ☁️ {m.cloudProvider}{m.cloudModel ? ` · ${m.cloudModel}` : ""}
+                          </span>
+                        )}
                       </div>
-                      <div className="text-sm leading-relaxed">
+                      <div
+                        className={
+                          "text-sm leading-relaxed " +
+                          (m.role === "assistant" && m.cloudProvider
+                            ? "border-l-2 border-cyan-500/40 pl-3 -ml-1"
+                            : "")
+                        }
+                      >
                         {m.role === "assistant" ? (
                           m.content ? (
                             <MessageMarkdown content={m.content} />
@@ -1427,11 +1537,14 @@ export function Chat() {
       </div>
 
       {/* Modale fallback cloud — affichée quand l'event SSE
-          `cloud_fallback_needed` est intercepté (OOM Ollama, etc). */}
+          `cloud_fallback_needed` est intercepté (OOM Ollama, etc).
+          Si l'utilisateur clique "Utiliser cette fois", useCloudFallback
+          POST /api/chat-cloud pour appeler le provider direct. */}
       {cloudFallback && (
         <CloudFallbackModal
           ctx={cloudFallback}
           configuredProviders={configuredCloudProviders}
+          onUseThisTime={useCloudFallback}
           onClose={() => setCloudFallback(null)}
         />
       )}

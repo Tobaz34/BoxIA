@@ -14,9 +14,13 @@ import {
   CLOUD_PROVIDERS,
   readCloudProvidersState,
   setProviderConfigured,
+  setProviderApiKeyLocal,
   removeProviderConfig,
   setBudget,
   setPiiScrub,
+  setProviderEnabledModels,
+  resetProviderCounters,
+  PRICING_EUR_PER_1M_TOKENS,
   type CloudProviderId,
 } from "@/lib/cloud-providers";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
@@ -37,6 +41,7 @@ export async function GET() {
     state: state.providers,
     budget_monthly_eur: state.budget_monthly_eur,
     pii_scrub_enabled: state.pii_scrub_enabled,
+    pricing: PRICING_EUR_PER_1M_TOKENS,  // €/1M tokens par modèle (UI cost mgmt)
   });
 }
 
@@ -44,6 +49,10 @@ interface PostBody {
   id?: string;
   api_key?: string;
   enabled_models?: string[];
+  // Action ciblée provider (mode "patch" sans api_key)
+  // - "reset_counters" : remet à zéro cost / requests / last_error / last_success
+  // - "update_models"  : met à jour enabled_models[] sans toucher la clé
+  action?: "reset_counters" | "update_models";
   // Settings globaux (mode "update settings only")
   budget_monthly_eur?: number;
   pii_scrub_enabled?: boolean;
@@ -86,6 +95,41 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  // Mode "action ciblée" (reset_counters / update_models) — pas de clé requise
+  if (body.action === "reset_counters") {
+    const id = body.id as CloudProviderId;
+    await resetProviderCounters(id);
+    await logAction("settings.update", session.user.email, {
+      target: "cloud-providers",
+      action: "reset_counters",
+      provider: id,
+    }, ipFromHeaders(req));
+    return NextResponse.json({ ok: true, reset: id });
+  }
+
+  if (body.action === "update_models") {
+    const id = body.id as CloudProviderId;
+    if (!Array.isArray(body.enabled_models)) {
+      return NextResponse.json(
+        { error: "missing_enabled_models" }, { status: 400 });
+    }
+    const updated = await setProviderEnabledModels(id, body.enabled_models);
+    if (!updated) {
+      return NextResponse.json(
+        { error: "provider_not_configured",
+          message: "Configure d'abord la clé API avant d'éditer les modèles." },
+        { status: 400 });
+    }
+    await logAction("settings.update", session.user.email, {
+      target: "cloud-providers",
+      action: "update_models",
+      provider: id,
+      models: body.enabled_models,
+    }, ipFromHeaders(req));
+    return NextResponse.json({ ok: true, state: updated });
+  }
+
   if (!body.api_key || typeof body.api_key !== "string" || body.api_key.length < 20) {
     return NextResponse.json(
       { error: "missing_api_key", hint: "Saisis ta clé API du provider (≥ 20 caractères)" },
@@ -100,27 +144,32 @@ export async function POST(req: Request) {
       ? body.enabled_models
       : provider.default_models;
 
-  // Push la clé à Dify (provider configuration)
-  // Endpoint : POST /console/api/workspaces/current/model-providers/<provider>
-  // Body : { credentials: { <provider-specific-fields>: <values> } }
-  // On utilise une fonction dédiée côté lib qui appelle Dify console API.
+  // Stratégie dual-store :
+  //   1. Pousse la clé à Dify (chiffrement at-rest côté Dify) — utile si
+  //      le plugin <provider> est installé (Dify peut alors invoker le
+  //      modèle via son orchestration).
+  //   2. Stocke aussi la clé chiffrée localement (AES-256-GCM via
+  //      NEXTAUTH_SECRET) pour permettre les appels directs du provider
+  //      via /api/chat-cloud quand Dify n'a pas le plugin (cas BoxIA
+  //      self-hosted sans accès marketplace.dify.ai).
+  //
+  // Si Dify rejette (plugin absent), on continue quand même (warning)
+  // pour que le bouton "Utiliser cette fois" de la modale fonctionne.
+  let difyOk = false;
+  let difyError: string | null = null;
   try {
     const { configureCloudProviderInDify } = await import("@/lib/dify-cloud-providers");
     const r = await configureCloudProviderInDify(id, body.api_key, enabled_models);
-    if (!r.ok) {
-      return NextResponse.json(
-        { error: "dify_config_failed", detail: r.error },
-        { status: 502 },
-      );
-    }
+    difyOk = r.ok;
+    if (!r.ok) difyError = r.error;
   } catch (e) {
-    return NextResponse.json(
-      { error: "dify_config_failed", detail: String(e).slice(0, 300) },
-      { status: 502 },
-    );
+    difyError = String(e).slice(0, 300);
   }
 
-  // Persiste l'état local (préfixe seulement, jamais la clé en clair)
+  // Stocke localement (chiffré). Toujours fait, indépendamment de Dify.
+  await setProviderApiKeyLocal(id, body.api_key);
+
+  // Met à jour l'état (préfixe pour ID UI + flag configured = true)
   const key_prefix = body.api_key.slice(0, 8) + "…";
   const state = await setProviderConfigured(id, key_prefix, enabled_models);
 
@@ -130,9 +179,20 @@ export async function POST(req: Request) {
     provider: id,
     models: enabled_models,
     key_prefix,
+    dify_ok: difyOk,
+    dify_error: difyError,
   }, ipFromHeaders(req));
 
-  return NextResponse.json({ ok: true, state });
+  return NextResponse.json({
+    ok: true,
+    state,
+    dify_ok: difyOk,
+    dify_error: difyError,
+    local_store: true,
+    note: !difyOk
+      ? "Plugin Dify indisponible. La clé est stockée localement et utilisable via le bouton 'Utiliser cette fois' de la modale fallback cloud."
+      : undefined,
+  });
 }
 
 export async function DELETE(req: Request) {

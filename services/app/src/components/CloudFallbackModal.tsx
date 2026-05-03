@@ -26,13 +26,15 @@ import {
   Cloud, AlertTriangle, X, Settings as SettingsIcon, ExternalLink,
 } from "lucide-react";
 
+export type ProviderId = "openai" | "anthropic" | "google" | "mistral";
+
 export interface CloudFallbackContext {
   /** Type de défaillance détectée. */
   kind: "oom" | "context_overflow" | "model_unavailable" | "unknown";
   /** Message technique (court) pour debug. */
   reason: string;
   /** Provider suggéré (default openai). */
-  suggested_provider: "openai" | "anthropic" | "mistral";
+  suggested_provider: ProviderId;
   /** Modèle suggéré (gpt-4o pour vision, gpt-4o-mini sinon). */
   suggested_model: string;
   /** Coût estimé en € (très approximatif). */
@@ -44,7 +46,10 @@ export interface CloudFallbackContext {
 interface Props {
   ctx: CloudFallbackContext;
   /** Map des providers configurés côté admin (clés OK dans /settings). */
-  configuredProviders: Set<"openai" | "anthropic" | "mistral">;
+  configuredProviders: Set<ProviderId>;
+  /** Callback quand l'utilisateur clique "Utiliser cette fois" — Chat.tsx
+   *  re-soumet la query au cloud via POST /api/chat-cloud. */
+  onUseThisTime?: (provider: ProviderId, model: string) => void;
   onClose: () => void;
 }
 
@@ -71,20 +76,48 @@ const KIND_DETAIL: Record<CloudFallbackContext["kind"], string> = {
     "permettre de débloquer la situation pour cette requête.",
 };
 
-const PROVIDER_LABEL: Record<"openai" | "anthropic" | "mistral", string> = {
+const PROVIDER_LABEL: Record<ProviderId, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic Claude",
+  google: "Google Gemini",
   mistral: "Mistral",
 };
 
-export function CloudFallbackModal({ ctx, configuredProviders, onClose }: Props) {
+export function CloudFallbackModal({
+  ctx, configuredProviders, onUseThisTime, onClose,
+}: Props) {
   const router = useRouter();
   const isProviderConfigured = configuredProviders.has(ctx.suggested_provider);
   const anyProviderConfigured = configuredProviders.size > 0;
+  // Si le suggested_provider n'est pas configuré, on prend le premier
+  // configuré disponible avec son meilleur modèle
+  const fallbackProvider = isProviderConfigured
+    ? ctx.suggested_provider
+    : ([...configuredProviders][0] || null);
+  const fallbackModel = isProviderConfigured
+    ? (ctx.suggested_provider === "anthropic"
+        // claude-3-5-sonnet-latest n'existe plus (rebrand 4.x). Sur
+        // suggestion vision/text, on prend Sonnet 4.5 (vision-capable).
+        ? "claude-sonnet-4-5"
+        : ctx.suggested_provider === "google"
+        ? "gemini-2.5-flash"  // gratuit jusqu'à 1500 req/jour, vision OK
+        : ctx.suggested_model)
+    : fallbackProvider === "anthropic" ? "claude-sonnet-4-5"
+    : fallbackProvider === "google" ? "gemini-2.5-flash"
+    : fallbackProvider === "openai" ? "gpt-4o"
+    : fallbackProvider === "mistral" ? "mistral-large-latest"
+    : null;
+  const canUseNow = !!fallbackProvider && !!fallbackModel && !!onUseThisTime;
 
   function goToSettings() {
     onClose();
     router.push("/settings#cloud-providers");
+  }
+
+  function handleUse() {
+    if (!fallbackProvider || !fallbackModel || !onUseThisTime) return;
+    onUseThisTime(fallbackProvider, fallbackModel);
+    onClose();
   }
 
   return (
@@ -175,14 +208,25 @@ export function CloudFallbackModal({ ctx, configuredProviders, onClose }: Props)
           >
             Annuler
           </button>
-          <button
-            onClick={goToSettings}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-cyan-500 text-white text-sm font-medium hover:bg-cyan-400"
-          >
-            <SettingsIcon size={14} />
-            Configurer le cloud
-            <ExternalLink size={12} />
-          </button>
+          {canUseNow ? (
+            <button
+              onClick={handleUse}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-cyan-500 text-white text-sm font-medium hover:bg-cyan-400"
+              title={`Soumettre la requête à ${fallbackProvider} (${fallbackModel})`}
+            >
+              <Cloud size={14} />
+              Utiliser {fallbackProvider} cette fois
+            </button>
+          ) : (
+            <button
+              onClick={goToSettings}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-cyan-500 text-white text-sm font-medium hover:bg-cyan-400"
+            >
+              <SettingsIcon size={14} />
+              Configurer le cloud
+              <ExternalLink size={12} />
+            </button>
+          )}
         </div>
       </div>
     </div>

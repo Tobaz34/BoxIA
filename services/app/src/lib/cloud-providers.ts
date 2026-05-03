@@ -23,11 +23,12 @@
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const STATE_DIR = process.env.CONNECTORS_STATE_DIR || "/data";
 const STATE_FILE = path.join(STATE_DIR, "cloud-providers.json");
 
-export type CloudProviderId = "openai" | "anthropic" | "mistral";
+export type CloudProviderId = "openai" | "anthropic" | "google" | "mistral";
 
 export interface CloudProviderConfig {
   /** Id du provider (slug stable). */
@@ -57,9 +58,21 @@ export const CLOUD_PROVIDERS: CloudProviderConfig[] = [
     id: "anthropic",
     name: "Anthropic (Claude Pro / Team)",
     dify_provider: "langgenius/anthropic/anthropic",
-    default_models: ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
+    // Modèles 2026 (rebrand Claude 4.x). Les "*-latest" alias n'existent
+    // plus pour les versions récentes — il faut un id complet.
+    default_models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-7"],
     api_keys_url: "https://console.anthropic.com/settings/keys",
     key_format_hint: "sk-ant-api03-... (95+ caractères)",
+  },
+  {
+    id: "google",
+    name: "Google AI (Gemini)",
+    dify_provider: "langgenius/google/google",
+    // Gemini 2.5 Flash : quota gratuit généreux (15 req/min, 1500 req/jour)
+    // Gemini 2.5 Pro : payant mais context 2M tokens
+    default_models: ["gemini-2.5-flash", "gemini-2.5-pro"],
+    api_keys_url: "https://aistudio.google.com/apikey",
+    key_format_hint: "AIza... (39 caractères)",
   },
   {
     id: "mistral",
@@ -88,6 +101,63 @@ export interface CloudProviderState {
   tokens_this_month?: number;
   /** Coût estimé ce mois (€). */
   cost_eur_this_month?: number;
+  /** Clé API chiffrée AES-256-GCM avec NEXTAUTH_SECRET (ou DIFY_SECRET_KEY
+   *  en fallback). Stockée localement uniquement pour permettre les
+   *  appels directs aux providers cloud quand les plugins Dify ne sont
+   *  pas installés (cas BoxIA self-hosted sans accès marketplace.dify.ai).
+   *  Format : `iv_hex:tag_hex:ciphertext_hex`. */
+  api_key_local_encrypted?: string;
+  /** Dernier appel cloud réussi (ms epoch). Sert au calcul du badge UI :
+   *  si pas de succès récent + last_error → status=error (rouge). */
+  last_success_at?: number;
+  /** Dernière erreur cloud rencontrée (HTTP 4xx/5xx, timeout, auth fail).
+   *  Si timestamp < 5 min → badge orange "warning" (ou rouge si critical
+   *  comme HTTP 401 invalid_api_key, 402 insufficient_credits). */
+  last_error?: {
+    at: number;
+    status: number;          // HTTP status (0 si network/timeout)
+    code: string;            // "invalid_api_key" | "insufficient_credits" | "rate_limit" | "network" | "unknown"
+    message: string;         // Message court (≤ 200 chars)
+  };
+  /** Compteur de requêtes ce mois (pour stats UI). */
+  requests_this_month?: number;
+}
+
+export type ProviderHealth = "ok" | "warning" | "error" | "idle";
+
+/** Calcule l'état santé d'un provider à partir de son state.
+ *  - "idle"    : pas configuré OU jamais utilisé
+ *  - "ok"      : configuré + dernier appel < 5 min OK
+ *  - "warning" : budget > 80% OU dernière erreur 5-30 min OU success il y a > 24h
+ *  - "error"   : budget dépassé OU dernière erreur < 5 min critique (auth/credits)
+ */
+export function computeProviderHealth(
+  p: CloudProviderState | undefined,
+  budgetMonthly: number,
+  totalUsage: number,
+): ProviderHealth {
+  if (!p?.configured) return "idle";
+  const now = Date.now();
+  const FIVE_MIN = 5 * 60 * 1000;
+  const THIRTY_MIN = 30 * 60 * 1000;
+
+  // Erreur critique récente → rouge
+  if (p.last_error) {
+    const ageMs = now - p.last_error.at;
+    const isCritical = ["invalid_api_key", "insufficient_credits"].includes(p.last_error.code);
+    if (ageMs < FIVE_MIN && isCritical) return "error";
+    if (ageMs < FIVE_MIN) return "warning";
+    if (ageMs < THIRTY_MIN) return "warning";
+  }
+  // Budget dépassé / proche → rouge / orange
+  if (budgetMonthly > 0) {
+    const usagePct = totalUsage / budgetMonthly;
+    if (usagePct >= 1) return "error";
+    if (usagePct >= 0.8) return "warning";
+  }
+  // Pas de succès récent (ou jamais) → idle plutôt que ok pour rester neutre
+  if (!p.last_success_at) return "idle";
+  return "ok";
 }
 
 interface StateFile {
@@ -164,4 +234,233 @@ export async function setPiiScrub(enabled: boolean): Promise<void> {
   const s = await readCloudProvidersState();
   s.pii_scrub_enabled = enabled;
   await writeCloudProvidersState(s);
+}
+
+// =========================================================================
+// Encryption locale des clés API (BUG-022 cloud fallback bypass Dify)
+// =========================================================================
+// Permet à /api/chat-cloud d'appeler directement le provider cloud sans
+// dépendre du plugin Dify (qui peut être absent : marketplace.dify.ai
+// inaccessible depuis xefia, ou plugin non installé). Clé chiffrée
+// AES-256-GCM avec une dérivation HKDF de NEXTAUTH_SECRET.
+//
+// At-rest : la clé en clair n'est JAMAIS écrite. Le ciphertext est dans
+// `api_key_local_encrypted` (CloudProviderState). Si NEXTAUTH_SECRET
+// change, les clés deviennent illisibles → l'admin doit les ressaisir.
+
+function getEncryptionKey(): Buffer {
+  const secret = process.env.NEXTAUTH_SECRET
+    || process.env.DIFY_SECRET_KEY
+    || "boxia-default-secret-CHANGE-ME-IN-ENV";
+  // HKDF simple : sha256(secret + "cloud-providers-v1") → 32 bytes
+  return crypto.createHash("sha256")
+    .update(secret + "cloud-providers-v1")
+    .digest();
+}
+
+export function encryptApiKey(plaintext: string): string {
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12);  // GCM standard 96-bit IV
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("hex")}:${tag.toString("hex")}:${ct.toString("hex")}`;
+}
+
+export function decryptApiKey(blob: string): string | null {
+  try {
+    const [ivHex, tagHex, ctHex] = blob.split(":");
+    if (!ivHex || !tagHex || !ctHex) return null;
+    const key = getEncryptionKey();
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm", key, Buffer.from(ivHex, "hex"));
+    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+    const pt = Buffer.concat([
+      decipher.update(Buffer.from(ctHex, "hex")),
+      decipher.final(),
+    ]);
+    return pt.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Stocke la clé chiffrée localement (en plus du push à Dify côté caller). */
+export async function setProviderApiKeyLocal(
+  id: CloudProviderId, plaintextKey: string,
+): Promise<void> {
+  const s = await readCloudProvidersState();
+  const existing = s.providers[id] || {
+    id, configured: false, enabled_models: [],
+  };
+  s.providers[id] = {
+    ...existing,
+    api_key_local_encrypted: encryptApiKey(plaintextKey),
+    configured: true,
+    key_prefix: plaintextKey.slice(0, 12),
+    configured_at: existing.configured_at ?? Date.now(),
+  };
+  await writeCloudProvidersState(s);
+}
+
+/** Lit la clé en clair depuis le state (déchiffre AES-GCM). null si absent
+ *  ou déchiffrement impossible (NEXTAUTH_SECRET changé). */
+export async function getProviderApiKeyLocal(
+  id: CloudProviderId,
+): Promise<string | null> {
+  const s = await readCloudProvidersState();
+  const blob = s.providers[id]?.api_key_local_encrypted;
+  if (!blob) return null;
+  return decryptApiKey(blob);
+}
+
+/** Marque un appel cloud comme réussi : met à jour last_success_at,
+ *  incrémente requests_this_month, clear last_error. */
+export async function recordCloudSuccess(
+  id: CloudProviderId,
+  estimatedCostEur: number,
+): Promise<void> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur) return;
+  s.providers[id] = {
+    ...cur,
+    last_success_at: Date.now(),
+    last_error: undefined,
+    requests_this_month: (cur.requests_this_month || 0) + 1,
+    cost_eur_this_month: (cur.cost_eur_this_month || 0) + estimatedCostEur,
+    last_used_at: Date.now(),
+  };
+  await writeCloudProvidersState(s);
+}
+
+/** Marque un appel cloud comme échoué : stocke last_error avec code/HTTP. */
+export async function recordCloudError(
+  id: CloudProviderId,
+  status: number,
+  code: string,
+  message: string,
+): Promise<void> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur) return;
+  s.providers[id] = {
+    ...cur,
+    last_error: {
+      at: Date.now(),
+      status,
+      code,
+      message: message.slice(0, 200),
+    },
+    last_used_at: Date.now(),
+  };
+  await writeCloudProvidersState(s);
+}
+
+/** Met à jour uniquement la liste des modèles activés (sans toucher la clé).
+ *  Utilisé par /settings → toggle d'activation par modèle, qui ne demande
+ *  pas de re-saisir la clé. Si le provider n'est pas encore configuré on
+ *  ne fait rien (pas d'enabled_models sans clé). */
+export async function setProviderEnabledModels(
+  id: CloudProviderId,
+  enabled_models: string[],
+): Promise<CloudProviderState | null> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur || !cur.configured) return null;
+  s.providers[id] = { ...cur, enabled_models };
+  await writeCloudProvidersState(s);
+  return s.providers[id];
+}
+
+/** Reset des compteurs mensuels pour un provider (cost_eur_this_month,
+ *  requests_this_month, tokens_this_month, last_error, last_success_at).
+ *  Utile pour redémarrer un cycle de facturation, ou clear un état "rouge"
+ *  après résolution manuelle (rotation de clé, top-up de crédits). */
+export async function resetProviderCounters(id: CloudProviderId): Promise<void> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur) return;
+  s.providers[id] = {
+    ...cur,
+    tokens_this_month: 0,
+    cost_eur_this_month: 0,
+    requests_this_month: 0,
+    last_error: undefined,
+    last_success_at: undefined,
+  };
+  await writeCloudProvidersState(s);
+}
+
+// =========================================================================
+// Pricing modèles cloud (€/1M tokens, valeurs 2026 indicatives)
+// =========================================================================
+// Source de vérité : utilisée par /api/chat-cloud pour estimer le coût à
+// chaque appel (cost_eur incrémenté dans cost_eur_this_month) ET par l'UI
+// /settings pour afficher le tarif en regard de chaque modèle activable.
+//
+// Les vraies factures viennent du dashboard du provider — cette table sert
+// uniquement à donner une visibilité au client + déclencher les seuils
+// d'alerte budget (80% warning, 100% block).
+export interface ModelPricing {
+  /** € par 1M tokens en input (prompt). */
+  in: number;
+  /** € par 1M tokens en output (génération). */
+  out: number;
+}
+
+export const PRICING_EUR_PER_1M_TOKENS: Record<string, ModelPricing> = {
+  // OpenAI
+  "gpt-4o":            { in: 2.30, out: 9.20 },
+  "gpt-4o-mini":       { in: 0.14, out: 0.55 },
+  // Anthropic Claude 4.x (rebrand 2026)
+  "claude-sonnet-4-5": { in: 2.80, out: 14.0 },
+  "claude-haiku-4-5":  { in: 0.74, out: 3.70 },
+  "claude-opus-4-7":   { in: 14.0, out: 70.0 },
+  // Google Gemini
+  "gemini-2.5-flash":  { in: 0.07, out: 0.28 },
+  "gemini-2.5-pro":    { in: 1.15, out: 4.60 },
+  // Mistral
+  "mistral-large-latest": { in: 1.84, out: 5.52 },
+  "mistral-small-latest": { in: 0.18, out: 0.55 },
+};
+
+/** Tarif fallback (modèle inconnu) — moyenne raisonnable. */
+const DEFAULT_PRICING: ModelPricing = { in: 1.0, out: 3.0 };
+
+export function getModelPricing(model: string): ModelPricing {
+  return PRICING_EUR_PER_1M_TOKENS[model] || DEFAULT_PRICING;
+}
+
+/** Estime le coût d'un appel à partir des tokens input/output. */
+export function estimateCallCostEur(
+  model: string, inputTokens: number, outputTokens: number,
+): number {
+  const p = getModelPricing(model);
+  const cost = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
+  return Math.round(cost * 10000) / 10000;  // 4 décimales
+}
+
+/** Classifie un message d'erreur HTTP du provider en code stable utilisable
+ *  par computeProviderHealth (et par l'UI pour message localisé). */
+export function classifyCloudError(
+  status: number, body: string,
+): { code: string; message: string } {
+  const txt = (body || "").toLowerCase();
+  if (status === 401 || txt.includes("invalid api key") || txt.includes("authentication")) {
+    return { code: "invalid_api_key", message: "Clé API refusée par le provider" };
+  }
+  if (status === 402 || txt.includes("insufficient") || txt.includes("billing") || txt.includes("credit")) {
+    return { code: "insufficient_credits", message: "Plus de crédit / quota dépassé sur le provider" };
+  }
+  if (status === 429 || txt.includes("rate limit") || txt.includes("quota")) {
+    return { code: "rate_limit", message: "Rate limit provider — patienter quelques minutes" };
+  }
+  if (status === 0 || status >= 500) {
+    return { code: "upstream_error", message: `Erreur provider HTTP ${status}` };
+  }
+  if (status === 404 || txt.includes("model") && txt.includes("not")) {
+    return { code: "model_not_found", message: "Modèle introuvable chez le provider" };
+  }
+  return { code: "unknown", message: body.slice(0, 200) || `HTTP ${status}` };
 }
