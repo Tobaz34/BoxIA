@@ -34,6 +34,9 @@ import { authOptions } from "@/lib/auth";
 import {
   readCloudProvidersState,
   getProviderApiKeyLocal,
+  recordCloudSuccess,
+  recordCloudError,
+  classifyCloudError,
   type CloudProviderId,
 } from "@/lib/cloud-providers";
 import { scrubPII, summarizeScrub } from "@/lib/pii-scrub";
@@ -126,6 +129,9 @@ export async function POST(req: NextRequest) {
         { error: "unsupported_provider" }, { status: 400 });
     }
   } catch (e) {
+    // Network / DNS / timeout — pas de status HTTP. On enregistre l'erreur
+    // dans le state pour que le badge UI passe en orange/rouge.
+    await recordCloudError(provider, 0, "network", String(e).slice(0, 200));
     return NextResponse.json(
       { error: "cloud_call_failed", message: String(e).slice(0, 300) },
       { status: 502 });
@@ -133,17 +139,25 @@ export async function POST(req: NextRequest) {
 
   if (!upstreamResponse.ok || !upstreamResponse.body) {
     const text = await upstreamResponse.text().catch(() => "");
+    // Classifie l'erreur pour le badge UI : 401 → invalid_api_key (rouge),
+    // 402/insufficient → insufficient_credits (rouge), 429 → rate_limit (orange).
+    const cls = classifyCloudError(upstreamResponse.status, text);
+    await recordCloudError(provider, upstreamResponse.status, cls.code, cls.message);
     return NextResponse.json(
       { error: "cloud_upstream_error",
         provider, model,
         status: upstreamResponse.status,
+        code: cls.code,
         body: text.slice(0, 500) },
       { status: 502 });
   }
 
-  // 6. Convert le stream provider en SSE format Dify-like
+  // 6. Convert le stream provider en SSE format Dify-like.
+  //    On passe la query (pour estimer les input tokens) afin de calculer
+  //    un coût approximatif quand le stream se termine, qui sera persisté
+  //    via recordCloudSuccess (alimente le badge "vert/orange/rouge" UI).
   const sseStream = convertProviderStreamToDifySSE(
-    upstreamResponse.body, provider, body.conversation_id, model,
+    upstreamResponse.body, provider, body.conversation_id, model, query,
   );
 
   return new Response(sseStream, {
@@ -300,18 +314,28 @@ async function callMistral(apiKey: string, model: string, prompt: string): Promi
 }
 
 /** Convertit le SSE provider en format SSE Dify-like que Chat.tsx connaît
- *  déjà. Premier event = cloud_response_meta pour badge UI. */
+ *  déjà. Premier event = cloud_response_meta pour badge UI.
+ *
+ *  Quand le stream se termine SANS exception, on appelle recordCloudSuccess()
+ *  avec un coût estimé (input_chars + output_chars / 4 tokens × tarif modèle)
+ *  pour que le badge passe en vert et que cost_eur_this_month soit incrémenté.
+ *  En cas d'exception côté stream (timeout, parse fail, etc.), on enregistre
+ *  une erreur "stream_error" pour basculer le badge en orange.
+ */
 function convertProviderStreamToDifySSE(
   upstream: ReadableStream<Uint8Array>,
   provider: CloudProviderId,
   conversationId: string | undefined,
   model: string,
+  inputQuery: string,
 ): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   const messageId = `cloud-${Date.now().toString(36)}`;
   let lineBuffer = "";
   let totalAnswer = "";
+  let streamFailed = false;
+  let streamError = "";
 
   return new ReadableStream({
     async start(controller) {
@@ -355,24 +379,81 @@ function convertProviderStreamToDifySSE(
         }
       } catch (e) {
         console.warn("[chat-cloud] stream error:", e);
+        streamFailed = true;
+        streamError = String(e).slice(0, 200);
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({
           event: "error",
-          message: `Cloud stream error: ${String(e).slice(0, 200)}`,
+          message: `Cloud stream error: ${streamError}`,
         })}\n\n`));
       } finally {
+        // Estimation tokens : ~4 chars/token (heuristique standard).
+        const inputTokens = Math.ceil(inputQuery.length / 4);
+        const outputTokens = Math.ceil(totalAnswer.length / 4);
+        const costEur = estimateCostEur(provider, model, inputTokens, outputTokens);
+
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({
           event: "message_end",
           conversation_id: conversationId,
           message_id: messageId,
           metadata: {
             provider, model,
-            usage: { total_tokens: Math.ceil(totalAnswer.length / 4) },
+            usage: {
+              prompt_tokens: inputTokens,
+              completion_tokens: outputTokens,
+              total_tokens: inputTokens + outputTokens,
+              cost_eur: costEur,
+            },
           },
         })}\n\n`));
         controller.close();
+
+        // Persiste le résultat dans cloud-providers.json (alimente les badges).
+        // Important : APRES controller.close() pour ne pas bloquer le flush.
+        // Si totalAnswer est vide ET pas de streamFailed → quand même OK
+        // (provider a juste répondu vide, pas une erreur).
+        try {
+          if (streamFailed) {
+            await recordCloudError(provider, 0, "stream_error", streamError);
+          } else {
+            await recordCloudSuccess(provider, costEur);
+          }
+        } catch (persistErr) {
+          console.warn("[chat-cloud] state persist failed:", persistErr);
+        }
       }
     },
   });
+}
+
+/** Tarifs approximatifs en € par 1M tokens (input/output).
+ *  Valeurs 2026 indicatives — utilisées uniquement pour le compteur
+ *  cost_eur_this_month et les seuils d'alerte budget UI. Les vraies
+ *  factures viennent du dashboard du provider.
+ */
+const PRICING_EUR_PER_1M_TOKENS: Record<string, { in: number; out: number }> = {
+  // OpenAI
+  "gpt-4o":            { in: 2.30, out: 9.20 },
+  "gpt-4o-mini":       { in: 0.14, out: 0.55 },
+  // Anthropic
+  "claude-sonnet-4-5": { in: 2.80, out: 14.0 },
+  "claude-haiku-4-5":  { in: 0.74, out: 3.70 },
+  "claude-opus-4-7":   { in: 14.0, out: 70.0 },
+  // Google Gemini (gratuit jusqu'à un certain quota, mais on estime quand même)
+  "gemini-2.5-flash":  { in: 0.07, out: 0.28 },
+  "gemini-2.5-pro":    { in: 1.15, out: 4.60 },
+  // Mistral
+  "mistral-large-latest": { in: 1.84, out: 5.52 },
+  "mistral-small-latest": { in: 0.18, out: 0.55 },
+};
+
+function estimateCostEur(
+  provider: CloudProviderId, model: string,
+  inputTokens: number, outputTokens: number,
+): number {
+  const pricing = PRICING_EUR_PER_1M_TOKENS[model] || { in: 1.0, out: 3.0 };
+  const cost = (inputTokens * pricing.in + outputTokens * pricing.out) / 1_000_000;
+  void provider; // pricing keyed by model; provider just for logs
+  return Math.round(cost * 10000) / 10000;  // 4 décimales (sub-cent visible)
 }
 
 function extractAnswerChunk(provider: CloudProviderId, evt: unknown): string {

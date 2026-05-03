@@ -271,27 +271,141 @@ function LocalAiBadge() {
   );
 }
 
+/** Health status d'un provider — version client (logique inlinée pour éviter
+ *  d'importer @/lib/cloud-providers qui contient des modules node:fs). */
+type ProviderHealth = "ok" | "warning" | "error" | "idle";
+
+interface ClientProviderState {
+  id: CloudProviderId;
+  configured: boolean;
+  cost_eur_this_month?: number;
+  requests_this_month?: number;
+  last_success_at?: number;
+  last_error?: { at: number; status: number; code: string; message: string };
+}
+
+function computeHealthClient(
+  p: ClientProviderState,
+  budgetMonthly: number,
+  totalUsage: number,
+): ProviderHealth {
+  if (!p.configured) return "idle";
+  const now = Date.now();
+  const FIVE_MIN = 5 * 60 * 1000;
+  const THIRTY_MIN = 30 * 60 * 1000;
+  if (p.last_error) {
+    const ageMs = now - p.last_error.at;
+    const isCritical = ["invalid_api_key", "insufficient_credits"].includes(p.last_error.code);
+    if (ageMs < FIVE_MIN && isCritical) return "error";
+    if (ageMs < FIVE_MIN) return "warning";
+    if (ageMs < THIRTY_MIN) return "warning";
+  }
+  if (budgetMonthly > 0) {
+    const usagePct = totalUsage / budgetMonthly;
+    if (usagePct >= 1) return "error";
+    if (usagePct >= 0.8) return "warning";
+  }
+  if (!p.last_success_at) return "idle";
+  return "ok";
+}
+
+/** Map health → classes Tailwind (ring + background + couleur icône) */
+const HEALTH_STYLES: Record<ProviderHealth, string> = {
+  ok:       "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/40",
+  warning:  "bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/50 animate-pulse",
+  error:    "bg-red-500/20 text-red-400 ring-1 ring-red-500/60 animate-pulse",
+  idle:     "bg-muted/20 text-muted ring-1 ring-border",
+};
+
+const HEALTH_LABEL: Record<ProviderHealth, string> = {
+  ok:       "Opérationnel",
+  warning:  "Attention",
+  error:    "En erreur",
+  idle:     "Configuré (jamais utilisé)",
+};
+
+function formatRelativeTime(ms: number): string {
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "à l'instant";
+  if (diff < 3_600_000) return `il y a ${Math.floor(diff / 60_000)} min`;
+  if (diff < 86_400_000) return `il y a ${Math.floor(diff / 3_600_000)} h`;
+  return `il y a ${Math.floor(diff / 86_400_000)} j`;
+}
+
+function buildTooltip(
+  p: ClientProviderState,
+  health: ProviderHealth,
+  budgetMonthly: number,
+  totalUsage: number,
+): string {
+  const lines: string[] = [];
+  lines.push(`${PROVIDER_LABELS[p.id]} — ${HEALTH_LABEL[health]}`);
+  if (!p.configured) {
+    lines.push("Clé API non configurée. Va dans /settings → Providers cloud.");
+    return lines.join("\n");
+  }
+  if (p.last_success_at) {
+    lines.push(`✓ Dernier appel OK : ${formatRelativeTime(p.last_success_at)}`);
+  }
+  if (p.last_error) {
+    lines.push(
+      `✗ Dernière erreur (${formatRelativeTime(p.last_error.at)}) : ${p.last_error.code}`,
+    );
+    if (p.last_error.message) lines.push(`   ${p.last_error.message}`);
+  }
+  if (typeof p.cost_eur_this_month === "number" && p.cost_eur_this_month > 0) {
+    lines.push(`Coût ce mois : ${p.cost_eur_this_month.toFixed(3)}€`);
+  }
+  if (typeof p.requests_this_month === "number" && p.requests_this_month > 0) {
+    lines.push(`Requêtes ce mois : ${p.requests_this_month}`);
+  }
+  if (budgetMonthly > 0) {
+    const pct = (totalUsage / budgetMonthly) * 100;
+    lines.push(`Budget global : ${totalUsage.toFixed(2)}€ / ${budgetMonthly}€ (${pct.toFixed(0)}%)`);
+  }
+  return lines.join("\n");
+}
+
 function CloudProvidersBadges() {
-  const [providers, setProviders] = useState<Array<{
-    id: CloudProviderId;
-    configured: boolean;
-    cost_eur_this_month?: number;
-  }>>([]);
+  const [providers, setProviders] = useState<ClientProviderState[]>([]);
+  const [budgetMonthly, setBudgetMonthly] = useState(0);
+  const [totalUsage, setTotalUsage] = useState(0);
 
   useEffect(() => {
-    fetch("/api/cloud-providers", { cache: "no-store" })
-      .then((r) => r.ok ? r.json() : null)
-      .then((j) => {
-        if (!j) return;
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch("/api/cloud-providers", { cache: "no-store" });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
         const stateMap = j.state || {};
-        const ids: CloudProviderId[] = ["openai", "anthropic", "mistral"];
-        setProviders(ids.map((id) => ({
+        const ids: CloudProviderId[] = ["openai", "anthropic", "google", "mistral"];
+        const next: ClientProviderState[] = ids.map((id) => ({
           id,
           configured: stateMap[id]?.configured === true,
           cost_eur_this_month: stateMap[id]?.cost_eur_this_month,
-        })));
-      })
-      .catch(() => { /* silent */ });
+          requests_this_month: stateMap[id]?.requests_this_month,
+          last_success_at: stateMap[id]?.last_success_at,
+          last_error: stateMap[id]?.last_error,
+        }));
+        setProviders(next);
+        setBudgetMonthly(j.budget_monthly_eur || 0);
+        setTotalUsage(next.reduce((a, p) => a + (p.cost_eur_this_month || 0), 0));
+      } catch { /* silent */ }
+    }
+    load();
+    // Refresh : (a) toutes les 15 s pour catcher rapidement les changements
+    // de health (last_error / last_success_at qui évoluent à chaque appel
+    // cloud) sans étouffer le serveur, (b) au retour du tab (focus) pour
+    // voir immédiatement si l'admin vient de configurer une clé.
+    const t = setInterval(load, 15_000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   if (providers.length === 0) return null;
@@ -301,26 +415,25 @@ function CloudProvidersBadges() {
   return (
     <div className="hidden lg:flex items-center gap-1.5 px-3 border-l border-border">
       <Cloud size={12} className="text-muted shrink-0" aria-hidden />
-      {providers.map((p) => (
-        <span
-          key={p.id}
-          title={
-            p.configured
-              ? `${PROVIDER_LABELS[p.id]} : actif${p.cost_eur_this_month
-                  ? ` · ${p.cost_eur_this_month.toFixed(2)}€ ce mois` : ""}`
-              : `${PROVIDER_LABELS[p.id]} : non configuré`
-          }
-          className={
-            "inline-flex items-center justify-center w-6 h-6 rounded transition-default " +
-            (p.configured
-              ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/40"
-              : "opacity-30 grayscale")
-          }
-          aria-label={`${PROVIDER_LABELS[p.id]} ${p.configured ? "actif" : "inactif"}`}
-        >
-          <ProviderLogo id={p.id} size={14} colored={p.configured} />
-        </span>
-      ))}
+      {providers.map((p) => {
+        const health = computeHealthClient(p, budgetMonthly, totalUsage);
+        const styleCls = p.configured
+          ? HEALTH_STYLES[health]
+          : "opacity-30 grayscale";
+        return (
+          <span
+            key={p.id}
+            title={buildTooltip(p, health, budgetMonthly, totalUsage)}
+            className={
+              "inline-flex items-center justify-center w-6 h-6 rounded transition-default " +
+              styleCls
+            }
+            aria-label={`${PROVIDER_LABELS[p.id]} ${HEALTH_LABEL[health]}`}
+          >
+            <ProviderLogo id={p.id} size={14} colored={p.configured && health !== "error"} />
+          </span>
+        );
+      })}
     </div>
   );
 }

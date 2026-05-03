@@ -107,6 +107,57 @@ export interface CloudProviderState {
    *  pas installés (cas BoxIA self-hosted sans accès marketplace.dify.ai).
    *  Format : `iv_hex:tag_hex:ciphertext_hex`. */
   api_key_local_encrypted?: string;
+  /** Dernier appel cloud réussi (ms epoch). Sert au calcul du badge UI :
+   *  si pas de succès récent + last_error → status=error (rouge). */
+  last_success_at?: number;
+  /** Dernière erreur cloud rencontrée (HTTP 4xx/5xx, timeout, auth fail).
+   *  Si timestamp < 5 min → badge orange "warning" (ou rouge si critical
+   *  comme HTTP 401 invalid_api_key, 402 insufficient_credits). */
+  last_error?: {
+    at: number;
+    status: number;          // HTTP status (0 si network/timeout)
+    code: string;            // "invalid_api_key" | "insufficient_credits" | "rate_limit" | "network" | "unknown"
+    message: string;         // Message court (≤ 200 chars)
+  };
+  /** Compteur de requêtes ce mois (pour stats UI). */
+  requests_this_month?: number;
+}
+
+export type ProviderHealth = "ok" | "warning" | "error" | "idle";
+
+/** Calcule l'état santé d'un provider à partir de son state.
+ *  - "idle"    : pas configuré OU jamais utilisé
+ *  - "ok"      : configuré + dernier appel < 5 min OK
+ *  - "warning" : budget > 80% OU dernière erreur 5-30 min OU success il y a > 24h
+ *  - "error"   : budget dépassé OU dernière erreur < 5 min critique (auth/credits)
+ */
+export function computeProviderHealth(
+  p: CloudProviderState | undefined,
+  budgetMonthly: number,
+  totalUsage: number,
+): ProviderHealth {
+  if (!p?.configured) return "idle";
+  const now = Date.now();
+  const FIVE_MIN = 5 * 60 * 1000;
+  const THIRTY_MIN = 30 * 60 * 1000;
+
+  // Erreur critique récente → rouge
+  if (p.last_error) {
+    const ageMs = now - p.last_error.at;
+    const isCritical = ["invalid_api_key", "insufficient_credits"].includes(p.last_error.code);
+    if (ageMs < FIVE_MIN && isCritical) return "error";
+    if (ageMs < FIVE_MIN) return "warning";
+    if (ageMs < THIRTY_MIN) return "warning";
+  }
+  // Budget dépassé / proche → rouge / orange
+  if (budgetMonthly > 0) {
+    const usagePct = totalUsage / budgetMonthly;
+    if (usagePct >= 1) return "error";
+    if (usagePct >= 0.8) return "warning";
+  }
+  // Pas de succès récent (ou jamais) → idle plutôt que ok pour rester neutre
+  if (!p.last_success_at) return "idle";
+  return "ok";
 }
 
 interface StateFile {
@@ -261,4 +312,71 @@ export async function getProviderApiKeyLocal(
   const blob = s.providers[id]?.api_key_local_encrypted;
   if (!blob) return null;
   return decryptApiKey(blob);
+}
+
+/** Marque un appel cloud comme réussi : met à jour last_success_at,
+ *  incrémente requests_this_month, clear last_error. */
+export async function recordCloudSuccess(
+  id: CloudProviderId,
+  estimatedCostEur: number,
+): Promise<void> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur) return;
+  s.providers[id] = {
+    ...cur,
+    last_success_at: Date.now(),
+    last_error: undefined,
+    requests_this_month: (cur.requests_this_month || 0) + 1,
+    cost_eur_this_month: (cur.cost_eur_this_month || 0) + estimatedCostEur,
+    last_used_at: Date.now(),
+  };
+  await writeCloudProvidersState(s);
+}
+
+/** Marque un appel cloud comme échoué : stocke last_error avec code/HTTP. */
+export async function recordCloudError(
+  id: CloudProviderId,
+  status: number,
+  code: string,
+  message: string,
+): Promise<void> {
+  const s = await readCloudProvidersState();
+  const cur = s.providers[id];
+  if (!cur) return;
+  s.providers[id] = {
+    ...cur,
+    last_error: {
+      at: Date.now(),
+      status,
+      code,
+      message: message.slice(0, 200),
+    },
+    last_used_at: Date.now(),
+  };
+  await writeCloudProvidersState(s);
+}
+
+/** Classifie un message d'erreur HTTP du provider en code stable utilisable
+ *  par computeProviderHealth (et par l'UI pour message localisé). */
+export function classifyCloudError(
+  status: number, body: string,
+): { code: string; message: string } {
+  const txt = (body || "").toLowerCase();
+  if (status === 401 || txt.includes("invalid api key") || txt.includes("authentication")) {
+    return { code: "invalid_api_key", message: "Clé API refusée par le provider" };
+  }
+  if (status === 402 || txt.includes("insufficient") || txt.includes("billing") || txt.includes("credit")) {
+    return { code: "insufficient_credits", message: "Plus de crédit / quota dépassé sur le provider" };
+  }
+  if (status === 429 || txt.includes("rate limit") || txt.includes("quota")) {
+    return { code: "rate_limit", message: "Rate limit provider — patienter quelques minutes" };
+  }
+  if (status === 0 || status >= 500) {
+    return { code: "upstream_error", message: `Erreur provider HTTP ${status}` };
+  }
+  if (status === 404 || txt.includes("model") && txt.includes("not")) {
+    return { code: "model_not_found", message: "Modèle introuvable chez le provider" };
+  }
+  return { code: "unknown", message: body.slice(0, 200) || `HTTP ${status}` };
 }
