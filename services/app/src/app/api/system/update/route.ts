@@ -74,7 +74,7 @@ export async function POST(req: Request) {
 
   await logAction("settings.update", `system_update_requested:${branch}`, {
     actor: session.user.email,
-    ip: ipFromHeaders(req.headers),
+    ip: ipFromHeaders(req),
     branch,
   });
 
