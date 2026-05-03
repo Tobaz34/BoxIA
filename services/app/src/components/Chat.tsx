@@ -25,6 +25,7 @@ import { ConversationsList, type Conversation } from "./ConversationsList";
 import { AgentPicker, type AgentMeta } from "./AgentPicker";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageSources, type RetrieverResource } from "./MessageSources";
+import { CloudFallbackModal, type CloudFallbackContext } from "./CloudFallbackModal";
 import { useUI, setUI } from "@/lib/ui-store";
 import { useSpeech, useTTS } from "@/lib/use-speech";
 import { smoothEmit } from "@/lib/smooth-stream";
@@ -59,6 +60,15 @@ interface AttachedFile {
    *  etc.). Affiché en banner orange anti-hallucination. */
   extraction_error?: string | null;
   extracted_pages?: number | null;
+  /** BUG-022 : pour les images attachées à un agent vision, base64 brut
+   *  (sans préfixe data:) renvoyé par /api/files/upload. Sera inliné dans
+   *  la query au format markdown image data URL — qwen2.5vl:7b sait
+   *  l'extraire. Sans cela, Dify upload mais ne route pas l'image au LLM
+   *  en mode chat simple. */
+  image_base64?: string | null;
+  /** BUG-022 : si l'image est trop grande pour être inlinée (>1 MB) ou
+   *  si l'encoding a échoué. Affiché en banner orange. */
+  image_error?: string | null;
 }
 
 interface Message {
@@ -131,6 +141,13 @@ export function Chat() {
   const [attached, setAttached] = useState<AttachedFile[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // Cloud fallback (BUG-022 + ext) — état set par l'event SSE
+  // `cloud_fallback_needed` émis par /api/chat quand le local plante
+  // (OOM Ollama, context overflow, etc). Affiche CloudFallbackModal.
+  const [cloudFallback, setCloudFallback] = useState<CloudFallbackContext | null>(null);
+  const [configuredCloudProviders, setConfiguredCloudProviders] = useState<
+    Set<"openai" | "anthropic" | "mistral">
+  >(new Set());
 
   // Voice input (Web Speech API, browser-side, FR par défaut)
   const speech = useSpeech();
@@ -144,6 +161,26 @@ export function Chat() {
       setInput(speech.transcript);
     }
   }, [speech.transcript, speech.listening]);
+
+  // Charge la liste des providers cloud configurés UNE FOIS au mount.
+  // Sert à la modale CloudFallbackModal pour savoir si l'utilisateur a déjà
+  // configuré un provider OU s'il doit aller en /settings d'abord.
+  useEffect(() => {
+    fetch("/api/cloud-providers", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (!j || !j.providers) return;
+        const set = new Set<"openai" | "anthropic" | "mistral">();
+        for (const p of Object.values(j.providers || {}) as Array<{
+          id: "openai" | "anthropic" | "mistral";
+          configured: boolean;
+        }>) {
+          if (p.configured) set.add(p.id);
+        }
+        setConfiguredCloudProviders(set);
+      })
+      .catch(() => { /* silent */ });
+  }, []);
   // Surface l'erreur speech dans le bandeau d'erreur global du chat
   useEffect(() => {
     if (speech.error) setError(speech.error);
@@ -428,6 +465,9 @@ export function Chat() {
           extracted_text: j.extracted_text || null,
           extraction_error: j.extraction_error || null,
           extracted_pages: j.extracted_pages || null,
+          // BUG-022 : on stocke le base64 image pour l'inliner en data URL
+          image_base64: j.image_base64 || null,
+          image_error: j.image_error || null,
         }]);
       }
     } finally {
@@ -541,11 +581,29 @@ export function Chat() {
         `--- FIN ${a.name} ---`)
       .join("\n\n");
 
+    // BUG-022 : pattern symétrique pour les images. On inline en data URL
+    // markdown — qwen2.5vl:7b sait extraire et analyser ce format. Sans
+    // ça, Dify ne route pas l'image au LLM en mode chat simple, et l'agent
+    // répond "je n'ai pas accès à l'image". Cap inline à 1 MB côté upload.
+    const imagesContext = filesAtSend
+      .filter((a) => a.kind === "image" && a.image_base64)
+      .map((a) => {
+        // Détecte mime via extension (fallback PNG)
+        const ext = (a.extension || "png").toLowerCase();
+        const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+          : ext === "webp" ? "image/webp"
+          : ext === "gif" ? "image/gif"
+          : "image/png";
+        return `![${a.name}](data:${mime};base64,${a.image_base64})`;
+      })
+      .join("\n\n");
+
     const ciPrefix = ci && isNewConversation
       ? `[Contexte utilisateur, à garder en tête pour toutes les réponses :\n${ci}]\n\n`
       : "";
     const docPrefix = docContext ? `${docContext}\n\n` : "";
-    const queryForDify = `${ciPrefix}${docPrefix}${q}`;
+    const imgPrefix = imagesContext ? `${imagesContext}\n\n` : "";
+    const queryForDify = `${ciPrefix}${docPrefix}${imgPrefix}${q}`;
 
     const userMsg: Message = {
       id: uid(), role: "user", content: q, createdAt: Date.now(),
@@ -664,6 +722,20 @@ export function Chat() {
                     ),
                   );
                 }
+              } else if (data.event === "cloud_fallback_needed") {
+                // Émis par /api/chat quand classifyDifyError détecte
+                // OOM/context_overflow/model_unavailable. On stocke le
+                // contexte → la modale CloudFallbackModal s'ouvre via
+                // le state cloudFallback en bas de Chat. L'utilisateur
+                // décide d'aller configurer un provider cloud.
+                setCloudFallback({
+                  kind: data.kind || "unknown",
+                  reason: data.reason || "",
+                  suggested_provider: data.suggested_provider || "openai",
+                  suggested_model: data.suggested_model || "gpt-4o-mini",
+                  estimated_cost_eur: data.estimated_cost_eur || 0.005,
+                  agent: data.agent || null,
+                });
               } else if (data.event === "error") {
                 setError(data.message || "Erreur Dify");
               }
@@ -1174,6 +1246,20 @@ export function Chat() {
             </div>
           )}
 
+          {/* BUG-022 — Banner orange si une image dépasse 1 MB (cap inline
+              data URL pour ne pas exploser le context window). */}
+          {attached.some((a) => a.image_error) && (
+            <div className="max-w-3xl mx-auto mb-2 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs px-3 py-2">
+              ⚠ Image(s) non transmise(s) à l'IA :{" "}
+              {attached
+                .filter((a) => a.image_error)
+                .map((a) => `${a.name} (${a.image_error})`)
+                .join(", ")}
+              . Réduisez la taille (max ≈ 1 Mo) ou utilisez une capture
+              partielle.
+            </div>
+          )}
+
           {/* Preview des pièces jointes (images + documents) avant envoi */}
           {attached.length > 0 && (
             <div className="max-w-3xl mx-auto mb-2 flex flex-wrap gap-2">
@@ -1339,6 +1425,16 @@ export function Chat() {
           </p>
         </div>
       </div>
+
+      {/* Modale fallback cloud — affichée quand l'event SSE
+          `cloud_fallback_needed` est intercepté (OOM Ollama, etc). */}
+      {cloudFallback && (
+        <CloudFallbackModal
+          ctx={cloudFallback}
+          configuredProviders={configuredCloudProviders}
+          onClose={() => setCloudFallback(null)}
+        />
+      )}
     </ChatLayout>
   );
 }

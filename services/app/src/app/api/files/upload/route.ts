@@ -121,6 +121,32 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // BUG-022 — Pattern symétrique pour les images : encoder en base64
+  // pour que le client puisse l'inclure en markdown image data URL dans
+  // la query. Sans cela, Dify upload bien l'image dans son storage mais
+  // ne la pousse JAMAIS au LLM vision en mode chat simple (file_upload.
+  // image.enabled=true ne suffit pas — il faudrait un workflow Dify avec
+  // nœud Document Extractor, ou la base64 inline dans le prompt).
+  // qwen2.5vl:7b sait extraire les data: URLs des prompts texte.
+  // Cap : on ne renvoie l'image que si <= 1 MB raw (≈1.4 MB b64) pour
+  // ne pas exploser la fenêtre context (32k tokens) — au-delà l'agent
+  // doit utiliser des outils ou fonctionner en aveugle.
+  let imageBase64: string | null = null;
+  let imageError: string | null = null;
+  const IMG_INLINE_MAX = 1 * 1024 * 1024;
+  if (kind === "image") {
+    if (file.size > IMG_INLINE_MAX) {
+      imageError = `image_too_large_for_inline:${file.size}`;
+    } else {
+      try {
+        const buf = Buffer.from(await file.arrayBuffer());
+        imageBase64 = buf.toString("base64");
+      } catch (e) {
+        imageError = "image_encode_failed:" + String(e).slice(0, 100);
+      }
+    }
+  }
+
   return NextResponse.json({
     id: j.id,
     kind,                    // ← à passer dans `files[].type` au /api/chat
@@ -131,5 +157,7 @@ export async function POST(req: NextRequest) {
     extracted_text: extracted?.ok ? extracted.text : null,
     extracted_pages: extracted?.ok ? extracted.pages : null,
     extraction_error: extracted && !extracted.ok ? extracted.reason : null,
+    image_base64: imageBase64,
+    image_error: imageError,
   });
 }

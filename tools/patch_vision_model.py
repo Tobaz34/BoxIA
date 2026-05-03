@@ -76,7 +76,10 @@ def patch_model_config(session, app_id, mc, target_model):
     for k in ["id", "app_id", "provider", "created_at", "updated_at"]:
         mc.pop(k, None)
     mc["model"]["name"] = target_model
-    mc["model"].setdefault("completion_params", {})["max_tokens"] = 8192
+    # qwen2.5vl:7b a un cap interne num_predict ≤ 4096 (limite Ollama).
+    # On reste sous ce cap côté model_config app pour éviter
+    # "Model Parameter num_predict should be less than or equal to 4096.0".
+    mc["model"].setdefault("completion_params", {})["max_tokens"] = 4096
     # Active le passage d'images au LLM (fournitures par UI ou par /api/chat
     # body.files[].type=image). Sans cette flag, Dify upload l'image dans
     # son storage mais ne la pousse jamais dans le prompt vision.
@@ -114,12 +117,12 @@ def main():
     img_enabled = mc.get("file_upload", {}).get("image", {}).get("enabled", False)
     print(f"[+] file_upload.image.enabled : {img_enabled}")
     if (current == target_model
-            and mc["model"]["completion_params"].get("max_tokens") == 8192
+            and mc["model"]["completion_params"].get("max_tokens") == 4096
             and img_enabled):
         print("[=] Déjà correct, rien à faire.")
         return
     patch_model_config(s, app_id, mc, target_model)
-    print(f"[✓] Model patché  : {target_model} + max_tokens=8192 + image_upload=true")
+    print(f"[✓] Model patché  : {target_model} + max_tokens=4096 + image_upload=true")
 
 
 if __name__ == "__main__":
