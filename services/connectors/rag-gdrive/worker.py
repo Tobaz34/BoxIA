@@ -1,16 +1,33 @@
 """
 RAG Google Drive — indexe Drive (My Drive ou Shared Drive) dans Qdrant.
 
-Auth : Service Account avec domain-wide delegation.
+Auth : 2 modes via AUTH_MODE :
+  - "service_account" (legacy, default) : Service Account avec domain-wide
+    delegation. Variables GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_SUBJECT_EMAIL
+    requises. Adapté à un déploiement admin centralisé.
+  - "oauth" (recommandé prod multi-user) : utilise le token OAuth user
+    saisi via /connectors UI (cf services/app/src/lib/oauth-oidc.ts).
+    Variables OAUTH_API_BASE + CONNECTOR_INTERNAL_TOKEN requises. Le worker
+    indexe alors le Drive du user qui a autorisé.
+
 Sync : Drive Changes API (token de page persisté → diff incrémental).
 
-Variables :
+Variables communes :
+  TENANT_ID                    ID isolation par tenant pour la collection Qdrant
+  OLLAMA_URL, LLM_EMBED, QDRANT_URL, QDRANT_API_KEY
+  SYNC_INTERVAL_MINUTES (default 30)
+  INCLUDE_MIME             default = whitelist standard
+
+Variables mode service_account :
   GOOGLE_SERVICE_ACCOUNT_JSON  chemin du JSON SA monté
   GOOGLE_SUBJECT_EMAIL         user dont le drive est indexé (DWD)
   GOOGLE_DRIVE_ID              optionnel (Shared Drive)
-  TENANT_ID, OLLAMA_URL, LLM_EMBED, QDRANT_URL, QDRANT_API_KEY
-  SYNC_INTERVAL_MINUTES (default 30)
-  INCLUDE_MIME             default = whitelist standard
+
+Variables mode oauth :
+  OAUTH_API_BASE               ex: http://aibox-app:3100 (depuis container)
+                                ou http://localhost:3100 (host mode)
+  CONNECTOR_INTERNAL_TOKEN     shared secret avec aibox-app .env
+  OAUTH_CONNECTOR_SLUG         défaut "google-drive"
 """
 from __future__ import annotations
 
@@ -25,7 +42,6 @@ import traceback
 from pathlib import Path
 
 import httpx
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from qdrant_client import QdrantClient
@@ -33,10 +49,25 @@ from qdrant_client.http import models as qm
 from tenacity import retry, stop_after_attempt, wait_exponential
 from unstructured.partition.auto import partition
 
+# Chemin vers _lib partagé. Bind-mount défini dans docker-compose.yml du
+# connector. Cf services/connectors/_lib/oauth.py pour OAuthTokenSource.
+sys.path.insert(0, "/lib_shared")
+
 # ---- Config ----
-SA_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-SUBJECT_EMAIL = os.environ["GOOGLE_SUBJECT_EMAIL"]
+AUTH_MODE = os.environ.get("AUTH_MODE", "service_account").strip().lower()
+
 DRIVE_ID = os.environ.get("GOOGLE_DRIVE_ID", "")  # vide = "My Drive" du subject
+
+# En mode service_account, ces vars sont obligatoires. En mode oauth on
+# n'y touche pas (TENANT_ID prend la valeur ou un fallback dérivé du email).
+SA_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+SUBJECT_EMAIL = os.environ.get("GOOGLE_SUBJECT_EMAIL", "")
+
+if AUTH_MODE == "service_account" and (not SA_JSON or not SUBJECT_EMAIL):
+    raise RuntimeError(
+        "AUTH_MODE=service_account requires GOOGLE_SERVICE_ACCOUNT_JSON and "
+        "GOOGLE_SUBJECT_EMAIL env vars",
+    )
 
 TENANT_ID = os.environ.get("TENANT_ID", "default")
 COLLECTION = f"rag_gdrive_{TENANT_ID}"
@@ -81,7 +112,37 @@ SCOPES = [
 ]
 
 
+# Source de tokens partagée (mode oauth uniquement). Initialisée lazy pour
+# ne pas planter en mode service_account si OAUTH_API_BASE absent.
+_oauth_source = None
+
+
+def _get_oauth_source():
+    global _oauth_source
+    if _oauth_source is None:
+        from oauth import OAuthTokenSource  # services/connectors/_lib/oauth.py
+        _oauth_source = OAuthTokenSource(
+            provider="google",
+            connector_slug=os.environ.get("OAUTH_CONNECTOR_SLUG", "google-drive"),
+        )
+    return _oauth_source
+
+
 def drive_service():
+    """Retourne un client googleapiclient.Drive v3 selon AUTH_MODE.
+
+    En mode oauth, on rebuild le client à chaque appel pour avoir un token
+    frais (le helper cache 60s côté worker). googleapiclient ne support pas
+    nativement les credentials qui se rafraîchissent côté serveur, on
+    contourne en passant le bearer token chaque fois.
+    """
+    if AUTH_MODE == "oauth":
+        from google.oauth2.credentials import Credentials
+        access_token = _get_oauth_source().token()
+        creds = Credentials(token=access_token)
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
+    # service_account legacy
+    from google.oauth2 import service_account
     creds = service_account.Credentials.from_service_account_file(
         SA_JSON, scopes=SCOPES,
     ).with_subject(SUBJECT_EMAIL)

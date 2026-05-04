@@ -6,9 +6,20 @@ services:
     container_name: aibox-conn-rag-gdrive
     restart: unless-stopped
     environment:
+      # AUTH_MODE=oauth → utilise le token User OAuth saisi via /connectors UI
+      # (cf services/app/src/lib/oauth-oidc.ts). Worker indexe le Drive du user
+      # qui a autorisé. Mode recommandé pour prod multi-user.
+      # AUTH_MODE=service_account → mode legacy DWD admin (vars GOOGLE_SA_*)
+      AUTH_MODE: ${RAG_GDRIVE_AUTH_MODE:-oauth}
+      # ---- Mode OAuth (par défaut) ----
+      OAUTH_API_BASE: ${OAUTH_API_BASE:-http://localhost:3100}
+      CONNECTOR_INTERNAL_TOKEN: ${CONNECTOR_INTERNAL_TOKEN:-}
+      OAUTH_CONNECTOR_SLUG: ${OAUTH_CONNECTOR_SLUG_GDRIVE:-google-drive}
+      # ---- Mode Service Account (legacy) ----
       GOOGLE_SERVICE_ACCOUNT_JSON: /secrets/sa.json
-      GOOGLE_SUBJECT_EMAIL: ${GOOGLE_SUBJECT_EMAIL}
+      GOOGLE_SUBJECT_EMAIL: ${GOOGLE_SUBJECT_EMAIL:-}
       GOOGLE_DRIVE_ID: ${GOOGLE_DRIVE_ID:-}
+      # ---- Commun ----
       TENANT_ID: ${CLIENT_NAME:-default}
       OLLAMA_URL: http://ollama:11434
       LLM_EMBED: ${LLM_EMBED:-bge-m3}
@@ -17,7 +28,12 @@ services:
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
     volumes:
       - rag_gdrive_state:/data
-      - ${GOOGLE_SA_JSON_PATH}:/secrets/sa.json:ro
+      # Bind du module Python partagé _lib (oauth.py).
+      - ${AIBOX_CONNECTORS_LIB_PATH:-../_lib}:/lib_shared:ro
+      # Mode legacy : SA JSON. Optionnel — si AUTH_MODE=oauth le worker n'en
+      # a pas besoin. Le mount échouerait si le path n'existe pas → on
+      # utilise un fichier vide en fallback.
+      - ${GOOGLE_SA_JSON_PATH:-/dev/null}:/secrets/sa.json:ro
     networks:
       - aibox_net
       - ollama_net

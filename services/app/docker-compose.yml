@@ -109,6 +109,15 @@ services:
       # depuis /settings → carte « Connexion GitHub ». Cf lib/github-token.ts.
       GITHUB_TOKEN:                    ${GITHUB_TOKEN:-}
 
+      # ---- Shared secret entre aibox-app et les workers connecteurs Python.
+      # Utilisé par /api/oauth/internal/token : les workers présentent ce
+      # token dans X-Connector-Token pour récupérer un access_token OAuth
+      # déchiffré (déchiffrement géré server-side par aibox-app, jamais
+      # exposé côté worker).
+      # >=16 chars random. À synchroniser avec les vars connector compose
+      # files (cf services/connectors/rag-gdrive/docker-compose.yml).
+      CONNECTOR_INTERNAL_TOKEN:        ${CONNECTOR_INTERNAL_TOKEN:-}
+
       # ---- Authentik OIDC ----
       # En host mode, localhost:9000 = le port mappé par Authentik
       AUTHENTIK_ISSUER: ${AUTHENTIK_APP_ISSUER:-http://localhost:9000/application/o/aibox-app/}

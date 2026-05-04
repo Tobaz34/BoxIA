@@ -1,17 +1,21 @@
 """
 RAG MS Graph — indexe SharePoint / OneDrive dans Qdrant.
 
-Authentification : OAuth2 client_credentials (App Registration Azure AD).
+Authentification : 2 modes via AUTH_MODE :
+  - "client_credentials" (legacy, default) : OAuth2 client_credentials
+    (App Registration Azure AD avec admin consent). Variables MS_TENANT_ID
+    + MS_CLIENT_ID + MS_CLIENT_SECRET + scope ".default". Adapté à un
+    déploiement admin centralisé indexant un drive partagé.
+  - "oauth" (recommandé prod multi-user) : utilise le token OAuth user
+    saisi via /connectors UI (cf services/app/src/lib/oauth-oidc.ts).
+    Variables OAUTH_API_BASE + CONNECTOR_INTERNAL_TOKEN. Le worker
+    indexe le OneDrive perso du user qui a autorisé.
+
 Sync : delta queries Microsoft Graph → ne re-traite que les changements.
 ACL : récupère les permissions de chaque item → propage dans le payload Qdrant
       pour permettre le filtrage par user au moment du retrieval.
 
-Variables d'environnement :
-  MS_TENANT_ID         GUID du tenant
-  MS_CLIENT_ID         Application (client) ID
-  MS_CLIENT_SECRET     Secret client
-  MS_DRIVE_ID          (mode OneDrive User) ID du drive à indexer
-  MS_SITE_ID           (mode SharePoint) ID du site (alternative)
+Variables communes :
   TENANT_ID            slug du client AI Box (ex: nom court)
   OLLAMA_URL           http://ollama:11434
   LLM_EMBED            bge-m3
@@ -20,6 +24,18 @@ Variables d'environnement :
   SYNC_INTERVAL_MINUTES (default 30)
   INCLUDE_EXT          .pdf,.docx,.xlsx,.pptx,.txt,.md,.html
   MAX_FILE_MB          (default 50)
+
+Variables mode client_credentials :
+  MS_TENANT_ID         GUID du tenant
+  MS_CLIENT_ID         Application (client) ID
+  MS_CLIENT_SECRET     Secret client
+  MS_DRIVE_ID          (mode OneDrive User) ID du drive à indexer
+  MS_SITE_ID           (mode SharePoint) ID du site (alternative)
+
+Variables mode oauth :
+  OAUTH_API_BASE               http://aibox-app:3100 (réseau docker)
+  CONNECTOR_INTERNAL_TOKEN     shared secret avec aibox-app .env
+  OAUTH_CONNECTOR_SLUG         défaut "onedrive"
 """
 from __future__ import annotations
 
@@ -33,18 +49,31 @@ from pathlib import Path
 from typing import Iterator
 
 import httpx
-from msal import ConfidentialClientApplication
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 from tenacity import retry, stop_after_attempt, wait_exponential
 from unstructured.partition.auto import partition
 
+# Chemin vers _lib partagé. Bind-mount défini dans docker-compose.yml du
+# connector. Cf services/connectors/_lib/oauth.py.
+sys.path.insert(0, "/lib_shared")
+
 # ---------------------------------------------------------------- Config
-MS_TENANT_ID = os.environ["MS_TENANT_ID"]
-MS_CLIENT_ID = os.environ["MS_CLIENT_ID"]
-MS_CLIENT_SECRET = os.environ["MS_CLIENT_SECRET"]
+AUTH_MODE = os.environ.get("AUTH_MODE", "client_credentials").strip().lower()
+
+MS_TENANT_ID = os.environ.get("MS_TENANT_ID", "")
+MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "")
+MS_CLIENT_SECRET = os.environ.get("MS_CLIENT_SECRET", "")
 MS_DRIVE_ID = os.environ.get("MS_DRIVE_ID", "")
 MS_SITE_ID = os.environ.get("MS_SITE_ID", "")
+
+if AUTH_MODE == "client_credentials" and (
+    not MS_TENANT_ID or not MS_CLIENT_ID or not MS_CLIENT_SECRET
+):
+    raise RuntimeError(
+        "AUTH_MODE=client_credentials requires MS_TENANT_ID + MS_CLIENT_ID + "
+        "MS_CLIENT_SECRET env vars",
+    )
 
 TENANT_ID = os.environ.get("TENANT_ID", "default")
 COLLECTION = f"rag_msgraph_{TENANT_ID}"
@@ -73,16 +102,38 @@ log = logging.getLogger("rag-msgraph")
 
 
 # ---------------------------------------------------------------- Auth
-_msal_app = ConfidentialClientApplication(
-    client_id=MS_CLIENT_ID,
-    client_credential=MS_CLIENT_SECRET,
-    authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
-)
+_msal_app = None
+_oauth_source = None
+
+
+def _get_msal_app():
+    global _msal_app
+    if _msal_app is None:
+        from msal import ConfidentialClientApplication
+        _msal_app = ConfidentialClientApplication(
+            client_id=MS_CLIENT_ID,
+            client_credential=MS_CLIENT_SECRET,
+            authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
+        )
+    return _msal_app
+
+
+def _get_oauth_source():
+    global _oauth_source
+    if _oauth_source is None:
+        from oauth import OAuthTokenSource  # services/connectors/_lib/oauth.py
+        _oauth_source = OAuthTokenSource(
+            provider="microsoft",
+            connector_slug=os.environ.get("OAUTH_CONNECTOR_SLUG", "onedrive"),
+        )
+    return _oauth_source
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
 def get_access_token() -> str:
-    res = _msal_app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
+    if AUTH_MODE == "oauth":
+        return _get_oauth_source().token()
+    res = _get_msal_app().acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
     if "access_token" not in res:
         raise RuntimeError(f"Token acquisition failed: {res.get('error_description')}")
     return res["access_token"]
