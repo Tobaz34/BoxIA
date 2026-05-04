@@ -147,6 +147,13 @@ services:
       AUTHENTIK_API_URL: http://localhost:9000
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
 
+      # Qdrant — utilisé par /api/connectors/sync-status pour compter
+      # les points indexés de la collection rag_*_<TENANT>. En host mode
+      # localhost:6333 fonctionne. La clé est requise (mode auth) ; sans
+      # elle on récupère un 401 et le chip affiche "état inconnu".
+      QDRANT_URL: ${QDRANT_URL:-http://localhost:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+
       # Clés API Dify des agents (créés au wizard).
       # DIFY_DEFAULT_APP_API_KEY = agent "Assistant général" (toujours présent).
       # Les autres sont optionnels — si vide, l'agent est masqué dans le picker.

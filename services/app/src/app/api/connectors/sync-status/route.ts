@@ -127,23 +127,42 @@ async function getLastLogLine(
   pattern: RegExp,
   tailLines: number = 200,
 ): Promise<string | null> {
-  // L'API Docker /logs renvoie un stream multiplexé (8 octets de header par
-  // frame stdout/stderr). On demande tail=200 et on parse côté Node.
+  // L'API Docker /logs renvoie un stream multiplexé : chaque frame =
+  // 8 octets de header [stream(1), 0, 0, 0, size_be32(4)] + payload.
+  // On parse correctement les frames (pas juste un .replace() naïf, qui
+  // laisse des artefacts genre 'g' au début de ligne quand size_be32
+  // contient un octet imprimable).
   const r = await dockerRequest(`/containers/${container}/logs`, {
     query: { stdout: "1", stderr: "1", tail: String(tailLines), timestamps: "0" },
   });
   if (r.status !== 200) return null;
   // Body est string (raw, on a JSON.parse échoué → fallback string).
+  // Reconstruire un Buffer pour parser les bytes correctement (Node a
+  // décodé en utf-8 mais on garde la position des octets).
   const raw = typeof r.body === "string" ? r.body : "";
   if (!raw) return null;
-  // Démultiplexer : chaque frame = 8 bytes header [stream, 0,0,0, sz_be32] + payload.
-  // En pratique Node a déjà décodé le stream en utf-8, donc les bytes header
-  // apparaissent comme caractères de contrôle. On ignore les caractères de
-  // contrôle non-printables et on split sur newline.
-  // eslint-disable-next-line no-control-regex
-  const cleaned = raw.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-  const lines = cleaned.split("\n").filter(Boolean);
-  // Dernière ligne qui matche
+
+  // Démultiplexage frame-par-frame
+  const buf = Buffer.from(raw, "utf-8");
+  let offset = 0;
+  let payload = "";
+  while (offset + 8 <= buf.length) {
+    const stream = buf[offset];
+    // Frame valide : stream ∈ {0,1,2}, padding bytes 1-3 == 0
+    if (stream > 2 || buf[offset + 1] !== 0 || buf[offset + 2] !== 0 || buf[offset + 3] !== 0) {
+      // Pas un header valide → on traite le reste comme texte brut (vieux
+      // containers ou tty=true) et on sort.
+      payload += buf.slice(offset).toString("utf-8");
+      break;
+    }
+    const size = buf.readUInt32BE(offset + 4);
+    offset += 8;
+    if (offset + size > buf.length) break; // frame tronquée
+    payload += buf.slice(offset, offset + size).toString("utf-8");
+    offset += size;
+  }
+
+  const lines = payload.split("\n").filter(Boolean);
   for (let i = lines.length - 1; i >= 0; i--) {
     if (pattern.test(lines[i])) return lines[i].trim();
   }
