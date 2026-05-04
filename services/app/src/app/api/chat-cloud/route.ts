@@ -42,6 +42,8 @@ import {
 } from "@/lib/cloud-providers";
 import { scrubPII, summarizeScrub } from "@/lib/pii-scrub";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
+import { wrapStreamWithFileDetector } from "@/lib/chat-stream-files";
+import { stripThinkFromSSE } from "@/lib/strip-think";
 
 export const dynamic = "force-dynamic";
 
@@ -161,7 +163,26 @@ export async function POST(req: NextRequest) {
     upstreamResponse.body, provider, body.conversation_id, model, query,
   );
 
-  return new Response(sseStream, {
+  // 7. Filtres de cohérence avec /api/chat (local) :
+  //    - strip-think : retire les `<think>...</think>` (rare en cloud mais
+  //      au cas où Anthropic/Gemini les exposerait sur certains prompts)
+  //    - wrapStreamWithFileDetector : transforme les blocs
+  //      `[FILE:nom.ext]contenu[/FILE]` que le cloud peut écrire en vrais
+  //      fichiers téléchargeables (XLSX/DOCX/PDF/PPTX). Sans ce wrap,
+  //      Claude/Gemini répondaient avec du markdown ou code Python qui
+  //      n'aboutissait jamais à un vrai fichier dans le chat → score
+  //      file_marker_present biaisé contre cloud.
+  //    Note : le pre-prompt agent (incluant FILE-RULE-V2) est désormais
+  //    envoyé en préfixe par le runner bench (et, à terme, à insérer
+  //    aussi côté UI quand un user route manuellement vers cloud).
+  const stripped = stripThinkFromSSE(sseStream);
+  const fileDetected = wrapStreamWithFileDetector(stripped, {
+    user: session.user.email,
+    outputDir: "/data/generated",
+    conversationId: body.conversation_id || undefined,
+  });
+
+  return new Response(fileDetected, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
