@@ -35,7 +35,8 @@ def _score_numeric_present(text: str, cfg: dict) -> dict:
     # Extrait tous les nombres du texte (FR + EN)
     # Patterns : 1234.56, 1234,56, 1 234,56, 1,234.56, 1234
     nums: list[float] = []
-    pattern = re.compile(r"-?\d{1,3}(?:[\s ,.]\d{3})*(?:[,.]\d+)?|-?\d+(?:[,.]\d+)?")
+    # Fix v4 acc-02 : \d+ au lieu de \d{1,3} (3500 etait coupe en 350+0)
+    pattern = re.compile(r"-?\d+(?:[\s\xa0,]\d{3})*(?:[.,]\d+)?")
     for m in pattern.finditer(text):
         raw = m.group()
         # Normalise : enlève les espaces de millier, convertit virgule
