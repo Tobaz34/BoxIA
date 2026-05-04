@@ -37,6 +37,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
+# python3 nécessaire pour /api/bench/run qui spawn le runner Python
+# (tools/bench/run-bench.py monté en /repo via compose). +9 MB sur
+# l'image — acceptable pour ne pas avoir un sidecar bench dédié.
+RUN apk add --no-cache python3
+
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
