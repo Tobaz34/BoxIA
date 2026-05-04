@@ -182,6 +182,19 @@ deploy_stack() {
     ( cd /srv/anythingllm && docker compose -p stack_xefia up -d 2>&1 | tail -5 ) || \
       c_yellow "    (stack héritée partiellement démarrée)"
   fi
+
+  # ---- Migrations DB (best-effort) ------------------------------------------
+  # Re-joue les migrations versionnées (tools/migrations/0001-0009...).
+  # Idempotent grâce au flag is_applied() de chaque migration. Best-effort
+  # car certaines exigent Dify déjà up (le polling ci-dessus ne garantit
+  # pas que Dify ait fini son schema migration avant qu'on les appelle).
+  if [[ -f tools/migrations/run-pending.py ]]; then
+    c_blue "  → Application des migrations versionnées..."
+    ( set -a; . "$env_file"; set +a; \
+      DIFY_CONSOLE_API="${DIFY_CONSOLE_API:-http://localhost:8081/console/api}" \
+      python3 tools/migrations/run-pending.py ) || \
+      c_yellow "    (Migrations partiellement échouées — relancer plus tard avec ./tools/migrations/run-pending.py)"
+  fi
 }
 
 # ---- Mode non-interactif (utilisé par le wizard web ou CI) -----------------
@@ -308,6 +321,11 @@ PENNYLANE_TOOL_API_KEY=$(gen_secret 48)
 GLPI_TOOL_API_KEY=$(gen_secret 48)
 ODOO_TOOL_API_KEY=$(gen_secret 48)
 TEXT2SQL_TOOL_API_KEY=$(gen_secret 48)
+# Shared secret entre aibox-app (Next.js) et les workers connecteurs Python.
+# Les workers (rag-gdrive, rag-msgraph) le présentent dans X-Connector-Token
+# pour récupérer un access_token OAuth déchiffré via /api/oauth/internal/token.
+# Cf services/app/src/lib/connector-tool-helpers.ts et services/connectors/_lib/oauth.py.
+CONNECTOR_INTERNAL_TOKEN=$(gen_secret 48)
 # n8n exige un password fort (8+ chars, 1 maj, 1 chiffre). On génère un
 # password dédié plutôt que réutiliser ADMIN_PASSWORD qui peut ne pas
 # respecter ces règles. Le wizard provisionne n8n owner avec celui-ci.
@@ -394,7 +412,27 @@ PENNYLANE_TOOL_API_KEY=${PENNYLANE_TOOL_API_KEY}
 GLPI_TOOL_API_KEY=${GLPI_TOOL_API_KEY}
 ODOO_TOOL_API_KEY=${ODOO_TOOL_API_KEY}
 TEXT2SQL_TOOL_API_KEY=${TEXT2SQL_TOOL_API_KEY}
+CONNECTOR_INTERNAL_TOKEN=${CONNECTOR_INTERNAL_TOKEN}
 N8N_PASSWORD=${N8N_PASSWORD}
+
+# ----- OAUTH PROVIDERS (Google Drive/Gmail/Calendar + Microsoft Graph) -----
+# Les credentials viennent de Google Cloud Console + Microsoft Entra. Si
+# vide, les boutons « Connecter avec Google/Microsoft » de /connectors
+# affichent l'aide d'installation. Cf docs/oauth-setup.md.
+# OAUTH_REDIRECT_BASE_URL doit être l'URL HTTPS publique (Cloudflare Tunnel
+# ou DNS) du serveur AI Box — utilisée pour construire le redirect_uri
+# enregistré côté provider. tools/configure-aibox-domain.sh la patch quand
+# l'admin choisit un domaine.
+OAUTH_REDIRECT_BASE_URL=
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+MICROSOFT_OAUTH_CLIENT_ID=
+MICROSOFT_OAUTH_CLIENT_SECRET=
+# Mode auth pour les workers connecteurs RAG. Par défaut 'oauth' (utilise
+# le token User OAuth saisi via /connectors UI). Mettre 'service_account'
+# (gdrive) ou 'client_credentials' (msgraph) pour le mode legacy.
+RAG_GDRIVE_AUTH_MODE=oauth
+RAG_MSGRAPH_AUTH_MODE=oauth
 
 # ----- HOST URLS sidecars (network_mode: host) -----
 INFERENCE_BACKEND=ollama
@@ -501,6 +539,18 @@ c_yellow "📋 Étapes suivantes :"
 echo "    1. Connecter Authentik à votre domaine (NPM proxy + TLS)"
 echo "    2. Configurer Dify : créer un workspace, brancher Ollama, créer un agent"
 echo "    3. Importer les workflows n8n correspondant aux technos cochées"
+echo "    4. (Optionnel) Brancher Google/Microsoft :"
+echo "       a. Créer un OAuth Client ID dans console.cloud.google.com /"
+echo "          entra.microsoft.com (tools/configure-aibox-domain.sh imprime"
+echo "          la procédure complète)."
+echo "       b. Renseigner GOOGLE_OAUTH_CLIENT_ID + SECRET (resp. MICROSOFT_*)"
+echo "          dans .env, puis ./install.sh (idempotent) ou redémarrer"
+echo "          aibox-app pour recharger les vars."
+echo "       c. Dans /connectors, cliquer « Connecter avec Google » sur"
+echo "          Google Drive — un consent popup s'ouvre. Idem pour OneDrive."
+echo "       d. Le worker correspondant se déclenche au 1er sync :"
+echo "          tools/start-connector.sh rag-gdrive --rebuild"
+echo "          tools/start-connector.sh rag-msgraph --rebuild"
 echo
 c_blue "💾 Configuration sauvegardée dans : client_config.yaml"
 c_blue "🚀 Pour mettre à jour : ./update.sh"

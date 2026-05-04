@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connectors";
 import { OAuthConnectButton } from "@/components/OAuthConnectButton";
+import { ConnectorSyncStatus } from "@/components/ConnectorSyncStatus";
 
 interface Field {
   key: string;
@@ -774,6 +775,8 @@ function ActiveRow({
               Restreint
             </span>
           )}
+          {/* Live status pour les connecteurs RAG OAuth (worker Python) */}
+          <ConnectorSyncStatus slug={c.slug} />
         </div>
         <div className="text-xs text-muted flex items-center gap-3 flex-wrap">
           <span className="inline-flex items-center gap-1">
