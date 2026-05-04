@@ -179,7 +179,7 @@
     {
       "id": "rag-02-cgv-penalites-todo",
       "category": "rag",
-      "agent": "legal",
+      "agent": "general",
       "prompt": "Y a-t-il une clause de pénalité de retard dans nos CGV ? Si oui, quel est le taux ?",
       "rag_required": true,
       "scorers": [
@@ -192,7 +192,7 @@
     {
       "id": "rag-03-contrat-preavis-todo",
       "category": "rag",
-      "agent": "legal",
+      "agent": "general",
       "prompt": "Quelle est la date d'échéance du préavis dans le contrat client ACME ?",
       "rag_required": true,
       "scorers": [
@@ -244,7 +244,7 @@
     {
       "id": "fil-02-cgv-docx",
       "category": "files",
-      "agent": "legal",
+      "agent": "general",
       "prompt": "Génère un document Word cgv-saas-fr.docx avec les CGV standard d'une SaaS B2B française. Au moins 8 sections (objet, prix, paiement, durée, résiliation, RGPD, propriété intellectuelle, juridiction).",
       "scorers": [
         {"type": "file_marker_present", "filename_regex": "cgv.*\\.docx"},
@@ -273,7 +273,7 @@
       "prompt": "Combien de connecteurs sont actuellement actifs sur cette AI Box ? Utilise tes outils pour me répondre avec un chiffre exact.",
       "scorers": [
         {"type": "numeric_present", "value": null, "min": 0, "max": 50},
-        {"type": "no_refusal", "patterns": ["je ne peux pas accéder", "vérifier manuellement"]}
+        {"type": "no_refusal", "patterns": ["je ne peux pas accéder", "vérifier manuellement", "n'ai pas réussi à accéder", "n'ai pas pu (consulter|accéder|récupérer)", "erreur d'accès", "services backend.*indisponibles"]}
       ],
       "max_tokens_response": 384,
       "timeout_s": 60
@@ -285,7 +285,7 @@
       "prompt": "Liste les workflows n8n actuellement actifs. Donne-moi leur nom et leur dernière exécution.",
       "scorers": [
         {"type": "regex_match", "patterns": ["Healthcheck|Snapshot|Pennylane"]},
-        {"type": "no_refusal", "patterns": ["je ne peux pas", "interface admin"]}
+        {"type": "no_refusal", "patterns": ["je ne peux pas", "interface admin", "problème technique", "n'ai pas pu"]}
       ],
       "max_tokens_response": 512,
       "timeout_s": 60
@@ -306,7 +306,7 @@
     {
       "id": "com-01-rgpd-export",
       "category": "compliance",
-      "agent": "legal",
+      "agent": "general",
       "prompt": "Rédige une réponse type pour un client qui demande l'export de toutes ses données personnelles (RGPD article 20). 5 phrases max, ton professionnel, mentionne le délai légal.",
       "scorers": [
         {"type": "regex_match", "patterns": ["1\\s?mois|30\\s?jours|trente"]},
@@ -342,7 +342,7 @@
     {
       "id": "com-04-mise-en-demeure",
       "category": "compliance",
-      "agent": "legal",
+      "agent": "general",
       "prompt": "Un client B2B refuse de payer une facture de 4500 € HT échue depuis 60 jours. Rédige la lettre de mise en demeure (formule légale, mention pénalités L441-10).",
       "scorers": [
         {"type": "regex_match", "patterns": ["mise en demeure"]},
