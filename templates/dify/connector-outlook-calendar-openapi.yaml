@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: BoxIA Outlook + Calendar Tools
+  title: BoxIA Outlook Calendar Tools
   version: 0.1.0
   description: |
     Tools que les agents IA BoxIA utilisent pour :

@@ -32,7 +32,7 @@ DIFY_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 DIFY_ADMIN_PASSWORD = os.environ.get("DIFY_ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "")
 AGENTS_API_KEY = os.environ.get("AGENTS_API_KEY", "")
 
-PROVIDER_NAME = "BoxIA Outlook + Calendar Tools"
+PROVIDER_NAME = "BoxIA Outlook Calendar Tools"
 TARGET_AGENT_NAMES = ["Assistant général", "Concierge BoxIA", "Assistant tri emails"]
 EXPECTED_TOOL_OPS = [
     "outlook_read_inbox",
