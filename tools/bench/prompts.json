@@ -277,7 +277,8 @@
         {"type": "no_refusal", "patterns": ["je ne peux pas accéder", "vérifier manuellement", "n'ai pas réussi à accéder", "n'ai pas pu (consulter|accéder|récupérer)", "erreur d'accès", "services backend.*indisponibles"]}
       ],
       "max_tokens_response": 384,
-      "timeout_s": 60
+      "timeout_s": 60,
+      "cloud_na": "Tools BoxIA Concierge attachés à Dify uniquement, le cloud n'y a pas accès"
     },
     {
       "id": "too-02-list-workflows",
@@ -289,7 +290,8 @@
         {"type": "no_refusal", "patterns": ["je ne peux pas", "interface admin", "problème technique", "n'ai pas pu"]}
       ],
       "max_tokens_response": 512,
-      "timeout_s": 60
+      "timeout_s": 60,
+      "cloud_na": "Tools n8n via API Concierge attachés à Dify uniquement"
     },
     {
       "id": "too-03-healthcheck",
@@ -301,7 +303,8 @@
         {"type": "regex_match", "patterns": ["Dify|Ollama|Authentik"]}
       ],
       "max_tokens_response": 384,
-      "timeout_s": 60
+      "timeout_s": 60,
+      "cloud_na": "Tool /api/system/health attaché à Dify uniquement"
     },
 
     {

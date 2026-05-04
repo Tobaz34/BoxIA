@@ -50,6 +50,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -62,12 +63,20 @@ from score import score_response  # noqa: E402
 DEFAULT_BASE_URL = os.environ.get("BENCH_BASE_URL", "http://192.168.15.210:3100")
 DEFAULT_CLOUD_PROVIDER = "anthropic"
 DEFAULT_CLOUD_MODEL = "claude-sonnet-4-5"
+# Fallback automatique si le primaire (anthropic) renvoie HTTP 5xx (budget,
+# rate-limit, panne API). On bascule sur Google Gemini Flash qui est rapide
+# et bon marché. C'est ce qui fait la différence entre "test fair" et le
+# "ratio L/C 134%" trompeur quand un seul provider tombe.
+FALLBACK_PROVIDER = "google"
+FALLBACK_MODEL = "gemini-2.5-flash"
 
 
 # ---- HTTP helpers ---------------------------------------------------------
 
 
-def _post_sse(url: str, body: dict, cookie: str, timeout_s: int) -> tuple[str, dict]:
+def _post_sse(
+    url: str, body: dict, cookie: str, timeout_s: int, retries: int = 2,
+) -> tuple[str, dict]:
     """POST JSON, lit le SSE stream Dify-like, recompose le `answer` final
     et le `metadata` (usage, file markers).
 
@@ -120,8 +129,16 @@ def _post_sse(url: str, body: dict, cookie: str, timeout_s: int) -> tuple[str, d
                             meta["cloud_provider"] = evt.get("provider")
                             meta["cloud_model"] = evt.get("model")
     except urllib.error.HTTPError as e:
+        # Retry sur 5xx (panne API, rate-limit transient). On laisse passer
+        # 4xx (bad request, auth) — pas la peine de retry.
+        if 500 <= e.code < 600 and retries > 0:
+            time.sleep(2 * (3 - retries))  # backoff progressif 2s, 4s
+            return _post_sse(url, body, cookie, timeout_s, retries - 1)
         return f"[HTTP_ERROR_{e.code}: {e.reason}]", {"error": True, "status": e.code}
     except urllib.error.URLError as e:
+        if retries > 0:
+            time.sleep(2)
+            return _post_sse(url, body, cookie, timeout_s, retries - 1)
         return f"[URL_ERROR: {e.reason}]", {"error": True}
     except TimeoutError:
         return "[TIMEOUT]", {"error": True, "timeout": True}
@@ -157,17 +174,68 @@ def call_local(base_url: str, cookie: str, prompt: dict) -> dict:
     }
 
 
+# Cache pre-prompts (récupérés une fois par agent slug)
+_AGENT_PREPROMPT_CACHE: dict[str, str] = {}
+
+
+def _get_agent_preprompt(base_url: str, cookie: str, agent_slug: str) -> str:
+    """Récupère le pre-prompt de l'agent depuis /api/agents/<slug>.
+    Cache en mémoire pour éviter de re-fetch à chaque prompt.
+
+    Permet d'envoyer au cloud le MÊME contexte (pre_prompt) que le local.
+    Sans ça, le cloud ne sait pas qu'il doit utiliser [FILE:nom.ext]...
+    [/FILE], n'a pas les RÉFÉRENCES FISCALES 2026, etc. → bench unfair.
+    """
+    if agent_slug in _AGENT_PREPROMPT_CACHE:
+        return _AGENT_PREPROMPT_CACHE[agent_slug]
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/api/agents/{urllib.parse.quote(agent_slug)}",
+            headers={"Cookie": cookie, "Accept": "application/json"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        pp = data.get("pre_prompt") or ""
+    except Exception:
+        pp = ""
+    _AGENT_PREPROMPT_CACHE[agent_slug] = pp
+    return pp
+
+
 def call_cloud(
     base_url: str,
     cookie: str,
     prompt: dict,
     provider: str,
     model: str,
+    inject_preprompt: bool = True,
 ) -> dict:
-    """Appel /api/chat-cloud (provider direct)."""
+    """Appel /api/chat-cloud (provider direct).
+
+    Si inject_preprompt=True (défaut), récupère le pre_prompt de l'agent
+    et le prépose au query → le cloud reçoit le MÊME contexte que le
+    local (FILE-RULE-V2, RÉFÉRENCES FISCALES 2026, etc.). Sinon le bench
+    est unfair (le local connaît les conventions BoxIA, le cloud non).
+
+    Si la réponse contient HTTP_ERROR_5xx, fallback automatique sur
+    FALLBACK_PROVIDER (Google Gemini par défaut). Le score reflète alors
+    la VRAIE qualité cloud disponible (pas un fail provider transient).
+    """
+    agent_slug = prompt.get("agent", "general")
+    user_query = prompt["prompt"]
+    if inject_preprompt:
+        pp = _get_agent_preprompt(base_url, cookie, agent_slug)
+        if pp:
+            user_query = (
+                "[Contexte agent — instructions système]\n"
+                + pp
+                + "\n\n[Demande utilisateur]\n"
+                + prompt["prompt"]
+            )
     body: dict[str, Any] = {
-        "agent": prompt.get("agent", "general"),
-        "query": prompt["prompt"],
+        "agent": agent_slug,
+        "query": user_query,
         "provider": provider,
         "model": model,
         "pii_scrub_enabled": True,
@@ -180,6 +248,25 @@ def call_cloud(
         prompt.get("timeout_s", 60),
     )
     elapsed = time.time() - t0
+    # Fallback automatique si HTTP 5xx ou network error
+    if (
+        "[HTTP_ERROR_5" in answer
+        or "[URL_ERROR" in answer
+        or "[EXCEPTION" in answer
+    ) and provider != FALLBACK_PROVIDER:
+        body["provider"] = FALLBACK_PROVIDER
+        body["model"] = FALLBACK_MODEL
+        meta["fallback_from"] = f"{provider}/{model}"
+        meta["fallback_to"] = f"{FALLBACK_PROVIDER}/{FALLBACK_MODEL}"
+        t0 = time.time()
+        answer, meta2 = _post_sse(
+            f"{base_url}/api/chat-cloud",
+            body,
+            cookie,
+            prompt.get("timeout_s", 60),
+        )
+        elapsed = time.time() - t0
+        meta.update(meta2)
     return {
         "backend": "cloud",
         "elapsed_s": round(elapsed, 2),
@@ -215,11 +302,13 @@ def run_prompt(prompt: dict, base_url: str, cookie: str, args) -> dict:
         "agent": prompt.get("agent"),
         "prompt_excerpt": prompt["prompt"][:150],
         "skipped": False,
+        "cloud_na_reason": prompt.get("cloud_na"),  # exposé pour l'UI/CSV
         "local": None,
         "cloud": None,
     }
 
     scorers = prompt.get("scorers") or []
+    cloud_na = bool(prompt.get("cloud_na"))
 
     # LOCAL
     if not args.skip_local:
@@ -232,14 +321,18 @@ def run_prompt(prompt: dict, base_url: str, cookie: str, args) -> dict:
             f"{local_score['score_pct']:>5.1f}% ({local_score['passed_count']}/{local_score['total_count']})"
         )
 
-    # CLOUD
-    if not args.skip_cloud:
+    # CLOUD — skip si cloud_na (test structurellement non comparable)
+    if cloud_na and not args.skip_cloud:
+        print(f"  cloud : N/A — {prompt['cloud_na']}")
+    elif not args.skip_cloud:
         cloud = call_cloud(base_url, cookie, prompt, args.cloud_provider, args.cloud_model)
         cloud_score = score_response(cloud["answer"], scorers)
         cloud["score"] = cloud_score
         out["cloud"] = cloud
+        fb = cloud.get("meta", {}).get("fallback_to")
+        fb_str = f" [fallback→{fb}]" if fb else ""
         print(
-            f"  cloud : {cloud['elapsed_s']:>5.1f}s · {cloud['answer_len']:>4} chars · "
+            f"  cloud{fb_str} : {cloud['elapsed_s']:>5.1f}s · {cloud['answer_len']:>4} chars · "
             f"{cloud_score['score_pct']:>5.1f}% ({cloud_score['passed_count']}/{cloud_score['total_count']})"
         )
 

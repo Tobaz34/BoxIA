@@ -157,12 +157,21 @@ def _score_max_tokens_response(text: str, cfg: dict) -> dict:
 
 
 def _score_file_marker_present(text: str, cfg: dict) -> dict:
-    """Vérifie qu'un marker de fichier généré est présent dans la réponse.
-    Pattern attendu (cf. lib/chat-stream-files.ts) :
-      {{file:UUID:nom:size:mime}}
-    Ou plus permissif : nom de fichier matchant filename_regex."""
+    """Vérifie qu'un fichier (ou un équivalent crédible) est présent dans
+    la réponse. Tolère 4 niveaux d'équivalence pour ne pas être unfair
+    avec le cloud (qui n'a pas la convention BoxIA [FILE:nom.ext]) :
+
+    1. Marker BoxIA complet `{{file:UUID:nom:size:mime}}` → 1.5 weight
+    2. Code Python valide qui crée le fichier (openpyxl, python-docx,
+       python-pptx, csv, json) → 1.0 weight
+    3. Tableau markdown structuré (≥2 lignes header + ≥2 data rows) →
+       0.8 weight (pour XLSX uniquement)
+    4. Nom de fichier mentionné mais pas de contenu structuré → 0.5
+    5. Rien → fail (1.5 weight négatif)
+    """
     name_re = cfg.get("filename_regex", r".+\..+")
-    # Marker complet
+
+    # 1. Marker BoxIA complet
     full = re.search(r"\{\{file:[^:]+:([^:]+):", text)
     if full:
         fname = full.group(1)
@@ -170,19 +179,50 @@ def _score_file_marker_present(text: str, cfg: dict) -> dict:
         return {
             "passed": ok,
             "weight": 1.5,
-            "details": f"marker présent fichier='{fname}', match='{name_re}'={ok}",
+            "details": f"marker BoxIA présent : '{fname}' (regex {name_re}={ok})",
         }
-    # Fallback : nom de fichier simple dans le texte
+
+    # 2. Code Python valide qui produit un fichier (openpyxl, docx, pptx, csv)
+    # Pour matcher : import + au moins 1 instanciation/save
+    py_imports = re.search(
+        r"(?:from\s+(?:openpyxl|docx|pptx|csv|json|reportlab)|import\s+openpyxl)",
+        text,
+    )
+    py_save = re.search(r"\.save\s*\(\s*['\"]", text)
+    if py_imports and py_save:
+        return {
+            "passed": True,
+            "weight": 1.0,
+            "details": "code Python valide qui produit le fichier (équivalent fonctionnel)",
+        }
+
+    # 3. Tableau markdown structuré (uniquement pour XLSX, à reconnaître via
+    # filename_regex)
+    if "xlsx" in name_re.lower() or "csv" in name_re.lower():
+        # Header + separator + ≥2 data rows
+        md_table_match = re.search(
+            r"\|[^\n]+\|\s*\n\s*\|[\s:|-]+\|\s*\n(?:\s*\|[^\n]+\|\s*\n){2,}",
+            text,
+        )
+        if md_table_match:
+            return {
+                "passed": True,
+                "weight": 0.8,
+                "details": "tableau markdown structuré ≥2 lignes (équivalent xlsx)",
+            }
+
+    # 4. Nom de fichier mentionné dans le texte (sans contenu)
     if re.search(name_re, text, flags=re.IGNORECASE):
         return {
             "passed": True,
-            "weight": 0.7,  # Moins pondéré car pas de vrai marker
-            "details": f"nom de fichier mentionné mais pas de marker {{...}}",
+            "weight": 0.5,
+            "details": f"nom de fichier mentionné mais pas de contenu structuré",
         }
+
     return {
         "passed": False,
         "weight": 1.5,
-        "details": f"aucun marker de fichier ni nom matchant '{name_re}'",
+        "details": f"aucun fichier ni équivalent (marker, code Python, table markdown, nom)",
     }
 
 
