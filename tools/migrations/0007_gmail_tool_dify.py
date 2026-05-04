@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -143,7 +144,8 @@ def _provider_credentials() -> dict:
 def _find_provider(s: _DifySession) -> dict | None:
     """Retourne le record provider Gmail s'il existe, sinon None."""
     try:
-        r = s.get(f"/workspaces/current/tool-provider/api/get?provider={PROVIDER_NAME}")
+        encoded = urllib.parse.quote(PROVIDER_NAME)
+        r = s.get(f"/workspaces/current/tool-provider/api/get?provider={encoded}")
         if r:
             return r
     except urllib.error.HTTPError as e:
