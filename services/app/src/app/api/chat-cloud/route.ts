@@ -108,6 +108,46 @@ export async function POST(req: NextRequest) {
     scrubSummary = summarizeScrub(result);
   }
 
+  // 3 bis. Injection du pre-prompt agent en préfixe — sans ça, Claude/
+  // Gemini ne connaît pas la convention BoxIA `[FILE:nom.ext]contenu
+  // [/FILE]` (qui est dans le pre_prompt côté Dify). Le cloud répond
+  // alors avec du code Python ou du markdown qui ne sera jamais converti
+  // en vrai fichier par wrapStreamWithFileDetector côté serveur. Bug
+  // structurel d'asymétrie cloud vs local. Fix : on récupère le
+  // pre_prompt via /api/agents/<slug> (loopback interne avec cookie de
+  // la session courante) et on le prépose au query.
+  if (body.agent) {
+    try {
+      const origin = req.nextUrl.origin;
+      const agentResp = await fetch(
+        `${origin}/api/agents/${encodeURIComponent(body.agent)}`,
+        {
+          headers: {
+            Cookie: req.headers.get("cookie") || "",
+            Accept: "application/json",
+          },
+          // Bypass cache, on veut la version live du pre_prompt
+          cache: "no-store",
+        },
+      );
+      if (agentResp.ok) {
+        const agentData = await agentResp.json();
+        const pp = (agentData.pre_prompt || "").trim();
+        if (pp) {
+          queryToSend =
+            "[Contexte agent — instructions système]\n"
+            + pp
+            + "\n\n[Demande utilisateur]\n"
+            + queryToSend;
+        }
+      }
+    } catch {
+      // Best-effort : si le fetch échoue, on envoie le query brut.
+      // Le cloud répondra sans le contexte agent — moins bon mais
+      // pas bloquant.
+    }
+  }
+
   // 4. Audit log AVANT le call (en cas de timeout, on garde la trace)
   await logAction("settings.update", `cloud-call:${provider}:${model}`, {
     agent: body.agent,
