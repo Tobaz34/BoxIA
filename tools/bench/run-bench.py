@@ -248,9 +248,13 @@ def call_cloud(
         prompt.get("timeout_s", 60),
     )
     elapsed = time.time() - t0
-    # Fallback automatique si HTTP 5xx ou network error
+    # Fallback automatique si HTTP 5xx, 429 (budget/rate-limit) ou network
+    # error. Le 429 est crucial : sans ça, quand le BYOK Anthropic atteint
+    # le plafond mensuel, les prompts restent à 0% au lieu de basculer
+    # silencieusement sur Gemini.
     if (
         "[HTTP_ERROR_5" in answer
+        or "[HTTP_ERROR_429" in answer
         or "[URL_ERROR" in answer
         or "[EXCEPTION" in answer
     ) and provider != FALLBACK_PROVIDER:
