@@ -115,7 +115,7 @@ export async function POST(
       );
     }
 
-    await logAction("connector.sync_now", `connector_sync_now:${slug}`, {
+    await logAction("connector.sync", `connector_sync_now:${slug}`, {
       actor: session.user.email,
       ip: ipFromHeaders(req),
       slug,
