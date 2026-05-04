@@ -17,6 +17,7 @@ import {
   Sparkles,
   Zap,
   Network,
+  BarChart3,
   X,
 } from "lucide-react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
@@ -41,6 +42,7 @@ const adminItems = [
   { href: "/integrations/mcp",      labelKey: "sidebar.admin.mcp",            icon: Network },
   { href: "/audit",                 labelKey: "sidebar.admin.audit",          icon: ScrollText },
   { href: "/system",                labelKey: "sidebar.admin.system",         icon: Activity },
+  { href: "/bench",                 labelKey: "sidebar.admin.bench",          icon: BarChart3 },
   { href: "/settings",              labelKey: "sidebar.admin.settings",       icon: Settings },
 ];
 
