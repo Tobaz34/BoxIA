@@ -16,7 +16,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   BarChart3, Bot, Cloud, Cpu, ShieldCheck, Activity,
   AlertTriangle, CheckCircle2, RefreshCw, Play, Calendar,
-  TrendingUp, Server, Sparkles,
+  TrendingUp, Server, Sparkles, ChevronDown, ChevronRight,
+  XCircle, Eye, Filter,
 } from "lucide-react";
 
 // ---- Types des APIs réutilisées ------------------------------------------
@@ -92,6 +93,42 @@ interface BenchActiveResp {
   active: Array<{ id: string; started_at: string; pid?: number }>;
 }
 
+// Détail d'un run (cf. /api/bench/history/[id])
+interface ScorerDetail {
+  scorer_type: string;
+  passed: boolean;
+  weight: number;
+  details: string;
+}
+interface PromptResult {
+  prompt_id: string;
+  category: string;
+  agent?: string;
+  prompt_excerpt?: string;
+  skipped: boolean;
+  skip_reason?: string;
+  local: {
+    elapsed_s: number;
+    answer: string;
+    answer_len: number;
+    score: { score_pct: number; passed_count: number; total_count: number; details: ScorerDetail[] };
+    meta?: Record<string, unknown>;
+  } | null;
+  cloud: {
+    elapsed_s: number;
+    answer: string;
+    answer_len: number;
+    score: { score_pct: number; passed_count: number; total_count: number; details: ScorerDetail[] };
+    meta?: Record<string, unknown>;
+  } | null;
+}
+interface RunDetail {
+  results: PromptResult[];
+  summary: {
+    meta?: { generated_at?: string; n_executed?: number };
+  };
+}
+
 // ---- Helpers -------------------------------------------------------------
 
 const CATEGORY_ICON: Record<string, string> = {
@@ -132,6 +169,13 @@ export function BenchDashboard({ isAdmin }: { isAdmin: boolean }) {
   const [runError, setRunError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Détail d'un run (chargé à la demande)
+  const [detailRunId, setDetailRunId] = useState<string | null>(null);
+  const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+  const [failsOnly, setFailsOnly] = useState(false);
+
   const refresh = useCallback(async () => {
     const [c, o, h, s, hi, ar] = await Promise.allSettled([
       fetch("/api/cloud-providers", { cache: "no-store" }),
@@ -155,6 +199,28 @@ export function BenchDashboard({ isAdmin }: { isAdmin: boolean }) {
     const t = setInterval(refresh, 30_000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  // Charge le détail d'un run (prompt par prompt avec scorers)
+  const loadDetail = useCallback(async (id: string) => {
+    setDetailRunId(id);
+    setDetailLoading(true);
+    setRunDetail(null);
+    setExpandedPrompt(null);
+    try {
+      const r = await fetch(`/api/bench/history/${id}`, { cache: "no-store" });
+      if (r.ok) setRunDetail(await r.json());
+      else setRunDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  // Auto-déplie le dernier run au load (si présent et pas encore déplié)
+  useEffect(() => {
+    if (history && history.runs.length > 0 && !detailRunId) {
+      void loadDetail(history.runs[0].id);
+    }
+  }, [history, detailRunId, loadDetail]);
 
   async function startBench(opts: { category?: string; skipCloud?: boolean }) {
     setRunning(true);
@@ -488,21 +554,27 @@ export function BenchDashboard({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               )}
 
-              {/* Historique */}
+              {/* Historique cliquable — change le run affiché en détail */}
               {history && history.runs.length > 1 && (
                 <div className="mt-3">
                   <div className="text-[10px] uppercase tracking-wide text-muted mb-1.5">
-                    Historique ({history.runs.length} runs au total)
+                    Historique ({history.runs.length} runs au total) · cliquer pour voir le détail
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {history.runs.slice(0, 10).map((r) => (
-                      <span
+                      <button
                         key={r.id}
-                        className="text-[10px] px-2 py-0.5 rounded bg-muted/15 text-muted font-mono"
+                        onClick={() => loadDetail(r.id)}
+                        className={
+                          "text-[10px] px-2 py-0.5 rounded font-mono transition-default " +
+                          (detailRunId === r.id
+                            ? "bg-primary/20 text-primary"
+                            : "bg-muted/15 text-muted hover:bg-muted/25")
+                        }
                         title={`${r.id} · ${r.generated_at}`}
                       >
                         {r.id.slice(8, 14)} · {r.local_avg_score?.toFixed(0)}/{r.cloud_avg_score?.toFixed(0)}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -516,6 +588,93 @@ export function BenchDashboard({ isAdmin }: { isAdmin: boolean }) {
             </div>
           )}
         </div>
+
+        {/* === SOUS-SECTION DÉTAIL — prompt par prompt avec scorers === */}
+        {detailRunId && (
+          <div className="rounded-lg border border-border bg-card p-4 mt-3">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="text-sm font-medium flex items-center gap-2">
+                <Eye size={14} className="text-primary" />
+                Détail du run <code className="text-xs font-mono text-muted">{detailRunId}</code>
+                {runDetail?.results && (
+                  <span className="text-xs text-muted">
+                    · {runDetail.results.length} prompt(s)
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setFailsOnly((v) => !v)}
+                className={
+                  "inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-default " +
+                  (failsOnly
+                    ? "bg-red-500/15 text-red-400"
+                    : "bg-muted/15 text-muted hover:bg-muted/25")
+                }
+                title="Filtre : afficher uniquement les prompts où le local est en échec"
+              >
+                <Filter size={11} />
+                {failsOnly ? "Échecs uniquement" : "Tous"}
+              </button>
+            </div>
+
+            {detailLoading && (
+              <div className="text-sm text-muted py-4 text-center">
+                <RefreshCw size={14} className="inline animate-spin mr-1.5" />
+                Chargement du détail…
+              </div>
+            )}
+
+            {!detailLoading && runDetail && (
+              <div className="rounded border border-border overflow-hidden">
+                {/* Header de la table */}
+                <div className="px-3 py-2 border-b border-border bg-muted/10 grid grid-cols-[1fr_80px_80px_80px_80px_60px_24px] gap-2 text-[10px] uppercase tracking-wide text-muted font-medium">
+                  <span>Prompt</span>
+                  <span className="text-right">Local</span>
+                  <span className="text-right">Lat L</span>
+                  <span className="text-right">Cloud</span>
+                  <span className="text-right">Lat C</span>
+                  <span className="text-right">Δ</span>
+                  <span></span>
+                </div>
+                <div className="divide-y divide-border">
+                  {runDetail.results
+                    .filter((p) => {
+                      if (p.skipped) return false;
+                      if (failsOnly) {
+                        const ls = p.local?.score.score_pct ?? 100;
+                        const cs = p.cloud?.score.score_pct ?? 100;
+                        return ls < 80 || (cs > 0 && ls < cs - 20);
+                      }
+                      return true;
+                    })
+                    .map((p) => (
+                      <PromptDetailRow
+                        key={p.prompt_id}
+                        result={p}
+                        expanded={expandedPrompt === p.prompt_id}
+                        onToggle={() =>
+                          setExpandedPrompt(
+                            expandedPrompt === p.prompt_id ? null : p.prompt_id,
+                          )
+                        }
+                      />
+                    ))}
+                </div>
+                {runDetail.results.filter((p) => !p.skipped).length === 0 && (
+                  <div className="text-center text-sm text-muted py-6">
+                    Tous les prompts de ce run sont marqués skip.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!detailLoading && !runDetail && (
+              <div className="text-sm text-red-400 py-4 text-center">
+                Impossible de charger le détail (404 ou run pas encore terminé).
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* ============================================================
@@ -676,5 +835,147 @@ function KpiCard({
       <div className={"text-2xl font-semibold tabular-nums leading-none " + (color || "")}>{value}</div>
       {sub && <div className="text-[10px] text-muted mt-1">{sub}</div>}
     </div>
+  );
+}
+
+/** Une ligne du tableau détail d'un run, avec expand pour voir scorers
+ *  + extraits des 2 réponses (local vs cloud). */
+function PromptDetailRow({
+  result, expanded, onToggle,
+}: {
+  result: PromptResult;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const ls = result.local?.score.score_pct ?? null;
+  const cs = result.cloud?.score.score_pct ?? null;
+  const ll = result.local?.elapsed_s ?? null;
+  const cl = result.cloud?.elapsed_s ?? null;
+  const delta = (ls != null && cs != null) ? ls - cs : null;
+  return (
+    <>
+      <button
+        onClick={onToggle}
+        className="w-full px-3 py-2 grid grid-cols-[1fr_80px_80px_80px_80px_60px_24px] gap-2 text-xs items-center hover:bg-muted/10 transition-default text-left"
+      >
+        <span className="font-mono text-[11px] truncate" title={result.prompt_excerpt || result.prompt_id}>
+          <span className="text-muted">{CATEGORY_ICON[result.category] || "•"}</span>{" "}
+          {result.prompt_id}
+        </span>
+        <span className={"text-right tabular-nums " + pctColor(ls)}>
+          {ls != null ? `${ls.toFixed(0)}%` : "—"}
+        </span>
+        <span className="text-right tabular-nums text-muted">
+          {ll != null ? `${ll.toFixed(1)}s` : "—"}
+        </span>
+        <span className={"text-right tabular-nums " + pctColor(cs)}>
+          {cs != null ? `${cs.toFixed(0)}%` : "—"}
+        </span>
+        <span className="text-right tabular-nums text-muted">
+          {cl != null ? `${cl.toFixed(1)}s` : "—"}
+        </span>
+        <span className={
+          "text-right tabular-nums font-medium " +
+          (delta == null ? "text-muted"
+           : delta >= -10 ? "text-emerald-400" : "text-red-400")
+        }>
+          {delta == null ? "—" : (delta >= 0 ? "+" : "") + delta.toFixed(0)}
+        </span>
+        <span className="text-muted">
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="px-3 pb-3 pt-2 bg-muted/5 border-t border-border">
+          {/* Prompt complet (excerpt) */}
+          {result.prompt_excerpt && (
+            <div className="mb-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted mb-1">Prompt</div>
+              <pre className="text-[11px] whitespace-pre-wrap bg-muted/10 px-2 py-1.5 rounded font-mono text-foreground/80 max-h-32 overflow-auto">
+                {result.prompt_excerpt}
+              </pre>
+            </div>
+          )}
+
+          {/* Side-by-side LOCAL / CLOUD */}
+          <div className="grid md:grid-cols-2 gap-3">
+            {/* LOCAL */}
+            <div className="rounded border border-border p-2 bg-background/30">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-muted font-medium">
+                  📍 LOCAL ({result.local?.elapsed_s.toFixed(1)}s · {result.local?.answer_len} chars)
+                </span>
+                <span className={"text-xs font-semibold " + pctColor(ls)}>
+                  {ls != null ? `${ls.toFixed(0)}%` : "—"}
+                </span>
+              </div>
+              {result.local && (
+                <>
+                  <ul className="space-y-0.5 mb-2 text-[11px]">
+                    {result.local.score.details.map((s, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        {s.passed
+                          ? <CheckCircle2 size={10} className="text-emerald-400 shrink-0 mt-0.5" />
+                          : <XCircle size={10} className="text-red-400 shrink-0 mt-0.5" />}
+                        <span className={s.passed ? "text-foreground/70" : "text-red-400"}>
+                          <code className="text-[10px] bg-muted/15 px-1 rounded">{s.scorer_type}</code>
+                          {" — "}{s.details}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <details className="text-[11px]">
+                    <summary className="cursor-pointer text-muted hover:text-foreground">
+                      Voir réponse ({result.local.answer.length} chars)
+                    </summary>
+                    <pre className="mt-1.5 whitespace-pre-wrap bg-muted/10 px-2 py-1.5 rounded text-foreground/80 max-h-64 overflow-auto font-mono">
+                      {result.local.answer.slice(0, 5000) || "(vide)"}
+                    </pre>
+                  </details>
+                </>
+              )}
+            </div>
+
+            {/* CLOUD */}
+            <div className="rounded border border-border p-2 bg-background/30">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-muted font-medium">
+                  ☁️ CLOUD ({result.cloud?.elapsed_s.toFixed(1)}s · {result.cloud?.answer_len} chars)
+                </span>
+                <span className={"text-xs font-semibold " + pctColor(cs)}>
+                  {cs != null ? `${cs.toFixed(0)}%` : "—"}
+                </span>
+              </div>
+              {result.cloud && (
+                <>
+                  <ul className="space-y-0.5 mb-2 text-[11px]">
+                    {result.cloud.score.details.map((s, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        {s.passed
+                          ? <CheckCircle2 size={10} className="text-emerald-400 shrink-0 mt-0.5" />
+                          : <XCircle size={10} className="text-red-400 shrink-0 mt-0.5" />}
+                        <span className={s.passed ? "text-foreground/70" : "text-red-400"}>
+                          <code className="text-[10px] bg-muted/15 px-1 rounded">{s.scorer_type}</code>
+                          {" — "}{s.details}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <details className="text-[11px]">
+                    <summary className="cursor-pointer text-muted hover:text-foreground">
+                      Voir réponse ({result.cloud.answer.length} chars)
+                    </summary>
+                    <pre className="mt-1.5 whitespace-pre-wrap bg-muted/10 px-2 py-1.5 rounded text-foreground/80 max-h-64 overflow-auto font-mono">
+                      {result.cloud.answer.slice(0, 5000) || "(vide)"}
+                    </pre>
+                  </details>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
