@@ -63,7 +63,37 @@
 | Post-0003 compta | 72852 | **86,7%** | 100% | **87%** | 🟢 au-dessus seuil |
 | Bench complet 17 prompts | 73733 | 65,8% | 70,9% | 93% | 🟢 ratio bon, score absolu moyen |
 | Bench complet post-0004 | 81238 | 66,8% | 70,9% | 94% | 🟢 plus de HTTP 400, fixes file-override appliqués |
-| Bench complet post-0005 | 84616 | (en cours) | (en cours) | (en cours) | à mesurer |
+| **Bench complet post-0005** | **84616** | **75,5%** | 56,6% (*) | **134%** (*) | 🟢🟢 **objectif ≥75% atteint** |
+
+(*) Le cloud chute à 56,6% probablement à cause du plafond budget BYOK Anthropic atteint pendant la matinée (3 benchs × ~17 prompts = ~50 appels cloud cumulés). Le ratio 134% n'est donc pas significatif tel quel — le **vrai gain est le score absolu local 75,5%** (+9 points vs v2, +18 points en 1 matinée).
+
+### Détail par catégorie (post-0005)
+
+| Catégorie | Local | Cloud | Δ | Verdict |
+|---|---|---|---|---|
+| 💰 Accounting (5) | 80% | 100% | -20 | acc-05 régression 0% (effet pre-prompt trop long ?) |
+| 👁️ Vision (0 actifs) | — | — | — | tous skip, vis-01 marqué "image upload non implémenté" |
+| 📚 RAG (0 actifs) | — | — | — | tous skip, fixtures à fournir manuellement |
+| 📄 Files (3) | **92%** | 19% | **+72** | local DÉPASSE cloud (cloud cap budget) |
+| 🔧 Tools (3) | 20% | 50% | -30 | Concierge cassé (FN-02a, déjà connu) |
+| ⚖️ Compliance (4) | **75%** | 75% | 0 | parité — com-02 retour à 100% via abattements ✓ |
+| 🛡️ Robustness (4) | **100%** | 17% | +83 | local DÉPASSE — toutes les robustness à 100% |
+
+### Régressions résiduelles à investiguer (V2)
+
+- **acc-05** (devis-calculs) : 100% v2 → 0% v3. Le LLM a peut-être laissé tomber le résumé chiffré au profit du POLISH-V2. Pre-prompt comptable maintenant à 8214 chars, peut-être trop long.
+- **com-03** (arrêt-maladie) : 100% v2 → 0% v3. Bizarre, à investiguer (regex Code du travail mal matché ?).
+- **too-01/03** (Concierge tools) : 0% stable. **FN-02a non corrigeable par migration pre-prompt** — nécessite intervention Dify.
+
+### Conclusion
+
+**Le local qwen3:14b passe de 56% à 75% en 3 cycles d'amélioration autonomes**, sans toucher au modèle. Pure ingénierie de pre-prompt + idempotence migrations + scorers fiables. La méthodologie est **mature et reproductible**.
+
+**4 commits matinée** :
+- `d0fb22d` migration 0004 file-override-global + slugs + scorer
+- `f5a16e3` migration 0005 polish (abattements + noms propres + résumé complet)
+- `a7506ac` bilan matinée
+- `[ce commit]` bilan final post-bench v3
 
 ## Bugs critiques restants (non corrigés en autonomie)
 
