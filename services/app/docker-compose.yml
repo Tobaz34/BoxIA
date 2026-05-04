@@ -45,6 +45,14 @@ services:
       data-init:
         condition: service_completed_successfully
     restart: unless-stopped
+    # Ajoute le GID du group `docker` host au user nextjs (uid 1001) du
+    # container, pour que /api/connectors/sync-status (Docker UDS API) et
+    # /api/connectors/[slug]/sync (POST .../restart) puissent ouvrir
+    # /var/run/docker.sock. Sans ça : EACCES.
+    # DOCKER_GID est auto-détecté par install.sh via `getent group docker`
+    # (988 sur RHEL/CentOS, 999 sur Debian/Ubuntu). Default 988 = xefia.
+    group_add:
+      - "${DOCKER_GID:-988}"
     # network_mode: host = le container partage le namespace réseau de l'hôte.
     # Avantage : il joint TOUS les services via localhost:<port> et l'IP LAN
     # du serveur (pas de hairpin Docker, pas de DNS interne incohérent).

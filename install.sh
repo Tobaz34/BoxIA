@@ -449,6 +449,10 @@ AUTHENTIK_VERSION=2025.10.0
 
 # ----- RÉSEAU DOCKER -----
 NETWORK_NAME=aibox_net
+# GID du group docker host — utilisé par services/app/docker-compose.yml
+# (group_add) pour que le user nextjs:1001 du container puisse parler à
+# /var/run/docker.sock (sync-status, sync-now). Auto-détecté ici.
+DOCKER_GID=$( ( getent group docker 2>/dev/null | cut -d: -f3 | grep -E '^[0-9]+$' ) || echo 988 )
 
 # ----- LANGFUSE (observability, optionnel) -----
 LANGFUSE_DB_PASSWORD=${LANGFUSE_DB_PASSWORD}
