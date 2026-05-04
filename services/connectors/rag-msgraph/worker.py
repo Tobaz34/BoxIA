@@ -278,7 +278,10 @@ def ensure_collection(qd: QdrantClient, dim: int) -> None:
 
 
 def stable_id(item_id: str, chunk_idx: int, h: str) -> str:
-    return hashlib.sha256(f"{item_id}|{chunk_idx}|{h}".encode()).hexdigest()
+    """Qdrant exige UUID ou unsigned int. UUID v5 déterministe (DNS ns)."""
+    import uuid as _uuid
+    NS = _uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+    return str(_uuid.uuid5(NS, f"{item_id}|{chunk_idx}|{h}"))
 
 
 def delete_item(qd: QdrantClient, item_id: str) -> None:

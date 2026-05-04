@@ -259,7 +259,13 @@ def ensure_collection(qd, dim: int) -> None:
 
 
 def stable_id(file_id: str, idx: int, h: str) -> str:
-    return hashlib.sha256(f"{file_id}|{idx}|{h}".encode()).hexdigest()
+    """Qdrant exige soit un unsigned int soit un UUID. On dérive un UUID v5
+    déterministe à partir d'un namespace fixe + (file_id|idx|hash). Idempotent :
+    même (file_id, idx, hash) → même UUID → upsert remplace au lieu de
+    dupliquer."""
+    import uuid as _uuid
+    NS = _uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # DNS namespace
+    return str(_uuid.uuid5(NS, f"{file_id}|{idx}|{h}"))
 
 
 def delete_file(qd, file_id: str) -> None:
