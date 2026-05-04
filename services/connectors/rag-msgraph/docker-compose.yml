@@ -11,7 +11,8 @@ services:
       # AUTH_MODE=client_credentials → App-only avec admin consent (legacy).
       AUTH_MODE: ${RAG_MSGRAPH_AUTH_MODE:-oauth}
       # ---- Mode OAuth ----
-      OAUTH_API_BASE: ${OAUTH_API_BASE:-http://localhost:3100}
+      # aibox-app est en network_mode:host, atteignable via host.docker.internal.
+      OAUTH_API_BASE: ${OAUTH_API_BASE:-http://host.docker.internal:3100}
       CONNECTOR_INTERNAL_TOKEN: ${CONNECTOR_INTERNAL_TOKEN:-}
       OAUTH_CONNECTOR_SLUG: ${OAUTH_CONNECTOR_SLUG_ONEDRIVE:-onedrive}
       # ---- Mode client_credentials (legacy) ----
@@ -33,6 +34,8 @@ services:
     networks:
       - aibox_net
       - ollama_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   rag_msgraph_state:

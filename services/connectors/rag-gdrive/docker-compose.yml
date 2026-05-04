@@ -12,7 +12,9 @@ services:
       # AUTH_MODE=service_account → mode legacy DWD admin (vars GOOGLE_SA_*)
       AUTH_MODE: ${RAG_GDRIVE_AUTH_MODE:-oauth}
       # ---- Mode OAuth (par défaut) ----
-      OAUTH_API_BASE: ${OAUTH_API_BASE:-http://localhost:3100}
+      # aibox-app est en network_mode:host, accessible depuis le réseau
+      # docker du worker via host.docker.internal (cf extra_hosts).
+      OAUTH_API_BASE: ${OAUTH_API_BASE:-http://host.docker.internal:3100}
       CONNECTOR_INTERNAL_TOKEN: ${CONNECTOR_INTERNAL_TOKEN:-}
       OAUTH_CONNECTOR_SLUG: ${OAUTH_CONNECTOR_SLUG_GDRIVE:-google-drive}
       # ---- Mode Service Account (legacy) ----
@@ -37,6 +39,10 @@ services:
     networks:
       - aibox_net
       - ollama_net
+    extra_hosts:
+      # aibox-app est en network_mode:host. Pour que le worker l'atteigne
+      # via http://host.docker.internal:3100/api/oauth/internal/token.
+      - "host.docker.internal:host-gateway"
 
 volumes:
   rag_gdrive_state:
