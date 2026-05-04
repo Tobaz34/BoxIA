@@ -122,36 +122,71 @@ async function getContainerState(name: string): Promise<{
  * Récupère les dernières lignes de logs (stdout+stderr) du container.
  * Filtre côté Node sur le pattern, garde la dernière qui matche.
  */
+/**
+ * Lit les logs bruts (Buffer non-décodé) du container via UDS, parse les
+ * frames du stream multiplexé Docker, et renvoie la dernière ligne qui
+ * matche le pattern.
+ *
+ * Frame Docker = 8 bytes header [stream(1), 0,0,0, size_be32(4)] + payload.
+ */
+function dockerLogsRaw(container: string, tailLines: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const qs = new URLSearchParams({
+      stdout: "1", stderr: "1", tail: String(tailLines), timestamps: "0",
+    }).toString();
+    const req = http.request(
+      {
+        socketPath: DOCKER_SOCK,
+        path: `/containers/${container}/logs?${qs}`,
+        method: "GET",
+        headers: { Host: "docker", Accept: "application/octet-stream" },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        // Pas de setEncoding — on veut les bytes bruts pour parser les
+        // frame headers (qui contiennent des octets non-utf8 valides).
+        res.on("data", (c: Buffer) => { chunks.push(c); });
+        res.on("end", () => {
+          if ((res.statusCode || 0) !== 200) {
+            return reject(new Error(`docker_logs_${res.statusCode}`));
+          }
+          resolve(Buffer.concat(chunks));
+        });
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(5000, () => req.destroy(new Error("docker_logs_timeout")));
+    req.end();
+  });
+}
+
 async function getLastLogLine(
   container: string,
   pattern: RegExp,
   tailLines: number = 200,
 ): Promise<string | null> {
-  // L'API Docker /logs renvoie un stream multiplexé : chaque frame =
-  // 8 octets de header [stream(1), 0, 0, 0, size_be32(4)] + payload.
-  // On parse correctement les frames (pas juste un .replace() naïf, qui
-  // laisse des artefacts genre 'g' au début de ligne quand size_be32
-  // contient un octet imprimable).
-  const r = await dockerRequest(`/containers/${container}/logs`, {
-    query: { stdout: "1", stderr: "1", tail: String(tailLines), timestamps: "0" },
-  });
-  if (r.status !== 200) return null;
-  // Body est string (raw, on a JSON.parse échoué → fallback string).
-  // Reconstruire un Buffer pour parser les bytes correctement (Node a
-  // décodé en utf-8 mais on garde la position des octets).
-  const raw = typeof r.body === "string" ? r.body : "";
-  if (!raw) return null;
+  let buf: Buffer;
+  try {
+    buf = await dockerLogsRaw(container, tailLines);
+  } catch {
+    return null;
+  }
+  if (buf.length === 0) return null;
 
-  // Démultiplexage frame-par-frame
-  const buf = Buffer.from(raw, "utf-8");
+  // Démultiplexage frame-par-frame.
+  // Header = stream(1) ∈ {0,1,2}, 3 bytes padding (0), size_be32(4).
   let offset = 0;
   let payload = "";
   while (offset + 8 <= buf.length) {
     const stream = buf[offset];
-    // Frame valide : stream ∈ {0,1,2}, padding bytes 1-3 == 0
-    if (stream > 2 || buf[offset + 1] !== 0 || buf[offset + 2] !== 0 || buf[offset + 3] !== 0) {
-      // Pas un header valide → on traite le reste comme texte brut (vieux
-      // containers ou tty=true) et on sort.
+    if (
+      stream > 2 ||
+      buf[offset + 1] !== 0 ||
+      buf[offset + 2] !== 0 ||
+      buf[offset + 3] !== 0
+    ) {
+      // Pas un header valide → fallback : traiter tout le reste comme
+      // texte brut (containers en mode tty:true).
       payload += buf.slice(offset).toString("utf-8");
       break;
     }
