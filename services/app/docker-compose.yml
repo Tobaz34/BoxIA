@@ -92,6 +92,23 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3100}
       NEXTAUTH_SECRET: ${APP_NEXTAUTH_SECRET}
 
+      # ---- OAuth providers pour les connecteurs (Google Drive/Gmail/Calendar,
+      # Microsoft 365 OneDrive/Outlook/Teams) — lib/oauth-providers.ts.
+      # Si vide, le bouton « Connecter avec Google/Microsoft » affiche le
+      # message ambre « provider non configuré ». Setup côté Tobaz34 dans
+      # console.cloud.google.com et entra.microsoft.com.
+      # Cf docs/oauth-setup.md (à venir) et tools/configure-aibox-domain.sh.
+      OAUTH_REDIRECT_BASE_URL:         ${OAUTH_REDIRECT_BASE_URL:-}
+      GOOGLE_OAUTH_CLIENT_ID:          ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET:      ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      MICROSOFT_OAUTH_CLIENT_ID:       ${MICROSOFT_OAUTH_CLIENT_ID:-}
+      MICROSOFT_OAUTH_CLIENT_SECRET:   ${MICROSOFT_OAUTH_CLIENT_SECRET:-}
+
+      # ---- GitHub master token (self-update + check-updates depuis l'UI) ----
+      # Si vide, fallback sur /data/github-token.json saisi par l'admin
+      # depuis /settings → carte « Connexion GitHub ». Cf lib/github-token.ts.
+      GITHUB_TOKEN:                    ${GITHUB_TOKEN:-}
+
       # ---- Authentik OIDC ----
       # En host mode, localhost:9000 = le port mappé par Authentik
       AUTHENTIK_ISSUER: ${AUTHENTIK_APP_ISSUER:-http://localhost:9000/application/o/aibox-app/}
