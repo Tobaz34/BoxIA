@@ -7,6 +7,45 @@
 
 ---
 
+## [0.2.2] — 2026-05-04
+
+### Added
+- **OAuth OIDC pour connecteurs** (Google + Microsoft) : bouton
+  « Connecter avec Google/Microsoft » sur les modales connecteurs
+  (Drive, Gmail, Calendar, OneDrive, Outlook, SharePoint, Teams).
+  Flow Authorization Code + PKCE (popup browser → provider → callback)
+  avec fallback Device Flow pour les déploiements LAN sans HTTPS.
+  Tokens chiffrés AES-256-GCM at-rest dans `/data/oauth-connections.json`.
+  Refresh automatique avant expiration.
+- **Domaine HTTPS public** `demo.ialocal.pro` (Cloudflare Tunnel sans
+  port-forward, certificat auto, marche derrière NAT). Script
+  `tools/configure-aibox-domain.sh` qui prépare `.env` (NEXTAUTH_URL +
+  OAUTH_REDIRECT_BASE_URL) et imprime le checklist setup complet.
+- **Workers RAG en mode OAuth user-level** : `rag-gdrive` et
+  `rag-msgraph` peuvent désormais indexer le Drive du user qui a
+  autorisé via la box (au lieu de l'ancien Service Account / App-only
+  centralisé). Variable `AUTH_MODE=oauth` (default). Endpoint
+  `/api/oauth/internal/token` sert les access_token déchiffrés aux
+  workers via shared secret `CONNECTOR_INTERNAL_TOKEN`.
+
+### Changed
+- **`NEXTAUTH_URL`** par défaut sur `https://demo.ialocal.pro` (était
+  `http://192.168.15.210:3100`). Le callback Authentik et les redirect
+  URI Google/Microsoft sont mis à jour automatiquement.
+- **Audience consent screen Google** en mode Testing avec test users
+  whitelist pendant la verification Google (cf
+  `memory/sprint_self_update_oauth_2026-05-03.md`). Stratégie A : flip
+  Production sans re-déployer côté boxes une fois la verification
+  Google passée (~2-6 semaines délai côté Google).
+
+### Fixed
+- **Middleware NextAuth** : exempt `/api/oauth/{callback,internal}/*`
+  du gate de session (le callback OAuth arrive de Google/Microsoft sans
+  cookie de session, et l'endpoint internal authentifie via shared
+  secret côté worker).
+
+---
+
 ## [0.2.1] — 2026-05-03
 
 ### Added
