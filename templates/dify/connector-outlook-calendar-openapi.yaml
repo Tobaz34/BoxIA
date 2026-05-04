@@ -1,0 +1,116 @@
+openapi: 3.0.3
+info:
+  title: BoxIA Outlook + Calendar Tools
+  version: 0.1.0
+  description: |
+    Tools que les agents IA BoxIA utilisent pour :
+    - Lire/chercher dans Outlook (Microsoft 365)
+    - Voir le calendrier (Google Calendar OU Outlook Calendar)
+    - Trouver un créneau libre
+
+    Si le user n'a pas connecté le provider correspondant, l'endpoint
+    retourne `connector_not_connected` que l'agent doit relayer :
+    « Connectez Outlook ou Google Calendar via /connectors d'abord. »
+
+servers:
+  - url: http://host.docker.internal:3100/api/agents-tools
+
+paths:
+  /outlook_read_inbox:
+    get:
+      operationId: outlookReadInbox
+      summary: Lit les derniers emails Outlook (Microsoft 365).
+      description: |
+        Retourne les N derniers emails de la boîte de réception Outlook.
+        Pour Gmail, utiliser `gmailReadInbox` à la place.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: max, in: query, schema: { type: integer, default: 20, maximum: 50 } }
+        - { name: unread, in: query, schema: { type: string, enum: ["0", "1"], default: "0" } }
+      responses:
+        "200": { description: "Liste d'emails Outlook" }
+
+  /outlook_search:
+    get:
+      operationId: outlookSearch
+      summary: Recherche dans la mailbox Outlook.
+      description: |
+        Recherche par mot-clé/quote. Syntaxe Microsoft Graph $search
+        (plus simple que Gmail — pas de from:/to:/subject: explicites,
+        Graph cherche dans tous les champs).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: max, in: query, schema: { type: integer, default: 20, maximum: 50 } }
+      responses:
+        "200": { description: "Résultats" }
+
+  /outlook_get_message:
+    get:
+      operationId: outlookGetMessage
+      summary: Lit le contenu complet d'un message Outlook.
+      description: |
+        Retourne le corps texte du message (HTML stripé), les pièces
+        jointes (metadata seulement), expéditeur/destinataires.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "Détail du message" }
+
+  /calendar_today:
+    get:
+      operationId: calendarToday
+      summary: Liste les événements du calendrier (aujourd'hui ou N jours).
+      description: |
+        Liste les événements du calendrier user. Par défaut aujourd'hui
+        (days=1). `provider=google` ou `microsoft`, ou rien (= les deux
+        agrégés).
+
+        Utiliser quand le user demande « qu'ai-je aujourd'hui ? »,
+        « mes prochains rendez-vous », « mon agenda demain ».
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: days, in: query, schema: { type: integer, default: 1, minimum: 1, maximum: 31 } }
+        - { name: provider, in: query, schema: { type: string, enum: [google, microsoft] }, description: "Si vide, agrège les deux providers connectés." }
+        - { name: max, in: query, schema: { type: integer, default: 50, maximum: 100 } }
+      responses:
+        "200": { description: "Événements (id, title, start, end, location, attendees)." }
+
+  /calendar_find_free_slot:
+    get:
+      operationId: calendarFindFreeSlot
+      summary: Trouve un créneau libre de N minutes dans les prochains jours.
+      description: |
+        Cherche un créneau libre selon les contraintes (durée, horaires
+        de travail, jours ouvrés). Agrège les occupations de tous les
+        calendriers connectés (Google + Microsoft) pour ne PAS proposer
+        un créneau qui chevauche un événement existant ailleurs.
+
+        Retourne max 5 propositions triées chronologiquement.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: duration
+          in: query
+          schema: { type: integer, default: 60, minimum: 15, maximum: 480 }
+          description: Durée du créneau en minutes.
+        - name: within_days
+          in: query
+          schema: { type: integer, default: 7, minimum: 1, maximum: 30 }
+          description: Horizon de recherche en jours.
+        - name: working_hours
+          in: query
+          schema: { type: string, default: "9-18" }
+          description: Plage horaire au format `H_début-H_fin` (24h).
+        - name: provider
+          in: query
+          schema: { type: string, enum: [google, microsoft, any], default: any }
+      responses:
+        "200": { description: "free_slots: liste de créneaux libres avec start/end ISO." }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer AGENTS_API_KEY
