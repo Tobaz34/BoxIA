@@ -49,6 +49,7 @@ const FR = {
       mcp: "Intégrations MCP",
       audit: "Audit",
       system: "État serveur",
+      bench: "Bench & observabilité",
       settings: "Paramètres",
     },
     connectors: {
@@ -163,6 +164,7 @@ const EN: typeof FR = {
       mcp: "MCP Integrations",
       audit: "Audit log",
       system: "Server status",
+      bench: "Bench & observability",
       settings: "Settings",
     },
     connectors: {

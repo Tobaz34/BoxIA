@@ -42,6 +42,8 @@ import {
 } from "@/lib/cloud-providers";
 import { scrubPII, summarizeScrub } from "@/lib/pii-scrub";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
+import { wrapStreamWithFileDetector } from "@/lib/chat-stream-files";
+import { stripThinkFromSSE } from "@/lib/strip-think";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +108,46 @@ export async function POST(req: NextRequest) {
     scrubSummary = summarizeScrub(result);
   }
 
+  // 3 bis. Injection du pre-prompt agent en préfixe — sans ça, Claude/
+  // Gemini ne connaît pas la convention BoxIA `[FILE:nom.ext]contenu
+  // [/FILE]` (qui est dans le pre_prompt côté Dify). Le cloud répond
+  // alors avec du code Python ou du markdown qui ne sera jamais converti
+  // en vrai fichier par wrapStreamWithFileDetector côté serveur. Bug
+  // structurel d'asymétrie cloud vs local. Fix : on récupère le
+  // pre_prompt via /api/agents/<slug> (loopback interne avec cookie de
+  // la session courante) et on le prépose au query.
+  if (body.agent) {
+    try {
+      const origin = req.nextUrl.origin;
+      const agentResp = await fetch(
+        `${origin}/api/agents/${encodeURIComponent(body.agent)}`,
+        {
+          headers: {
+            Cookie: req.headers.get("cookie") || "",
+            Accept: "application/json",
+          },
+          // Bypass cache, on veut la version live du pre_prompt
+          cache: "no-store",
+        },
+      );
+      if (agentResp.ok) {
+        const agentData = await agentResp.json();
+        const pp = (agentData.pre_prompt || "").trim();
+        if (pp) {
+          queryToSend =
+            "[Contexte agent — instructions système]\n"
+            + pp
+            + "\n\n[Demande utilisateur]\n"
+            + queryToSend;
+        }
+      }
+    } catch {
+      // Best-effort : si le fetch échoue, on envoie le query brut.
+      // Le cloud répondra sans le contexte agent — moins bon mais
+      // pas bloquant.
+    }
+  }
+
   // 4. Audit log AVANT le call (en cas de timeout, on garde la trace)
   await logAction("settings.update", `cloud-call:${provider}:${model}`, {
     agent: body.agent,
@@ -161,7 +203,26 @@ export async function POST(req: NextRequest) {
     upstreamResponse.body, provider, body.conversation_id, model, query,
   );
 
-  return new Response(sseStream, {
+  // 7. Filtres de cohérence avec /api/chat (local) :
+  //    - strip-think : retire les `<think>...</think>` (rare en cloud mais
+  //      au cas où Anthropic/Gemini les exposerait sur certains prompts)
+  //    - wrapStreamWithFileDetector : transforme les blocs
+  //      `[FILE:nom.ext]contenu[/FILE]` que le cloud peut écrire en vrais
+  //      fichiers téléchargeables (XLSX/DOCX/PDF/PPTX). Sans ce wrap,
+  //      Claude/Gemini répondaient avec du markdown ou code Python qui
+  //      n'aboutissait jamais à un vrai fichier dans le chat → score
+  //      file_marker_present biaisé contre cloud.
+  //    Note : le pre-prompt agent (incluant FILE-RULE-V2) est désormais
+  //    envoyé en préfixe par le runner bench (et, à terme, à insérer
+  //    aussi côté UI quand un user route manuellement vers cloud).
+  const stripped = stripThinkFromSSE(sseStream);
+  const fileDetected = wrapStreamWithFileDetector(stripped, {
+    user: session.user.email,
+    outputDir: "/data/generated",
+    conversationId: body.conversation_id || undefined,
+  });
+
+  return new Response(fileDetected, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",

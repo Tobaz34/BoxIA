@@ -42,7 +42,9 @@ export type AuditAction =
   | "agent.chat"             // optionnel, peut spammer
   | "settings.update"
   | "audit.access"           // l'admin a consulté l'audit
-  | "concierge.approval";    // l'admin a approuvé/refusé une action Concierge
+  | "concierge.approval"     // l'admin a approuvé/refusé une action Concierge
+  | "bench.start"            // l'admin a lancé un run de benchmark
+  | "bench.access";          // l'admin a consulté la page /bench
 
 export interface AuditEntry {
   ts: number;                              // ms epoch

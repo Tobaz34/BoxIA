@@ -68,6 +68,12 @@ services:
       # rapport à un COPY au build : le changelog peut être mis à jour
       # sans rebuilder l'image.
       - /srv/ai-stack/CHANGELOG.md:/CHANGELOG.md:ro
+      # Repo bind-mounté en RO pour permettre à /api/bench/run de spawn
+      # le runner Python tools/bench/run-bench.py. Sans ça, le bouton
+      # « Lancer un bench » de /bench renvoie 503 runner_not_found.
+      # Lecture seule : le subprocess écrit ses résultats dans /data/bench/
+      # (pas dans /repo).
+      - /srv/ai-stack:/repo:ro
     environment:
       # En host mode, on doit dire à Next.js d'écouter sur le port custom
       PORT: "${APP_PORT:-3100}"
