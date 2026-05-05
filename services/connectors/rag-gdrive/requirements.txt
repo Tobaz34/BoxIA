@@ -4,8 +4,8 @@ google-auth-httplib2==0.2.0
 httpx==0.28.1
 qdrant-client==1.12.1
 unstructured[pdf,docx,xlsx,pptx,md]==0.16.13
-# pdfminer.six >=20251107 a supprimé PSSyntaxError → casse unstructured
-# 0.16.13 sur tous les PDFs. Cf rag-msgraph/requirements.txt.
-pdfminer.six>=20240909,<20250101
+# pdfminer.six : pas de pin (cf rag-msgraph/requirements.txt et le
+# monkey-patch en haut de worker.py qui ré-expose PSSyntaxError comme
+# alias de PDFSyntaxError pour unstructured 0.16.13).
 python-magic==0.4.27
 tenacity==9.0.0

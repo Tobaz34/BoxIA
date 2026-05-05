@@ -1,12 +1,10 @@
 httpx==0.28.1
 qdrant-client==1.12.1
 unstructured[pdf,docx,xlsx,pptx,md]==0.16.13
-# pdfminer.six >=20250506 (au moins) a supprimé PSSyntaxError → casse
-# unstructured 0.16.13 sur tous les PDFs (ImportError au runtime).
-# 20240706 et avant exigent pycrypto (ne compile plus sur Python 3.12).
-# Sweet spot : 20240909 → 20250324 (cryptography déjà adopté, PSSyntaxError
-# encore présent). Vérifié 2026-05-05.
-pdfminer.six>=20240909,<20250101
+# pdfminer.six : pas de pin (laisse pip résoudre via la dep d'unstructured).
+# La breaking change PSSyntaxError → PDFSyntaxError de fin 2024 / début
+# 2025 est gérée par un monkey-patch au boot du worker (cf worker.py
+# tout en haut). Plus simple à maintenir qu'un pin moving target.
 python-magic==0.4.27
 tenacity==9.0.0
 msal==1.31.1

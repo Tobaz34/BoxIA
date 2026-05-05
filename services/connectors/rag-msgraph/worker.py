@@ -50,6 +50,19 @@ import traceback
 from pathlib import Path
 from typing import Iterator
 
+# --- Monkey-patch pdfminer.six avant l'import d'unstructured -------------
+# pdfminer.six ≥ ~20250324 a renommé PSSyntaxError → PDFSyntaxError.
+# unstructured 0.16.13 utilise encore l'ancien nom au runtime (parse PDF)
+# → ImportError sur tous les PDFs. On re-expose PSSyntaxError comme alias
+# avant qu'unstructured ne soit importé. Cf rag-msgraph/requirements.txt.
+try:
+    from pdfminer.pdfparser import PSSyntaxError  # noqa: F401
+except ImportError:
+    import pdfminer.pdfparser as _pp
+    if hasattr(_pp, "PDFSyntaxError"):
+        _pp.PSSyntaxError = _pp.PDFSyntaxError
+# ------------------------------------------------------------------------
+
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
