@@ -136,8 +136,20 @@ deploy_stack() {
 
   prepare_app_data_dirs
 
-  c_blue "  → Création du réseau Docker partagé..."
-  docker network create "${NETWORK_NAME:-aibox_net}" 2>/dev/null || true
+  c_blue "  → Création des réseaux Docker partagés..."
+  # 2 networks externes utilisés par plusieurs composes :
+  #   - aibox_net (par défaut, override via NETWORK_NAME)
+  #   - ollama_net (utilisé par services/inference + services/setup)
+  # Sans ça, les composes plantent au démarrage avec :
+  #   network ollama_net declared as external, but could not be found
+  # Idempotent : `docker network create` exit 1 si existe → ignoré.
+  for net in "${NETWORK_NAME:-aibox_net}" ollama_net; do
+    if docker network inspect "$net" >/dev/null 2>&1; then
+      c_green "    ✓ Network $net existe déjà"
+    else
+      docker network create "$net" >/dev/null && c_green "    ✓ Network $net créé"
+    fi
+  done
 
   c_blue "  → Pull des images (peut prendre 5-15 min)..."
   docker compose --env-file "$env_file" pull
@@ -728,6 +740,7 @@ deploy_stack
 if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
   hr
   c_blue "  → Démarrage du wizard de setup (services/setup) sur :${SETUP_PORT:-80}..."
+  # Networks aibox_net + ollama_net déjà créés par deploy_stack juste avant.
   if ( cd services/setup && SETUP_PORT="${SETUP_PORT:-80}" \
        docker compose --env-file ../../.env up -d ); then
     c_green "    ✓ Wizard accessible sur http://<box>:${SETUP_PORT:-80}"
