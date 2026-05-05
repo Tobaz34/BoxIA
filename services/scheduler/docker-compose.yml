@@ -1,0 +1,69 @@
+# =============================================================================
+# AI Box — Scheduler (P1 #6 du plan v2 OSS-inspired)
+# =============================================================================
+# Service Python qui expose 3 endpoints HTTP appelables par les agents
+# Dify (Concierge en particulier) :
+#   - POST /v1/schedules           → crée une tâche scheduled (cron ou interval)
+#   - GET  /v1/schedules           → liste les tâches du user
+#   - DELETE /v1/schedules/<id>    → annule une tâche
+#
+# Inspiration : Local Operator `scheduler_service.py` — patterns
+# `schedule_task` / `stop_schedule` / `list_schedules` en MIT, réimplémenté
+# en FastAPI + APScheduler.
+#
+# Cas d'usage : un user dit au Concierge « envoie-moi un résumé Outlook
+# tous les matins à 8h ». Le Concierge call `/v1/schedules` avec un
+# action="invoke_tool", payload={tool: "outlook_read_inbox", ...},
+# cron="0 8 * * 1-5". APScheduler garde la tâche en DB, la relance au
+# bon moment, et appelle l'endpoint configuré (par défaut un webhook
+# n8n ou un agent Dify).
+#
+# Persistance APScheduler : SQLite local /data/scheduler.db (D2 cohérent).
+# Pas de DB Postgres ajoutée.
+#
+# Sécurité : Bearer AGENTS_API_KEY. Bind 127.0.0.1, jamais exposé LAN.
+# =============================================================================
+
+name: aibox-scheduler
+
+services:
+  scheduler:
+    build: .
+    image: aibox-scheduler:0.1.0
+    container_name: aibox-scheduler
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8086:8000"
+    environment:
+      AGENTS_API_KEY: ${AGENTS_API_KEY:?AGENTS_API_KEY is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Base SQLite locale (D2 décision filesystem)
+      SCHEDULER_DB_PATH: /data/scheduler.db
+      # Backend qui exécute les jobs (où poster quand le cron déclenche)
+      # Par défaut : aibox-app exposé en host network mode
+      AIBOX_APP_URL: ${AIBOX_APP_URL:-http://host.docker.internal:3100}
+      # Timezone par défaut Europe/Paris
+      TZ: ${TZ:-Europe/Paris}
+      # Limite globale de jobs actifs par user (anti-spam)
+      MAX_JOBS_PER_USER: ${MAX_JOBS_PER_USER:-20}
+    volumes:
+      - aibox_scheduler_data:/data
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    mem_limit: 256m
+    mem_reservation: 64m
+
+volumes:
+  aibox_scheduler_data:
+    name: aibox_scheduler_data
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true

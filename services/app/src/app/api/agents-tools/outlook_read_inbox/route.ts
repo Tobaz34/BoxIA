@@ -10,19 +10,36 @@
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
-import { getToolToken, apiError } from "@/lib/connector-tool-helpers";
+import { getToolToken } from "@/lib/connector-tool-helpers";
+import { toolError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "outlook_read_inbox", req });
+
   const url = new URL(req.url);
   const max = Math.min(50, Math.max(1, Number(url.searchParams.get("max") ?? 20)));
   const unreadOnly = url.searchParams.get("unread") === "1";
 
   const tok = await getToolToken("microsoft", "outlook-graph");
-  if (!tok.ok) return NextResponse.json(tok.body, { status: tok.status });
+  if (!tok.ok) {
+    tracer.failure({
+      errorCode: tok.body.error,
+      retryable: false,
+      httpStatus: tok.status,
+      metadata: { stage: "get_tool_token" },
+    });
+    return toolError({
+      error: tok.body.error,
+      hint: tok.body.hint || "Connecteur Microsoft non disponible.",
+      status: tok.status,
+      retryable: false,
+    });
+  }
 
   const filter = unreadOnly ? "&$filter=isRead eq false" : "";
   const select = "id,conversationId,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,flag";
@@ -34,7 +51,23 @@ export async function GET(req: Request) {
     headers: { Authorization: `Bearer ${tok.token}` },
   });
   if (!r.ok) {
-    return apiError(r.status, `graph_inbox_${r.status}`, await r.text().catch(() => ""));
+    const detail = (await r.text().catch(() => "")).slice(0, 200);
+    const retryable = r.status === 429 || r.status === 408 || r.status >= 500;
+    tracer.failure({
+      errorCode: `graph_inbox_${r.status}`,
+      retryable,
+      httpStatus: retryable ? 502 : r.status,
+      metadata: { upstream_status: r.status },
+    });
+    return toolError({
+      error: `graph_inbox_${r.status}`,
+      hint: retryable
+        ? "Microsoft Graph a renvoyé une erreur transitoire. Réessayable."
+        : "Microsoft Graph a refusé la requête (auth/permissions). Vérifie le connecteur.",
+      status: retryable ? 502 : r.status,
+      retryable,
+      detail,
+    });
   }
   const j = await r.json();
   const items = (j.value || []).map((m: {
@@ -57,6 +90,10 @@ export async function GET(req: Request) {
     flagged: m.flag?.flagStatus === "flagged",
   }));
 
+  tracer.success(
+    { count: items.length },
+    { account: tok.account_email, max, unread_only: unreadOnly },
+  );
   return NextResponse.json({
     account: tok.account_email,
     count: items.length,

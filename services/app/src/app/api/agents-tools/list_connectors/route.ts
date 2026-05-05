@@ -6,12 +6,14 @@ import { NextResponse } from "next/server";
 import { publicCatalog } from "@/lib/connectors";
 import { listStates, publicState } from "@/lib/connectors-state";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "list_connectors", req });
   const states = await listStates();
   const catalog = publicCatalog();
   const connectors = catalog.map((spec) => {
@@ -35,6 +37,12 @@ export async function GET(req: Request) {
   // Compact summary que l'agent peut lire facilement
   const active = connectors.filter((c) => c.status === "active");
   const available = connectors.filter((c) => c.status === "inactive");
+
+  tracer.success({
+    total: connectors.length,
+    active_count: active.length,
+    available_count: available.length,
+  });
 
   return NextResponse.json({
     summary: {

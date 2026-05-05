@@ -21,21 +21,31 @@ import {
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { logAction } from "@/lib/audit-helper";
 import { requireApproval } from "@/lib/approval-gate";
+import {
+  toolError,
+  toolValidationError,
+  toolUpstreamError,
+} from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "install_workflow", req });
+
   let body: { file?: unknown; approval_token?: unknown };
   try {
     body = (await req.json()) as { file?: unknown; approval_token?: unknown };
   } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
+    tracer.failure({ errorCode: "bad_json", retryable: false, httpStatus: 400 });
+    return toolValidationError("bad_json", "Body JSON invalide");
   }
   const file = typeof body.file === "string" ? body.file : "";
   if (!file) {
-    return NextResponse.json({ error: "missing_file" }, { status: 400 });
+    tracer.failure({ errorCode: "missing_file", retryable: false, httpStatus: 400 });
+    return toolValidationError("missing_file", "Champ 'file' requis");
   }
 
   // Vérifie le whitelist catalogue AVANT de créer le pending : pas la
@@ -43,25 +53,68 @@ export async function POST(req: Request) {
   const catalog = await readCatalog().catch(() => null);
   const entry = catalog?.workflows.find((w) => w.file === file);
   if (!entry) {
-    return NextResponse.json({ error: "not_in_catalog", file }, { status: 404 });
+    tracer.failure({
+      errorCode: "not_in_catalog",
+      retryable: false,
+      httpStatus: 404,
+      metadata: { file },
+    });
+    return toolError({
+      error: "not_in_catalog",
+      hint: `Le workflow '${file}' n'existe pas dans le catalogue marketplace.`,
+      status: 404,
+      retryable: false,
+      detail: `file=${file}`,
+    });
   }
 
   // Approval gate : 1ère passe → enregistre pending + 202.
   // 2ème passe (avec approval_token) → continue avec les params APPROUVÉS
   // (pas ceux du body, qui pourraient avoir été altérés entre temps).
+  //
+  // Sprint 2a P0 #3 — propagation user_id / conversation_id / audit_context
+  // depuis les headers que Dify peut forwarder. Si absents, fallback no-op
+  // (l'auditor LLM ne s'active que si audit_context est non-vide).
+  const userIdHeader = req.headers.get("x-user-id") || undefined;
+  const conversationHeader = req.headers.get("x-conversation-id") || undefined;
+  const auditContextHeader = req.headers.get("x-audit-context") || undefined;
+  // auto_approve_key : (conversation_id, action) — permet à l'user de
+  // cocher "ne plus me redemander pour cette tâche" et de bypasser le
+  // banner pour les futurs install_workflow dans la même conversation.
+  const autoApproveKey = conversationHeader
+    ? `${conversationHeader}:install_workflow`
+    : undefined;
+
   const gate = await requireApproval<{ file: string }>({
     body: body as { file: string; approval_token?: unknown },
     action: "install_workflow",
     description: `Installer le workflow n8n « ${entry.name || file} » (désactivé par défaut)`,
     params: { file },
     caller_actor: "concierge-agent",
+    user_id: userIdHeader,
+    conversation_id: conversationHeader,
+    auto_approve_key: autoApproveKey,
+    audit_context: auditContextHeader,
   });
-  if (!gate.go) return gate.response;
+  if (!gate.go) {
+    // Approval pending (202) ou refusée — tracer comme « failure » légère
+    // (action non exécutée). Pas un vrai échec : on utilise un code dédié.
+    tracer.failure({
+      errorCode: "approval_pending_or_denied",
+      retryable: false,
+      metadata: { stage: "approval_gate", file },
+    });
+    return gate.response;
+  }
   const approvedFile = gate.params.file;
 
   try {
     const result = await installMarketplaceWorkflow(approvedFile);
     if ("already_installed" in result) {
+      tracer.success(
+        { already_installed: true, name: result.name },
+        { file: approvedFile, via: "approval-gate" },
+      );
       return NextResponse.json({
         ok: true,
         already_installed: true,
@@ -80,6 +133,10 @@ export async function POST(req: Request) {
       },
       null,
     );
+    tracer.success(
+      { workflow_id: result.workflow_id, name: result.name },
+      { file: approvedFile, via: "approval-gate" },
+    );
     return NextResponse.json({
       ok: true,
       workflow_id: result.workflow_id,
@@ -92,9 +149,16 @@ export async function POST(req: Request) {
       next_action_url: "/workflows",
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: "install_failed", detail: String(e).slice(0, 300) },
-      { status: 502 },
-    );
+    tracer.failure({
+      errorCode: "install_failed",
+      retryable: true,
+      httpStatus: 502,
+      metadata: { file: approvedFile },
+    });
+    return toolUpstreamError({
+      error: "install_failed",
+      hint: "L'installation du workflow a échoué (n8n upstream). Réessayable.",
+      detail: String(e).slice(0, 300),
+    });
   }
 }

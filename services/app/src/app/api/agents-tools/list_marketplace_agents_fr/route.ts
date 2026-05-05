@@ -6,11 +6,15 @@ import { NextResponse } from "next/server";
 import { readBoxiaFrCatalog } from "@/lib/boxia-fr-templates";
 import { listInstalledAgents } from "@/lib/installed-agents";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
+import { toolError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
+
+  const tracer = startToolTrace({ toolName: "list_marketplace_agents_fr", req });
 
   try {
     const catalog = await readBoxiaFrCatalog();
@@ -22,10 +26,14 @@ export async function GET(req: Request) {
         .map((s) => s.replace("boxia-fr:", "")),
     );
 
+    const installedCount = catalog.templates.filter((t) => installedSlugs.has(t.slug)).length;
+    tracer.success(
+      { total: catalog.templates.length, installed: installedCount },
+    );
     return NextResponse.json({
       summary: {
         total: catalog.templates.length,
-        installed: catalog.templates.filter((t) => installedSlugs.has(t.slug)).length,
+        installed: installedCount,
       },
       templates: catalog.templates.map((t) => ({
         slug: t.slug,
@@ -38,9 +46,18 @@ export async function GET(req: Request) {
       deep_link: "/agents/marketplace",
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: "catalog_unreadable", detail: String(e).slice(0, 200) },
-      { status: 500 },
-    );
+    // Catalogue I/O failure (fichier corrompu/absent) — peut être transitoire.
+    tracer.failure({
+      errorCode: "catalog_unreadable",
+      retryable: true,
+      httpStatus: 500,
+    });
+    return toolError({
+      error: "catalog_unreadable",
+      hint: "Impossible de lire le catalogue des templates BoxIA-FR. Vérifier le fichier sur disque.",
+      status: 500,
+      retryable: true,
+      detail: String(e).slice(0, 200),
+    });
   }
 }

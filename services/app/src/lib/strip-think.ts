@@ -22,11 +22,35 @@
  *   data: {"event": "message_end", ...}
  */
 
-const OPEN_RE = /<think(?:ing)?>/gi;
-const CLOSE_RE = /<\/think(?:ing)?>/gi;
-// Quand on est dans la zone "potentielle" (vu un `<` mais pas la suite),
-// on bufferise jusqu'à un nb max de chars puis on flush si rien match.
-const MAX_BUFFER = 64;
+// Sprint 0 P2 #11 — Stripper robuste avec depth counter (AutoGPT pattern).
+// Tags supportés (chacun en open + close) :
+//  - <think>...</think>            qwen3 mode CoT par défaut
+//  - <thinking>...</thinking>      Claude / Anthropic extended thinking
+//  - <internal_reasoning>...        GPT o1-style
+//  - <reasoning>...</reasoning>     deepseek-r1, autres reasoning models
+//  - <reflection>...</reflection>   variations
+//  - <scratchpad>...</scratchpad>   variations multi-step
+//  - <scratch_pad>...</scratch_pad> idem (snake case)
+const THINK_TAGS = [
+  "think",
+  "thinking",
+  "internal_reasoning",
+  "reasoning",
+  "reflection",
+  "scratchpad",
+  "scratch_pad",
+];
+// Construit dynamiquement les regex pour matcher n'importe lequel des tags.
+const OPEN_RE = new RegExp(`<(?:${THINK_TAGS.join("|")})>`, "gi");
+const CLOSE_RE = new RegExp(`</(?:${THINK_TAGS.join("|")})>`, "gi");
+// Buffer guard — assez large pour matcher n'importe quel tag ouvrant
+// max ("<internal_reasoning>" = 20 chars) + marge pour gérer les chunks
+// SSE coupés au milieu d'un tag.
+const MAX_TAG_LEN = Math.max(
+  ...THINK_TAGS.map((t) => `</${t}>`.length),
+);
+const TAIL_GUARD = MAX_TAG_LEN + 4; // +4 marge pour être safe
+const MAX_BUFFER = 256; // plafond avant rotation aggressive
 
 // Format ReAct interne (qwen function calling). On strip les préfixes
 // "Action:", "Thought:", "Observation:", "Action Input:" qui fuient
@@ -45,14 +69,32 @@ export function stripReactArtifacts(text: string): string {
 /**
  * Crée un transformer qui prend en entrée des chunks de texte (= les
  * `answer` Dify, accumulés tels quels), et qui émet les chunks filtrés
- * sans les contenus `<think>...</think>`.
+ * sans les contenus think.
  *
- * État interne : `inThink` (booléen), `buffer` (string en cours
- * d'analyse car potentiellement à cheval sur un tag).
+ * Améliorations P2 #11 vs version initiale :
+ * - **Depth counter** : gère les balises imbriquées
+ *   `<think>outer<think>inner</think>still_outer</think>` correctement.
+ *   Une seule balise close ne sort pas du mode think si depth > 1.
+ * - **Multi-variants** : think / thinking / internal_reasoning / reasoning
+ *   / reflection / scratchpad / scratch_pad (vs uniquement think+thinking
+ *   précédemment).
+ * - **Cross-chunk safe** : TAIL_GUARD calculé dynamiquement depuis le tag
+ *   le plus long pour ne JAMAIS rater un tag coupé en 2 chunks (avant 16
+ *   chars en dur — risque de manquer "</internal_reasoning>" 22 chars).
+ * - **Buffer overflow protection** : MAX_BUFFER 256 char (vs 64) pour les
+ *   très gros raisonnement Qwen3 — sinon rotation tronque l'analyse.
+ *
+ * État interne : `depth` (compteur de nesting), `buffer` (string en cours).
  */
 export class ThinkStripper {
-  private inThink = false;
+  private depth = 0;
   private buffer = "";
+
+  /** True si on est dans une zone think (au moins 1 ouverture sans close
+   *  matching). Exposé pour debug + tests. */
+  get inThink(): boolean {
+    return this.depth > 0;
+  }
 
   /** Ingère un chunk text, retourne le texte filtré à émettre. */
   push(chunk: string): string {
@@ -60,36 +102,63 @@ export class ThinkStripper {
     let out = "";
 
     while (this.buffer.length > 0) {
-      if (this.inThink) {
-        // On cherche la fermeture
+      if (this.depth > 0) {
+        // En mode think : chercher SOIT la prochaine close (qui décrémente)
+        // SOIT la prochaine ouverture (qui incrémente — nesting).
+        // On prend le PLUS PROCHE des deux pour la depth correcte.
+        OPEN_RE.lastIndex = 0;
         CLOSE_RE.lastIndex = 0;
-        const m = CLOSE_RE.exec(this.buffer);
-        if (!m) {
-          // Pas encore de fermeture, on jette tout ce qui est dans le
-          // buffer SAUF les derniers chars qui pourraient être un début
-          // de balise `</think>`
+        const open = OPEN_RE.exec(this.buffer);
+        const close = CLOSE_RE.exec(this.buffer);
+
+        // Cas 1 : aucun tag détecté → on est encore en zone think,
+        // jeter tout ce qu'on peut sauf le tail guard.
+        if (!open && !close) {
           if (this.buffer.length > MAX_BUFFER) {
-            this.buffer = this.buffer.slice(-16); // garde 16 chars max
+            // Garde les TAIL_GUARD derniers chars en cas de tag coupé
+            this.buffer = this.buffer.slice(-TAIL_GUARD);
           }
           break;
         }
-        // Trouvé : on saute jusqu'après la balise
-        this.inThink = false;
-        this.buffer = this.buffer.slice(m.index + m[0].length);
-        continue;
+
+        // Cas 2 : seulement open → nesting up
+        if (open && !close) {
+          this.depth++;
+          this.buffer = this.buffer.slice(open.index + open[0].length);
+          continue;
+        }
+
+        // Cas 3 : seulement close → nesting down
+        if (close && !open) {
+          this.depth--;
+          this.buffer = this.buffer.slice(close.index + close[0].length);
+          continue;
+        }
+
+        // Cas 4 : les deux présents → on prend le plus proche
+        if (open && close) {
+          if (open.index < close.index) {
+            this.depth++;
+            this.buffer = this.buffer.slice(open.index + open[0].length);
+          } else {
+            this.depth--;
+            this.buffer = this.buffer.slice(close.index + close[0].length);
+          }
+          continue;
+        }
       }
 
-      // Pas en zone think : on cherche l'ouverture
+      // Pas en zone think : chercher la prochaine ouverture
       OPEN_RE.lastIndex = 0;
       const m = OPEN_RE.exec(this.buffer);
       if (!m) {
         // Pas d'ouverture détectée. Mais le buffer peut se terminer
-        // par un fragment de balise (ex: "...du texte<thi"). On émet
-        // tout sauf les 16 derniers chars (potentiel début de balise).
-        if (this.buffer.length <= 16) {
+        // par un fragment de balise (ex: "...du texte<inter"). On émet
+        // tout sauf les TAIL_GUARD derniers chars.
+        if (this.buffer.length <= TAIL_GUARD) {
           break; // attend plus de chunks
         }
-        const safe = this.buffer.length - 16;
+        const safe = this.buffer.length - TAIL_GUARD;
         out += this.buffer.slice(0, safe);
         this.buffer = this.buffer.slice(safe);
         break;
@@ -97,7 +166,7 @@ export class ThinkStripper {
 
       // Ouverture trouvée : émet ce qui précède, entre en mode think
       out += this.buffer.slice(0, m.index);
-      this.inThink = true;
+      this.depth = 1;
       this.buffer = this.buffer.slice(m.index + m[0].length);
     }
 
@@ -105,11 +174,12 @@ export class ThinkStripper {
   }
 
   /** Flush final : émet ce qui reste dans le buffer (sauf si on est
-   *  encore dans un think — auquel cas qwen a probablement été coupé). */
+   *  encore dans un think — auquel cas le LLM a probablement été coupé). */
   flush(): string {
-    if (this.inThink) {
+    if (this.depth > 0) {
+      // think non terminé — drop tout (ne polluons pas l'output)
       this.buffer = "";
-      this.inThink = false;
+      this.depth = 0;
       return "";
     }
     const rest = this.buffer;

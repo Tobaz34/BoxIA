@@ -112,3 +112,138 @@ export async function difyFetch(
   }
   return fetch(`${DIFY_BASE_URL}${path}`, { ...rest, headers });
 }
+
+/**
+ * Fichier attaché à un message Dify (image ou document).
+ * Doit avoir été pré-uploadé via /v1/files/upload (cf /api/files/upload).
+ */
+export interface DifyFile {
+  type: "image" | "document";
+  transfer_method: "local_file" | "remote_url";
+  upload_file_id?: string;
+  url?: string;
+}
+
+export interface DifyChatOptions {
+  /** Identifiant utilisateur Dify (= email NextAuth). */
+  user: string;
+  /** Clé API de l'agent ciblé (résolu via requireDifyContext / getAgentKey). */
+  key: string;
+  /** Question/message utilisateur. Sera envoyé tel quel dans `query`. */
+  query: string;
+  /** Conversation existante à continuer. Vide → nouvelle conversation. */
+  conversationId?: string;
+  /** Fichiers attachés. */
+  files?: DifyFile[];
+  /** Inputs Dify (pour les apps Chatflow paramétrés). Défaut : {}. */
+  inputs?: Record<string, unknown>;
+  /** AbortSignal client (propage l'annulation). */
+  signal?: AbortSignal;
+}
+
+/**
+ * Appelle `/v1/chat-messages` en mode `streaming` et retourne la Response
+ * upstream brute (SSE). Le caller est responsable du parsing/tee/filtre.
+ *
+ * Sur 2xx + body : retourne `{ ok: true, response }`.
+ * Sur erreur upstream (status non-2xx ou body absent) : retourne
+ * `{ ok: false, status, bodyPreview }` — le caller peut transformer
+ * en NextResponse JSON ou en error tool.
+ *
+ * Helper introduit Sprint 0 S0.1 — mutualise l'appel Dify utilisé par
+ * /api/chat et (futur) /api/agents-tools/delegate_to_specialist.
+ */
+export async function difyChatStream(opts: DifyChatOptions): Promise<
+  | { ok: true; response: Response; body: ReadableStream<Uint8Array> }
+  | { ok: false; status: number; bodyPreview: string }
+> {
+  const upstream = await fetch(`${DIFY_BASE_URL}/v1/chat-messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${opts.key}`,
+    },
+    body: JSON.stringify({
+      inputs: opts.inputs || {},
+      query: opts.query,
+      response_mode: "streaming",
+      conversation_id: opts.conversationId || "",
+      user: opts.user,
+      files: opts.files || [],
+    }),
+    signal: opts.signal,
+  });
+
+  if (!upstream.ok || !upstream.body) {
+    const text = await upstream.text().catch(() => "");
+    return {
+      ok: false,
+      status: upstream.status,
+      bodyPreview: text.slice(0, 500),
+    };
+  }
+  // Body est garanti non-null ici (check ci-dessus). On l'expose
+  // explicitement pour que TS le voie aussi côté caller.
+  return { ok: true, response: upstream, body: upstream.body };
+}
+
+/**
+ * Variante "blocking" : appelle Dify en mode `blocking` et retourne
+ * `{ answer, conversationId }` ou une erreur. Utilisée par les tools
+ * qui veulent une réponse synchrone (delegate_to_specialist) plutôt
+ * qu'un stream.
+ *
+ * @param timeoutMs durée max avant `AbortError` côté caller (défaut 60s).
+ */
+export async function difyChatBlocking(
+  opts: DifyChatOptions & { timeoutMs?: number },
+): Promise<
+  | { ok: true; answer: string; conversationId: string; messageId?: string }
+  | { ok: false; status: number; bodyPreview: string }
+> {
+  const ctrl = new AbortController();
+  const linkAbort = () => ctrl.abort();
+  if (opts.signal) {
+    if (opts.signal.aborted) ctrl.abort();
+    else opts.signal.addEventListener("abort", linkAbort, { once: true });
+  }
+  const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 60_000);
+
+  try {
+    const upstream = await fetch(`${DIFY_BASE_URL}/v1/chat-messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${opts.key}`,
+      },
+      body: JSON.stringify({
+        inputs: opts.inputs || {},
+        query: opts.query,
+        response_mode: "blocking",
+        conversation_id: opts.conversationId || "",
+        user: opts.user,
+        files: opts.files || [],
+      }),
+      signal: ctrl.signal,
+    });
+
+    if (!upstream.ok) {
+      const text = await upstream.text().catch(() => "");
+      return {
+        ok: false,
+        status: upstream.status,
+        bodyPreview: text.slice(0, 500),
+      };
+    }
+    const data = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
+    const answer = typeof data.answer === "string" ? data.answer : "";
+    const conversationId = typeof data.conversation_id === "string"
+      ? data.conversation_id
+      : "";
+    const messageId = typeof data.message_id === "string" ? data.message_id : undefined;
+    return { ok: true, answer, conversationId, messageId };
+  } finally {
+    clearTimeout(timeout);
+    if (opts.signal) opts.signal.removeEventListener("abort", linkAbort);
+  }
+}

@@ -17,38 +17,79 @@ import { addInstalledAgent } from "@/lib/installed-agents";
 import { logAction } from "@/lib/audit-helper";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { requireApproval } from "@/lib/approval-gate";
+import {
+  toolError,
+  toolValidationError,
+  toolUpstreamError,
+} from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "install_agent_fr", req });
+
   let body: { slug?: unknown; approval_token?: unknown };
   try {
     body = (await req.json()) as { slug?: unknown; approval_token?: unknown };
   } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
+    tracer.failure({ errorCode: "bad_json", retryable: false, httpStatus: 400 });
+    return toolValidationError("bad_json", "Body JSON invalide");
   }
   const slug = typeof body.slug === "string" ? body.slug : "";
   if (!slug) {
-    return NextResponse.json({ error: "missing_slug" }, { status: 400 });
+    tracer.failure({ errorCode: "missing_slug", retryable: false, httpStatus: 400 });
+    return toolValidationError("missing_slug", "Champ 'slug' requis");
   }
 
   const catalog = await readBoxiaFrCatalog().catch(() => null);
   const tpl = catalog?.templates.find((t) => t.slug === slug);
   if (!tpl) {
-    return NextResponse.json({ error: "not_in_catalog", slug }, { status: 404 });
+    tracer.failure({
+      errorCode: "not_in_catalog",
+      retryable: false,
+      httpStatus: 404,
+      metadata: { slug },
+    });
+    return toolError({
+      error: "not_in_catalog",
+      hint: `Le template '${slug}' n'existe pas dans le catalogue BoxIA-FR.`,
+      status: 404,
+      retryable: false,
+      detail: `slug=${slug}`,
+    });
   }
 
-  // Approval gate
+  // Approval gate avec propagation P0 #2 (userId/conversation/auto_approve)
+  // + P0 #3 (audit_context) depuis les headers Dify si forwardés.
+  const userIdHeader = req.headers.get("x-user-id") || undefined;
+  const conversationHeader = req.headers.get("x-conversation-id") || undefined;
+  const auditContextHeader = req.headers.get("x-audit-context") || undefined;
+  const autoApproveKey = conversationHeader
+    ? `${conversationHeader}:install_agent_fr`
+    : undefined;
+
   const gate = await requireApproval<{ slug: string }>({
     body: body as { slug: string; approval_token?: unknown },
     action: "install_agent_fr",
     description: `Installer l'assistant BoxIA-FR « ${tpl.name || slug} » (catégorie ${tpl.category || "?"})`,
     params: { slug },
     caller_actor: "concierge-agent",
+    user_id: userIdHeader,
+    conversation_id: conversationHeader,
+    auto_approve_key: autoApproveKey,
+    audit_context: auditContextHeader,
   });
-  if (!gate.go) return gate.response;
+  if (!gate.go) {
+    tracer.failure({
+      errorCode: "approval_pending_or_denied",
+      retryable: false,
+      metadata: { stage: "approval_gate", slug },
+    });
+    return gate.response;
+  }
   const approvedSlug = gate.params.slug;
 
   try {
@@ -77,6 +118,10 @@ export async function POST(req: Request) {
       null,
     );
 
+    tracer.success(
+      { app_id: installed.app_id, name: installed.name, slug: persisted.slug },
+      { boxia_fr_slug: approvedSlug, via: "approval-gate" },
+    );
     return NextResponse.json({
       ok: true,
       app_id: installed.app_id,
@@ -85,9 +130,16 @@ export async function POST(req: Request) {
       next_action_url: `/?agent=${persisted.slug}`,
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: "install_failed", detail: String(e).slice(0, 300) },
-      { status: 502 },
-    );
+    tracer.failure({
+      errorCode: "install_failed",
+      retryable: true,
+      httpStatus: 502,
+      metadata: { slug: approvedSlug },
+    });
+    return toolUpstreamError({
+      error: "install_failed",
+      hint: "L'installation du template a échoué (Dify upstream). Réessayable.",
+      detail: String(e).slice(0, 300),
+    });
   }
 }

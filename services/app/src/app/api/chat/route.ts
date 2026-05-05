@@ -13,7 +13,7 @@
  * à la place du bloc dans le `answer` retourné au client.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { requireDifyContext, difyFetch, DIFY_BASE_URL } from "@/lib/dify";
+import { requireDifyContext, difyFetch, difyChatStream } from "@/lib/dify";
 import {
   addUserMemory,
   formatMemoryContext,
@@ -26,6 +26,7 @@ import {
   updateTrace,
 } from "@/lib/langfuse";
 import { stripThinkFromSSE } from "@/lib/strip-think";
+import { redactSecretsFromSSE } from "@/lib/secrets-redact";
 import { wrapStreamWithFileDetector } from "@/lib/chat-stream-files";
 import { wrapStreamWithCloudFallbackHint } from "@/lib/local-failure-detect";
 
@@ -89,29 +90,19 @@ export async function POST(req: NextRequest) {
       })
     : "";
 
-  const upstream = await fetch(`${DIFY_BASE_URL}/v1/chat-messages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${ctx.key}`,
-    },
-    body: JSON.stringify({
-      inputs: {},
-      query: augmentedQuery,
-      response_mode: "streaming",
-      conversation_id: body.conversation_id || "",
-      user: ctx.user,
-      // Fichiers attachés (images uploadées via /api/files/upload)
-      files: Array.isArray(body.files) ? body.files : [],
-    }),
+  const result = await difyChatStream({
+    user: ctx.user,
+    key: ctx.key,
+    query: augmentedQuery,
+    conversationId: body.conversation_id || "",
+    // Fichiers attachés (images uploadées via /api/files/upload)
+    files: Array.isArray(body.files) ? body.files : [],
     signal: req.signal,
   });
 
-  if (!upstream.ok || !upstream.body) {
-    const text = await upstream.text().catch(() => "");
+  if (!result.ok) {
     return NextResponse.json(
-      { error: "dify_upstream_error", status: upstream.status,
-        body: text.slice(0, 500) },
+      { error: "dify_upstream_error", status: result.status, body: result.bodyPreview },
       { status: 502 },
     );
   }
@@ -120,13 +111,19 @@ export async function POST(req: NextRequest) {
   // activé par défaut, le `/no_think` dans le pre_prompt est ignoré
   // par Ollama). Defense-in-depth : même si un agent n'a pas /no_think,
   // l'utilisateur ne verra jamais le raisonnement intermédiaire.
-  const stripped = stripThinkFromSSE(upstream.body);
+  // P2 #11 — stripper renforcé (depth counter, multi-tags think/thinking/
+  // internal_reasoning/reasoning/reflection/scratchpad).
+  const stripped = stripThinkFromSSE(result.body);
+  // P2 #13 — redact les secrets (clés API, JWT, PEM, password=...) que
+  // le LLM aurait pu régurgiter depuis un email RAG ou un .env exposé.
+  // Patterns dans lib/secrets-redact.ts. Defense-in-depth après strip-think.
+  const redacted = redactSecretsFromSSE(stripped);
   // BUG-006 wire — détecte les blocs [FILE:nom.ext]…[/FILE] que l'agent
   // peut émettre, génère le DOCX/XLSX/PDF/PS1/etc côté serveur, stocke
   // dans /data/generated/UUID, et remplace le bloc par un marker
   // `{{file:UUID:nom:size:mime}}` que MessageMarkdown.tsx rend en chip
-  // download cliquable. Patch additif (chain post strip-think).
-  const fileDetected = wrapStreamWithFileDetector(stripped, {
+  // download cliquable. Patch additif (chain post strip-think + redact).
+  const fileDetected = wrapStreamWithFileDetector(redacted, {
     user: ctx.user,
     outputDir: "/data/generated",
     conversationId: body.conversation_id || undefined,

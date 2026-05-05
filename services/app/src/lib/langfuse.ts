@@ -193,3 +193,219 @@ export function updateTrace(
   };
   void sendBatch([ev]);
 }
+
+// ===== Sprint 0 S0.3 — instrumentation tool-call =====
+
+export interface ToolCallLogOpts {
+  /** Nom du tool (ex: "web_search", "rag_search"). */
+  toolName: string;
+  /** Email user (NextAuth) si connu — best-effort. */
+  userId?: string;
+  /** Conversation Dify si propagée (header X-Conversation-Id ou body). */
+  conversationId?: string;
+  /** Slug agent appelant (ex: "concierge", "general"). Défaut: "concierge". */
+  agentSlug?: string;
+  /** Input du tool (args body). Tronqué 4 KB. */
+  input?: unknown;
+  /** Output du tool. Tronqué 8 KB. */
+  output?: unknown;
+  /** True si le tool a réussi (ok: true côté payload). */
+  success: boolean;
+  /** Code erreur si échec (toolError.error). */
+  errorCode?: string;
+  /** True si l'erreur était retryable (toolError.retryable). */
+  retryable?: boolean;
+  /** Timestamps pour calculer la durée. */
+  startTime: Date;
+  endTime: Date;
+  /** HTTP status final renvoyé au caller. */
+  httpStatus?: number;
+  /** Metadata libre. */
+  metadata?: Record<string, unknown>;
+  /** Trace racine à laquelle rattacher (si propagée par caller). Sinon
+   *  une trace standalone est créée pour ce tool-call. */
+  traceId?: string;
+}
+
+/**
+ * Trace l'exécution d'un tool agents-tools dans Langfuse.
+ *
+ * Si `traceId` est fourni → un span `tool:<name>` est créé sous cette trace.
+ * Sinon → une trace racine standalone `tool:<name>` est créée (utile pour
+ * les tools appelés directement par Dify Custom Tool sans propagation
+ * de trace context).
+ *
+ * Le sessionId Langfuse = conversationId Dify → groupe les traces par
+ * conversation dans l'UI Langfuse.
+ *
+ * Tags posés (filtres UI Langfuse) :
+ *  - tool:<toolName>
+ *  - agent:<agentSlug>
+ *  - status:success | status:failure
+ *  - retryable (si erreur retryable)
+ */
+export function logToolCall(opts: ToolCallLogOpts): void {
+  if (!isLangfuseEnabled()) return;
+
+  const tags: string[] = [
+    `tool:${opts.toolName}`,
+    `agent:${opts.agentSlug || "concierge"}`,
+    opts.success ? "status:success" : "status:failure",
+  ];
+  if (!opts.success && opts.errorCode) tags.push(`error:${opts.errorCode}`);
+  if (!opts.success && opts.retryable) tags.push("retryable");
+
+  const metadata: Record<string, unknown> = {
+    duration_ms: opts.endTime.getTime() - opts.startTime.getTime(),
+    http_status: opts.httpStatus,
+    error_code: opts.errorCode,
+    retryable: opts.retryable,
+    ...(opts.metadata || {}),
+  };
+
+  // Si pas de traceId fourni → trace standalone (pas de parent).
+  // Si traceId fourni → on crée un span enfant.
+  if (opts.traceId) {
+    const ev: IngestionEvent = {
+      id: newId(),
+      type: "span-create",
+      timestamp: new Date().toISOString(),
+      body: {
+        id: newId(),
+        traceId: opts.traceId,
+        name: `tool:${opts.toolName}`,
+        startTime: opts.startTime.toISOString(),
+        endTime: opts.endTime.toISOString(),
+        input: typeof opts.input === "string"
+          ? opts.input.slice(0, 4000)
+          : opts.input,
+        output: typeof opts.output === "string"
+          ? opts.output.slice(0, 8000)
+          : opts.output,
+        level: opts.success ? "DEFAULT" : "ERROR",
+        statusMessage: opts.errorCode,
+        metadata,
+      },
+    };
+    void sendBatch([ev]);
+    return;
+  }
+
+  // Trace standalone
+  const traceId = newId();
+  const events: IngestionEvent[] = [
+    {
+      id: newId(),
+      type: "trace-create",
+      timestamp: opts.endTime.toISOString(),
+      body: {
+        id: traceId,
+        timestamp: opts.endTime.toISOString(),
+        name: `tool:${opts.toolName}`,
+        userId: opts.userId,
+        sessionId: opts.conversationId,
+        input: typeof opts.input === "string"
+          ? opts.input.slice(0, 4000)
+          : opts.input,
+        output: typeof opts.output === "string"
+          ? opts.output.slice(0, 8000)
+          : opts.output,
+        tags,
+        metadata,
+      },
+    },
+  ];
+  void sendBatch(events);
+}
+
+/**
+ * Wrapper de tracing pour une route agents-tools. Capture start/end
+ * automatiquement et appelle logToolCall avec les bons paramètres.
+ *
+ * Usage typique dans une route :
+ * ```ts
+ * export async function POST(req: Request) {
+ *   if (!checkAgentsToolsAuth(req)) return unauthorized();
+ *   const tracer = startToolTrace({ toolName: "web_search", req });
+ *   try {
+ *     // ... business logic ...
+ *     const result = { ok: true, count: 5 };
+ *     tracer.success(result);
+ *     return NextResponse.json(result);
+ *   } catch (e) {
+ *     tracer.failure({ errorCode: "search_failed", retryable: true });
+ *     return toolUpstreamError({ error: "search_failed", hint: "..." });
+ *   }
+ * }
+ * ```
+ */
+export function startToolTrace(opts: {
+  toolName: string;
+  req?: Request;
+  agentSlug?: string;
+  /** User et conversation si extraits depuis le body. */
+  userId?: string;
+  conversationId?: string;
+}): {
+  success: (output?: unknown, metadata?: Record<string, unknown>) => void;
+  failure: (info: {
+    errorCode: string;
+    retryable: boolean;
+    httpStatus?: number;
+    output?: unknown;
+    metadata?: Record<string, unknown>;
+  }) => void;
+} {
+  const startTime = new Date();
+
+  // Trace propagée par header (cas idéal : Dify forwarde X-Langfuse-Trace-Id)
+  const traceId = opts.req?.headers.get("x-langfuse-trace-id") || undefined;
+  const conversationId = opts.conversationId
+    || opts.req?.headers.get("x-conversation-id")
+    || undefined;
+  const userId = opts.userId
+    || opts.req?.headers.get("x-user-id")
+    || undefined;
+
+  let inputCapture: unknown = undefined;
+  // On peut clone request body si besoin, mais pour rester non-blocking
+  // et compatible avec NextRequest, on laisse le caller passer l'input
+  // explicitement via success/failure metadata.
+
+  return {
+    success(output, metadata) {
+      logToolCall({
+        toolName: opts.toolName,
+        agentSlug: opts.agentSlug,
+        userId,
+        conversationId,
+        traceId,
+        input: inputCapture,
+        output,
+        success: true,
+        startTime,
+        endTime: new Date(),
+        httpStatus: 200,
+        metadata,
+      });
+    },
+    failure(info) {
+      logToolCall({
+        toolName: opts.toolName,
+        agentSlug: opts.agentSlug,
+        userId,
+        conversationId,
+        traceId,
+        input: inputCapture,
+        output: info.output,
+        success: false,
+        errorCode: info.errorCode,
+        retryable: info.retryable,
+        httpStatus: info.httpStatus,
+        startTime,
+        endTime: new Date(),
+        metadata: info.metadata,
+      });
+    },
+  };
+}

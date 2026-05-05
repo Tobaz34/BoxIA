@@ -213,16 +213,6 @@ services:
       PENNYLANE_TOOL_URL:              ${PENNYLANE_TOOL_URL:-http://127.0.0.1:8090}
       FEC_TOOL_URL:                    ${FEC_TOOL_URL:-http://127.0.0.1:8091}
 
-      # ---- Versions des services tiers (lues par /api/system/services-versions
-      # pour comparer avec les latest GitHub Releases). Si vide, "current"
-      # affiche "?" dans l'UI mais le check latest fonctionne quand même.
-      DIFY_VERSION:                    ${DIFY_VERSION:-}
-      QDRANT_VERSION:                  ${QDRANT_VERSION:-}
-      AUTHENTIK_VERSION:               ${AUTHENTIK_VERSION:-}
-      N8N_VERSION:                     ${N8N_VERSION:-}
-      OLLAMA_VERSION:                  ${OLLAMA_VERSION:-}
-      LANGFUSE_VERSION:                ${LANGFUSE_VERSION:-}
-
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}
       BRAND_LOGO_URL: ${BRAND_LOGO_URL:-}
@@ -230,3 +220,36 @@ services:
       BRAND_ACCENT_COLOR: ${BRAND_ACCENT_COLOR:-#10b981}
       BRAND_FOOTER_TEXT: ${BRAND_FOOTER_TEXT:-}
       CLIENT_NAME: ${CLIENT_NAME:-}
+
+      # ---- v2 OSS-inspired services (cf tools/research/) ----
+
+      # Scheduler sidecar (P1 #6) — pour scheduler tools côté Next.js
+      # qui proxient sur services/scheduler:8086 (hostname Docker DNS).
+      SCHEDULER_URL: ${SCHEDULER_URL:-http://aibox-scheduler:8000}
+
+      # Sandbox sidecar (P0 #1) — bash_exec route appelle ce service.
+      # En host network mode : host.docker.internal résout vers le sandbox
+      # (qui lui est sur aibox_net, port 127.0.0.1:8087).
+      SANDBOX_URL: ${SANDBOX_URL:-http://aibox-sandbox:8000}
+      SANDBOX_DEFAULT_TIMEOUT: ${SANDBOX_DEFAULT_TIMEOUT:-30}
+      SANDBOX_MAX_TIMEOUT: ${SANDBOX_MAX_TIMEOUT:-300}
+
+      # Safety Auditor 2-pass (P0 #3) — lib/safety-auditor.ts appelle
+      # Ollama qwen3:1.7b sur OLLAMA_BASE_URL.
+      SAFETY_AUDITOR_ENABLED: ${SAFETY_AUDITOR_ENABLED:-true}
+      SAFETY_AUDITOR_MODEL: ${SAFETY_AUDITOR_MODEL:-qwen3:1.7b}
+      SAFETY_AUDITOR_TIMEOUT_MS: ${SAFETY_AUDITOR_TIMEOUT_MS:-5000}
+      SAFETY_AUDITS_PATH: ${SAFETY_AUDITS_PATH:-/data/safety_audits.jsonl}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
+
+      # Delegate (P0 #4) — garde-fous tool delegate_to_specialist.
+      AGENTS_DELEGATE_MAX_DEPTH: ${AGENTS_DELEGATE_MAX_DEPTH:-2}
+      AGENTS_DELEGATE_TIMEOUT_MS: ${AGENTS_DELEGATE_TIMEOUT_MS:-60000}
+
+      # RAG Hybrid (P2 #12) — BM25 reranking sur rag_search.
+      RAG_HYBRID_ENABLED: ${RAG_HYBRID_ENABLED:-true}
+      RAG_HYBRID_ALPHA: ${RAG_HYBRID_ALPHA:-0.5}
+      RAG_HYBRID_OVERFETCH: ${RAG_HYBRID_OVERFETCH:-3}
+
+      # HITL — TTL pending approval (P0 #2). 5 min par défaut.
+      CONCIERGE_APPROVAL_TTL_MS: ${CONCIERGE_APPROVAL_TTL_MS:-300000}
