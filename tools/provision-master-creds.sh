@@ -180,7 +180,12 @@ scp -q "$LOCAL_TMP" "$SSH_TARGET:$REMOTE_TMP"
 ssh -t "$SSH_TARGET" "
   set -euo pipefail
   if [[ \$(id -u) -eq 0 ]]; then SUDO=''; else SUDO='sudo'; fi
-  \$SUDO install -d -m 700 -o root -g root /etc/aibox-master
+  # Mode 755 sur le dossier (pas 700) pour permettre aux non-root de
+  # détecter l'existence du fichier via [[ -f cloudflare.env ]] (qui a besoin
+  # de traverse + read sur le dossier parent). Le fichier lui-même reste 600
+  # root:root → contenu inaccessible aux non-root. Niveau sécurité :
+  # exposer le NOM "cloudflare.env" n'est pas un secret.
+  \$SUDO install -d -m 755 -o root -g root /etc/aibox-master
   \$SUDO install -m 600 -o root -g root \"$REMOTE_TMP\" /etc/aibox-master/cloudflare.env
   rm -f \"$REMOTE_TMP\"
   echo ''

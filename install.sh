@@ -54,8 +54,13 @@ ask_yn() {
 }
 
 gen_secret() {
+  # Le subshell ( set +o pipefail; ... ) est nécessaire car install.sh tourne
+  # avec `set -euo pipefail` (cf. ligne 9). Le pipe `tr | head -c N` provoque
+  # un SIGPIPE sur tr quand head ferme stdin après avoir lu N bytes — sans
+  # pipefail c'est ignoré, mais avec pipefail ça remonte comme exit 141 et
+  # casse l'install. Le subshell isole le `set +o pipefail` à cette commande.
   local len="${1:-48}"
-  tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c "$len"
+  ( set +o pipefail; tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c "$len" )
 }
 
 # Génère un password "strong" garantissant au moins 1 majuscule, 1 minuscule,
@@ -68,8 +73,9 @@ gen_strong_pass() {
   local fixed="Aa1!"  # garantit les 4 classes
   local rest_len=$((len - 4))
   local rest
-  rest=$(tr -dc 'A-Za-z0-9!#$%*+-=?@_' </dev/urandom | head -c "$rest_len")
-  echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n'
+  # Idem gen_secret : subshell pour isoler la désactivation de pipefail.
+  rest=$( set +o pipefail; tr -dc 'A-Za-z0-9!#$%*+-=?@_' </dev/urandom | head -c "$rest_len" )
+  ( set +o pipefail; echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n' )
 }
 
 # ---- Fonction de déploiement (réutilisable depuis CLI ou wizard web) -------
@@ -295,7 +301,9 @@ provision_master_creds() {
     SUDO="sudo"
   fi
 
-  $SUDO install -d -m 700 -o root -g root /etc/aibox-master
+  # Mode 755 (pas 700) pour permettre aux non-root de détecter l'existence
+  # du fichier (test -f). Le contenu reste protégé par le 600 du fichier.
+  $SUDO install -d -m 755 -o root -g root /etc/aibox-master
 
   # Atomic write via fichier temporaire + rename, comme ça pas de fenêtre
   # où le fichier serait partiellement écrit pendant qu'un container le lit.
