@@ -329,5 +329,34 @@ export async function handleOIDCCallback(
   }
 
   await _writeStore(s);
+
+  // Best-effort : pousse la (les) credential(s) n8n correspondant aux
+  // connecteurs Microsoft fraîchement connectés (le slug primaire +
+  // tous les siblings broadcastés). Permet aux workflows marketplace
+  // qui utilisent les nodes Microsoft natifs (microsoftOutlook,
+  // microsoftOneDrive, microsoftSharePoint) de fonctionner sans saisie
+  // manuelle dans la console n8n.
+  //
+  // Import dynamique pour éviter un cycle (n8n-credentials → oauth-storage).
+  try {
+    const { pushCredentialsFromConnector, bridgedConnectorSlugs } =
+      await import("./n8n-credentials");
+    const bridged = new Set(bridgedConnectorSlugs());
+    const toPush = new Set<string>();
+    if (bridged.has(pending.connector_slug)) toPush.add(pending.connector_slug);
+    for (const sibId of Object.keys(s.connections)) {
+      const c = s.connections[sibId];
+      if (c.account_email !== accountEmail) continue;
+      if (bridged.has(c.connector_slug)) toPush.add(c.connector_slug);
+    }
+    for (const slug of toPush) {
+      pushCredentialsFromConnector(slug).catch((e) => {
+        console.warn(`[oauth-oidc] push n8n cred for ${slug} failed:`, e);
+      });
+    }
+  } catch (e) {
+    console.warn("[oauth-oidc] n8n credential push module failed to load:", e);
+  }
+
   return { ok: true, connection: conn };
 }
