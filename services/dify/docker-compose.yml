@@ -76,6 +76,15 @@ services:
     image: ubuntu/squid:latest
     container_name: aibox-dify-ssrf-proxy
     restart: unless-stopped
+    # Whitelist BoxIA host.docker.internal:3100 pour que les Custom Tools
+    # Dify (BoxIA Concierge Tools, Gmail Tools, RAG Search, Outlook, …)
+    # qui pointent sur aibox-app puissent passer le SSRF proxy. Sans ça,
+    # Squid répond 503 + Dify ban l'URL en force_list. Vérifié live
+    # 2026-05-05 via GET /api/agents-tools/rag_search.
+    volumes:
+      - ./squid-allow-boxia.conf:/etc/squid/conf.d/allow-boxia.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - aibox_net
 
