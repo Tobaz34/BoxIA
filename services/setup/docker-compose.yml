@@ -27,6 +27,29 @@ services:
       AIBOX_ROOT: /srv/ai-stack
       STATE_FILE: /state/configured
       PYTHONUNBUFFERED: "1"
+      # NOTE — Les CF_DEFAULT_* (Cloudflare master credentials) sont volontairement
+      # PAS définies ici, car Compose donne priorité à `environment:` sur `env_file:`
+      # (cf. https://docs.docker.com/compose/how-tos/environment-variables/envvars-precedence/).
+      # Si on les déclarait avec `${VAR:-}`, une var absente du shell vaudrait `""`
+      # et écraserait silencieusement la valeur lue depuis cloudflare.env. Ces vars
+      # passent donc UNIQUEMENT par env_file (cf. ci-dessous), où le wizard les lit
+      # via os.getenv(). Pour overrider en dev, exporter les vars dans le shell qui
+      # lance compose ne suffira PAS — éditer directement /etc/aibox-master/cloudflare.env.
+    env_file:
+      # Master credentials Cloudflare BoxIA — survivent au wipe car hors /srv/ai-stack/.
+      # Source de vérité unique pour les CF_DEFAULT_* (cf. note dans environment).
+      # Le `required: false` permet au wizard de démarrer même si le fichier n'existe
+      # pas (cas 1re install dev sans CF) → le wizard détectera CF_DEFAULT_API_TOKEN
+      # vide et affichera la section « credentials » au client.
+      # Format attendu (KEY=VALUE, une par ligne, pas de quotes, pas d'espaces) :
+      #   CF_DEFAULT_ACCOUNT_ID=...
+      #   CF_DEFAULT_TUNNEL_ID=...
+      #   CF_DEFAULT_API_TOKEN=...
+      #   CF_DEFAULT_ZONE_ID=...
+      #   CF_DEFAULT_ROOT_DOMAIN=ialocal.pro   (optionnel)
+      # Permissions recommandées : 600 root:root.
+      - path: /etc/aibox-master/cloudflare.env
+        required: false
     networks:
       - aibox_net
       - ollama_net   # pour atteindre n8n / open-webui hérités
