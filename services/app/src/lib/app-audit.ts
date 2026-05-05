@@ -35,6 +35,7 @@ export type AuditAction =
   | "workflow.run_manual"
   | "workflow.upload"
   | "workflow.install_template"
+  | "workflow.credentials_resync"
   | "user.invite"
   | "user.role_change"
   | "user.toggle_active"
