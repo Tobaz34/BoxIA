@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { getToolToken } from "@/lib/connector-tool-helpers";
 import { toolError, toolValidationError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
@@ -89,14 +90,23 @@ function extractBody(part: GmailPart): string {
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "gmail_get_thread", req });
+
   const url = new URL(req.url);
   const threadId = (url.searchParams.get("id") || "").trim();
   if (!threadId) {
+    tracer.failure({ errorCode: "missing_id", retryable: false, httpStatus: 400 });
     return toolValidationError("missing_id", "Paramètre `id=<thread_id>` requis");
   }
 
   const tok = await getToolToken("google", "gmail");
   if (!tok.ok) {
+    tracer.failure({
+      errorCode: tok.body.error,
+      retryable: false,
+      httpStatus: tok.status,
+      metadata: { stage: "get_tool_token" },
+    });
     return toolError({
       error: tok.body.error,
       hint: tok.body.hint || "Connecteur Google non disponible.",
@@ -112,6 +122,12 @@ export async function GET(req: Request) {
   if (!r.ok) {
     const detail = (await r.text().catch(() => "")).slice(0, 200);
     const retryable = r.status === 429 || r.status === 408 || r.status >= 500;
+    tracer.failure({
+      errorCode: `gmail_thread_${r.status}`,
+      retryable,
+      httpStatus: retryable ? 502 : r.status,
+      metadata: { upstream_status: r.status },
+    });
     return toolError({
       error: `gmail_thread_${r.status}`,
       hint: retryable
@@ -150,6 +166,10 @@ export async function GET(req: Request) {
   const firstHeaders = messages[0]?.payload?.headers || [];
   const subject = (firstHeaders.find((h) => h.name?.toLowerCase() === "subject")?.value) || "(sans objet)";
 
+  tracer.success(
+    { thread_id: threadId, message_count: items.length },
+    { account: tok.account_email },
+  );
   return NextResponse.json({
     account: tok.account_email,
     thread_id: threadId,

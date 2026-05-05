@@ -26,20 +26,25 @@ import {
   toolValidationError,
   toolUpstreamError,
 } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "install_workflow", req });
+
   let body: { file?: unknown; approval_token?: unknown };
   try {
     body = (await req.json()) as { file?: unknown; approval_token?: unknown };
   } catch {
+    tracer.failure({ errorCode: "bad_json", retryable: false, httpStatus: 400 });
     return toolValidationError("bad_json", "Body JSON invalide");
   }
   const file = typeof body.file === "string" ? body.file : "";
   if (!file) {
+    tracer.failure({ errorCode: "missing_file", retryable: false, httpStatus: 400 });
     return toolValidationError("missing_file", "Champ 'file' requis");
   }
 
@@ -48,6 +53,12 @@ export async function POST(req: Request) {
   const catalog = await readCatalog().catch(() => null);
   const entry = catalog?.workflows.find((w) => w.file === file);
   if (!entry) {
+    tracer.failure({
+      errorCode: "not_in_catalog",
+      retryable: false,
+      httpStatus: 404,
+      metadata: { file },
+    });
     return toolError({
       error: "not_in_catalog",
       hint: `Le workflow '${file}' n'existe pas dans le catalogue marketplace.`,
@@ -67,12 +78,25 @@ export async function POST(req: Request) {
     params: { file },
     caller_actor: "concierge-agent",
   });
-  if (!gate.go) return gate.response;
+  if (!gate.go) {
+    // Approval pending (202) ou refusée — tracer comme « failure » légère
+    // (action non exécutée). Pas un vrai échec : on utilise un code dédié.
+    tracer.failure({
+      errorCode: "approval_pending_or_denied",
+      retryable: false,
+      metadata: { stage: "approval_gate", file },
+    });
+    return gate.response;
+  }
   const approvedFile = gate.params.file;
 
   try {
     const result = await installMarketplaceWorkflow(approvedFile);
     if ("already_installed" in result) {
+      tracer.success(
+        { already_installed: true, name: result.name },
+        { file: approvedFile, via: "approval-gate" },
+      );
       return NextResponse.json({
         ok: true,
         already_installed: true,
@@ -91,6 +115,10 @@ export async function POST(req: Request) {
       },
       null,
     );
+    tracer.success(
+      { workflow_id: result.workflow_id, name: result.name },
+      { file: approvedFile, via: "approval-gate" },
+    );
     return NextResponse.json({
       ok: true,
       workflow_id: result.workflow_id,
@@ -103,6 +131,12 @@ export async function POST(req: Request) {
       next_action_url: "/workflows",
     });
   } catch (e) {
+    tracer.failure({
+      errorCode: "install_failed",
+      retryable: true,
+      httpStatus: 502,
+      metadata: { file: approvedFile },
+    });
     return toolUpstreamError({
       error: "install_failed",
       hint: "L'installation du workflow a échoué (n8n upstream). Réessayable.",

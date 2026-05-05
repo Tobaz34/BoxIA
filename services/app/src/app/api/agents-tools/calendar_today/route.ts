@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { getToolToken } from "@/lib/connector-tool-helpers";
 import { toolError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +104,8 @@ async function listMicrosoft(token: string, days: number, max: number): Promise<
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "calendar_today", req });
+
   const url = new URL(req.url);
   const days = Math.min(31, Math.max(1, Number(url.searchParams.get("days") ?? 1)));
   const max = Math.min(100, Math.max(1, Number(url.searchParams.get("max") ?? 50)));
@@ -133,6 +136,12 @@ export async function GET(req: Request) {
   }
 
   if (results.length === 0) {
+    tracer.failure({
+      errorCode: "no_calendar_connected",
+      retryable: false,
+      httpStatus: 404,
+      metadata: { errors_count: errors.length },
+    });
     return toolError({
       error: "no_calendar_connected",
       hint: "Connectez Google Calendar ou Outlook Calendar via /connectors.",
@@ -146,6 +155,13 @@ export async function GET(req: Request) {
   const all = results.flatMap((r) => r.events.map((e) => ({ ...e, provider: r.provider })));
   all.sort((a, b) => (a.start || "").localeCompare(b.start || ""));
 
+  tracer.success(
+    {
+      count: all.length,
+      providers: results.map((r) => r.provider),
+    },
+    { days, max, errors_count: errors.length },
+  );
   return NextResponse.json({
     days_ahead: days,
     sources: results.map((r) => ({ provider: r.provider, account: r.account, count: r.events.length })),

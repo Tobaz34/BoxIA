@@ -36,6 +36,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
+import { auditToolCall, shouldEscalate, type AuditVerdict } from "@/lib/safety-auditor";
 
 const APPROVALS_DIR =
   process.env.CONCIERGE_APPROVALS_DIR || "/data/concierge-approvals";
@@ -75,6 +76,15 @@ export interface PendingApproval {
    * ID de conversation Dify pour grouper les approvals dans l'UI.
    */
   conversation_id?: string;
+  /**
+   * Sprint 2a P0 #3 — Verdict de l'auditor LLM 2-pass anti-injection
+   * (qwen3:1.7b CPU). Si `unsafe` ou `unclear`, l'UI affiche un banner
+   * RED (severity max) avec le `auditor_reasoning` pour aider l'user
+   * à décider en connaissance de cause.
+   */
+  auditor_verdict?: AuditVerdict;
+  /** Justification courte FR du verdict auditor. */
+  auditor_reasoning?: string;
 }
 
 async function ensureDir() {
@@ -112,6 +122,8 @@ export async function createPending(opts: {
   user_id?: string;
   auto_approve_key?: string;
   conversation_id?: string;
+  auditor_verdict?: AuditVerdict;
+  auditor_reasoning?: string;
 }): Promise<PendingApproval> {
   const id = crypto.randomBytes(16).toString("hex");
   const now = Date.now();
@@ -127,6 +139,8 @@ export async function createPending(opts: {
     user_id: opts.user_id,
     auto_approve_key: opts.auto_approve_key,
     conversation_id: opts.conversation_id,
+    auditor_verdict: opts.auditor_verdict,
+    auditor_reasoning: opts.auditor_reasoning,
   };
   await write(a);
   return a;
@@ -288,6 +302,15 @@ export async function requireApproval<T extends Record<string, unknown>>(opts: {
   auto_approve_key?: string;
   /** Sprint 1 P0 #2 — pour grouper dans l'UI. */
   conversation_id?: string;
+  /**
+   * Sprint 2a P0 #3 — Contexte récent passé à l'auditor LLM 2-pass
+   * (qwen3:1.7b CPU) pour détecter les prompt-injections issues de
+   * tools de lecture (gmail/outlook/web/rag). Best-effort : si non
+   * fourni, l'audit est skippé (verdict implicite "safe"). Si fourni
+   * + verdict unsafe/unclear → force le pending RED même si
+   * auto_approve_key existait.
+   */
+  audit_context?: string;
 }): Promise<
   | { go: true; params: T; via: "approval" | "auto_approve" }
   | { go: false; response: Response }
@@ -295,7 +318,9 @@ export async function requireApproval<T extends Record<string, unknown>>(opts: {
   const token =
     typeof opts.body.approval_token === "string" ? opts.body.approval_token : "";
 
-  // Cas 1 — token explicite : on consume l'approbation existante
+  // Cas 1 — token explicite : on consume l'approbation existante.
+  // L'auditor n'est PAS rappelé : la décision humaine prime, le user a
+  // déjà vu le banner avec le verdict auditor au moment de cliquer.
   if (token) {
     const check = await consumeApproved(token, opts.action);
     if (!check.ok) {
@@ -310,22 +335,35 @@ export async function requireApproval<T extends Record<string, unknown>>(opts: {
     return { go: true, params: check.params as T, via: "approval" };
   }
 
+  // Sprint 2a P0 #3 — Audit anti-prompt-injection AVANT auto-approve.
+  // Si verdict unsafe/unclear → force pending RED. Si audit_context absent
+  // ou auditor désactivé → verdict 'safe' implicite (skip).
+  let auditVerdict: AuditVerdict | undefined;
+  let auditReasoning: string | undefined;
+  if (opts.audit_context) {
+    const audit = await auditToolCall({
+      toolName: opts.action,
+      toolArgs: opts.params,
+      userId: opts.user_id,
+      conversationId: opts.conversation_id,
+      recentContext: opts.audit_context,
+    });
+    auditVerdict = audit.verdict;
+    auditReasoning = audit.reasoning;
+  }
+
   // Cas 2 — pas de token mais une auto-approbation persistante existe
-  // pour cette (action, auto_approve_key) → on bypasse silencieusement
-  // (l'utilisateur a coché "ne plus me redemander pour cette tâche").
-  if (opts.auto_approve_key) {
+  // pour cette (action, auto_approve_key) → on bypasse silencieusement.
+  // EXCEPTION : si l'auditor a flaggé unsafe/unclear, on n'applique PAS
+  // l'auto-approve (sécurité > UX).
+  if (opts.auto_approve_key && (!auditVerdict || !shouldEscalate(auditVerdict))) {
     const auto = await findAutoApproved(opts.action, opts.auto_approve_key);
     if (auto) {
-      // Important : on ne consume PAS l'auto-approval (il reste actif
-      // jusqu'à TTL pour les futurs appels avec la même clé). On
-      // utilise les params COURANTS plutôt que ceux mémorisés, parce
-      // qu'on est dans un mode "feu vert pour toute la tâche" — les
-      // params varient à chaque step.
       return { go: true, params: opts.params, via: "auto_approve" };
     }
   }
 
-  // Cas 3 — pas de token, pas d'auto-approval : créer un pending
+  // Cas 3 — pas de token, pas d'auto-approval valide : créer un pending
   const pending = await createPending({
     action: opts.action,
     description: opts.description,
@@ -334,6 +372,8 @@ export async function requireApproval<T extends Record<string, unknown>>(opts: {
     user_id: opts.user_id,
     auto_approve_key: opts.auto_approve_key,
     conversation_id: opts.conversation_id,
+    auditor_verdict: auditVerdict,
+    auditor_reasoning: auditReasoning,
   });
   return {
     go: false,
@@ -344,11 +384,21 @@ export async function requireApproval<T extends Record<string, unknown>>(opts: {
         action_id: pending.id,
         description: pending.description,
         auto_approve_offer: Boolean(opts.auto_approve_key),
+        auditor_verdict: auditVerdict,
+        auditor_reasoning: auditReasoning,
         message:
-          "Cette action attend l'approbation de l'utilisateur. Une bannière " +
-          "« action en attente » s'affiche en haut de l'application BoxIA. " +
-          "Une fois cliqué sur « Approuver », l'action s'exécutera. " +
-          "Indique-le clairement à l'utilisateur dans ta réponse.",
+          auditVerdict === "unsafe"
+            ? "⚠️ ALERTE SÉCURITÉ : l'auditor IA suspecte une instruction injectée " +
+              "depuis un contenu lu (email/doc/web). Cette action attend l'approbation " +
+              "EXPLICITE de l'utilisateur. Indique CLAIREMENT le risque dans ta réponse."
+            : auditVerdict === "unclear"
+              ? "Cette action attend l'approbation de l'utilisateur. L'auditor IA n'a " +
+                "pas pu confirmer la légitimité — le user doit valider manuellement. " +
+                "Indique-le dans ta réponse."
+              : "Cette action attend l'approbation de l'utilisateur. Une bannière " +
+                "« action en attente » s'affiche en haut de l'application BoxIA. " +
+                "Une fois cliqué sur « Approuver », l'action s'exécutera. " +
+                "Indique-le clairement à l'utilisateur dans ta réponse.",
       },
       { status: 202 },
     ),

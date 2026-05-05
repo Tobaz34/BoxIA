@@ -23,6 +23,7 @@ import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { embedText, searchPoints } from "@/lib/qdrant-client";
 import { toolValidationError, toolUpstreamError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
@@ -42,9 +43,12 @@ const COLLECTIONS: Record<string, string[]> = {
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "rag_search", req });
+
   const url = new URL(req.url);
   const query = (url.searchParams.get("q") || "").trim();
   if (!query) {
+    tracer.failure({ errorCode: "missing_query", retryable: false, httpStatus: 400 });
     return toolValidationError(
       "missing_query",
       "Paramètre `q` requis (la question/requête).",
@@ -59,6 +63,12 @@ export async function GET(req: Request) {
   try {
     vector = await embedText(query);
   } catch (e) {
+    tracer.failure({
+      errorCode: "embed_failed",
+      retryable: true,
+      httpStatus: 502,
+      metadata: { reason: "ollama_embed" },
+    });
     return toolUpstreamError({
       error: "embed_failed",
       hint: "Le service d'embedding (Ollama) est indisponible ou a échoué. Réessayable.",
@@ -105,6 +115,10 @@ export async function GET(req: Request) {
   allHits.sort((a, b) => b.score - a.score);
   const top = allHits.slice(0, limit);
 
+  tracer.success(
+    { count: top.length },
+    { source: sourceParam, collections, limit },
+  );
   return NextResponse.json({
     query,
     source: sourceParam,

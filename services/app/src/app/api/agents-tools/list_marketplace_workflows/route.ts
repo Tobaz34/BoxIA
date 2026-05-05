@@ -7,11 +7,14 @@ import { readCatalog } from "@/lib/n8n-marketplace";
 import { listWorkflows } from "@/lib/n8n";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { toolError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
+
+  const tracer = startToolTrace({ toolName: "list_marketplace_workflows", req });
 
   try {
     const catalog = await readCatalog();
@@ -32,13 +35,15 @@ export async function GET(req: Request) {
       credentials_required: w.credentials_required,
     }));
 
+    const summary = {
+      total: workflows.length,
+      boxia: workflows.filter((w) => w.source === "boxia").length,
+      community: workflows.filter((w) => w.source === "community").length,
+      installed: workflows.filter((w) => w.installed).length,
+    };
+    tracer.success(summary);
     return NextResponse.json({
-      summary: {
-        total: workflows.length,
-        boxia: workflows.filter((w) => w.source === "boxia").length,
-        community: workflows.filter((w) => w.source === "community").length,
-        installed: workflows.filter((w) => w.installed).length,
-      },
+      summary,
       // Limite à 20 par groupe pour éviter explosion JSON
       boxia: workflows.filter((w) => w.source === "boxia").slice(0, 20),
       community: workflows
@@ -49,6 +54,11 @@ export async function GET(req: Request) {
     });
   } catch (e) {
     // Catalogue marketplace I/O failure — peut être transitoire.
+    tracer.failure({
+      errorCode: "marketplace_unreadable",
+      retryable: true,
+      httpStatus: 500,
+    });
     return toolError({
       error: "marketplace_unreadable",
       hint: "Impossible de lire le catalogue marketplace n8n. Vérifier le fichier sur disque.",

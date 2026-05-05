@@ -12,11 +12,14 @@ import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { getToolToken } from "@/lib/connector-tool-helpers";
 import { toolError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
+
+  const tracer = startToolTrace({ toolName: "outlook_read_inbox", req });
 
   const url = new URL(req.url);
   const max = Math.min(50, Math.max(1, Number(url.searchParams.get("max") ?? 20)));
@@ -24,6 +27,12 @@ export async function GET(req: Request) {
 
   const tok = await getToolToken("microsoft", "outlook-graph");
   if (!tok.ok) {
+    tracer.failure({
+      errorCode: tok.body.error,
+      retryable: false,
+      httpStatus: tok.status,
+      metadata: { stage: "get_tool_token" },
+    });
     return toolError({
       error: tok.body.error,
       hint: tok.body.hint || "Connecteur Microsoft non disponible.",
@@ -44,6 +53,12 @@ export async function GET(req: Request) {
   if (!r.ok) {
     const detail = (await r.text().catch(() => "")).slice(0, 200);
     const retryable = r.status === 429 || r.status === 408 || r.status >= 500;
+    tracer.failure({
+      errorCode: `graph_inbox_${r.status}`,
+      retryable,
+      httpStatus: retryable ? 502 : r.status,
+      metadata: { upstream_status: r.status },
+    });
     return toolError({
       error: `graph_inbox_${r.status}`,
       hint: retryable
@@ -75,6 +90,10 @@ export async function GET(req: Request) {
     flagged: m.flag?.flagStatus === "flagged",
   }));
 
+  tracer.success(
+    { count: items.length },
+    { account: tok.account_email, max, unread_only: unreadOnly },
+  );
   return NextResponse.json({
     account: tok.account_email,
     count: items.length,

@@ -8,11 +8,13 @@
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { toolUpstreamError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
+  const tracer = startToolTrace({ toolName: "system_health", req });
   try {
     // Appel interne — on accepte les redirects et bypass NextAuth via header
     // spécial. Note : /api/system/health est public côté NextAuth (utilisé
@@ -21,6 +23,12 @@ export async function GET(req: Request) {
       cache: "no-store",
     });
     if (!r.ok) {
+      tracer.failure({
+        errorCode: "health_check_failed",
+        retryable: true,
+        httpStatus: 502,
+        metadata: { upstream_status: r.status },
+      });
       return toolUpstreamError({
         error: "health_check_failed",
         hint: "Le service /api/system/health a retourné une erreur. Réessayable.",
@@ -28,8 +36,17 @@ export async function GET(req: Request) {
       });
     }
     const data = await r.json();
+    tracer.success(
+      { status: data?.status, services_count: Array.isArray(data?.services) ? data.services.length : undefined },
+    );
     return NextResponse.json(data);
   } catch (e) {
+    tracer.failure({
+      errorCode: "health_check_failed",
+      retryable: true,
+      httpStatus: 502,
+      metadata: { reason: "network" },
+    });
     return toolUpstreamError({
       error: "health_check_failed",
       hint: "Échec réseau lors du health check interne. Réessayable.",

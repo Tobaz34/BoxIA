@@ -20,6 +20,7 @@ import {
   toolUpstreamError,
   toolConfigError,
 } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,10 @@ interface SearxngResult {
 export async function POST(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "web_search", req });
+
   if (!SEARXNG_URL) {
+    tracer.failure({ errorCode: "search_disabled", retryable: false, httpStatus: 503 });
     return toolConfigError(
       "search_disabled",
       "SEARXNG_URL not configured (déploie services/search/docker-compose.yml puis ajoute SEARXNG_URL=http://127.0.0.1:8888 dans .env)",
@@ -57,10 +61,12 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as PostBody;
   } catch {
+    tracer.failure({ errorCode: "bad_json", retryable: false, httpStatus: 400 });
     return toolValidationError("bad_json", "Body JSON invalide");
   }
   const query = typeof body.query === "string" ? body.query.trim() : "";
   if (!query || query.length < 2) {
+    tracer.failure({ errorCode: "missing_or_short_query", retryable: false, httpStatus: 400 });
     return toolValidationError(
       "missing_or_short_query",
       "Champ 'query' requis (min 2 caractères)",
@@ -98,6 +104,12 @@ export async function POST(req: Request) {
     clearTimeout(timer);
     if (!r.ok) {
       const text = await r.text().catch(() => "");
+      tracer.failure({
+        errorCode: "searxng_upstream_error",
+        retryable: true,
+        httpStatus: 502,
+        metadata: { upstream_status: r.status },
+      });
       return toolUpstreamError({
         error: "searxng_upstream_error",
         hint: "SearXNG a retourné une erreur. Réessaye dans quelques secondes.",
@@ -129,6 +141,10 @@ export async function POST(req: Request) {
       null,
     );
 
+    tracer.success(
+      { count: results.length },
+      { query: query.slice(0, 200), lang, max_results: maxResults },
+    );
     return NextResponse.json({
       ok: true,
       query,
@@ -140,6 +156,12 @@ export async function POST(req: Request) {
         : `Top ${results.length} résultats. Cite les URLs dans ta réponse.`,
     });
   } catch (e: unknown) {
+    tracer.failure({
+      errorCode: "search_failed",
+      retryable: true,
+      httpStatus: 502,
+      metadata: { reason: "network" },
+    });
     return toolUpstreamError({
       error: "search_failed",
       hint: "Échec réseau lors de l'appel à SearXNG (timeout/abort/DNS). Réessayable.",

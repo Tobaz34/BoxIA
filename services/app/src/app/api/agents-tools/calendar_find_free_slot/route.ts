@@ -15,6 +15,7 @@ import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { getToolToken } from "@/lib/connector-tool-helpers";
 import { toolError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,8 @@ function parseHours(s: string): [number, number] {
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "calendar_find_free_slot", req });
+
   const url = new URL(req.url);
   const duration = Math.max(15, Math.min(480, Number(url.searchParams.get("duration") ?? 60)));
   const days = Math.max(1, Math.min(30, Number(url.searchParams.get("within_days") ?? 7)));
@@ -97,6 +100,12 @@ export async function GET(req: Request) {
   }
 
   if (sources.length === 0) {
+    tracer.failure({
+      errorCode: "no_calendar_connected",
+      retryable: false,
+      httpStatus: 404,
+      metadata: { errors_count: errors.length },
+    });
     return toolError({
       error: "no_calendar_connected",
       hint: "Connectez Google Calendar ou Outlook Calendar dans /connectors.",
@@ -158,6 +167,13 @@ export async function GET(req: Request) {
     }
   }
 
+  tracer.success(
+    {
+      free_slots_count: slots.length,
+      providers: sources.map((s) => s.provider),
+    },
+    { duration, days, working_hours: `${hStart}-${hEnd}` },
+  );
   return NextResponse.json({
     duration_minutes: duration,
     within_days: days,

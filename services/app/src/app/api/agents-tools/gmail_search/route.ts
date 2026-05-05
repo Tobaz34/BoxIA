@@ -13,21 +13,31 @@ import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { getToolToken } from "@/lib/connector-tool-helpers";
 import { toolError, toolValidationError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "gmail_search", req });
+
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") || "").trim();
   if (!q) {
+    tracer.failure({ errorCode: "missing_q", retryable: false, httpStatus: 400 });
     return toolValidationError("missing_q", "Paramètre `q` requis");
   }
   const max = Math.min(50, Math.max(1, Number(url.searchParams.get("max") ?? 20)));
 
   const tok = await getToolToken("google", "gmail");
   if (!tok.ok) {
+    tracer.failure({
+      errorCode: tok.body.error,
+      retryable: false,
+      httpStatus: tok.status,
+      metadata: { stage: "get_tool_token" },
+    });
     return toolError({
       error: tok.body.error,
       hint: tok.body.hint || "Connecteur Google non disponible.",
@@ -43,6 +53,12 @@ export async function GET(req: Request) {
   if (!listR.ok) {
     const detail = (await listR.text().catch(() => "")).slice(0, 200);
     const retryable = listR.status === 429 || listR.status === 408 || listR.status >= 500;
+    tracer.failure({
+      errorCode: `gmail_search_${listR.status}`,
+      retryable,
+      httpStatus: retryable ? 502 : listR.status,
+      metadata: { upstream_status: listR.status },
+    });
     return toolError({
       error: `gmail_search_${listR.status}`,
       hint: retryable
@@ -77,6 +93,13 @@ export async function GET(req: Request) {
     }),
   );
 
+  tracer.success(
+    {
+      count: items.length,
+      total_estimated: listJ.resultSizeEstimate,
+    },
+    { account: tok.account_email, max },
+  );
   return NextResponse.json({
     account: tok.account_email,
     query: q,

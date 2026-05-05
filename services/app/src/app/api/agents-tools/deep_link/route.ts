@@ -10,6 +10,7 @@
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
@@ -27,10 +28,15 @@ const TARGETS: Record<string, { url: string; description: string }> = {
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
+  const tracer = startToolTrace({ toolName: "deep_link", req });
   const url = new URL(req.url);
   const target = url.searchParams.get("target") || "";
 
   if (target && TARGETS[target]) {
+    tracer.success(
+      { target, url: TARGETS[target].url },
+      { matched: true },
+    );
     return NextResponse.json({
       target,
       url: TARGETS[target].url,
@@ -40,6 +46,10 @@ export async function GET(req: Request) {
   }
 
   // Pas de target spécifié → retourne la liste
+  tracer.success(
+    { available_count: Object.keys(TARGETS).length },
+    { matched: false },
+  );
   return NextResponse.json({
     available_targets: Object.entries(TARGETS).map(([slug, info]) => ({
       slug,

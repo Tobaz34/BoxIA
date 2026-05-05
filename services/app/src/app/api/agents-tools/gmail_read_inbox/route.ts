@@ -16,11 +16,14 @@ import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { getToolToken } from "@/lib/connector-tool-helpers";
 import { toolError } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
+
+  const tracer = startToolTrace({ toolName: "gmail_read_inbox", req });
 
   const url = new URL(req.url);
   const max = Math.min(50, Math.max(1, Number(url.searchParams.get("max") ?? 20)));
@@ -28,6 +31,12 @@ export async function GET(req: Request) {
 
   const tok = await getToolToken("google", "gmail");
   if (!tok.ok) {
+    tracer.failure({
+      errorCode: tok.body.error,
+      retryable: false,
+      httpStatus: tok.status,
+      metadata: { stage: "get_tool_token" },
+    });
     return toolError({
       error: tok.body.error,
       hint: tok.body.hint || "Connecteur Google non disponible.",
@@ -45,6 +54,12 @@ export async function GET(req: Request) {
   if (!listR.ok) {
     const detail = (await listR.text().catch(() => "")).slice(0, 200);
     const retryable = listR.status === 429 || listR.status === 408 || listR.status >= 500;
+    tracer.failure({
+      errorCode: `gmail_list_${listR.status}`,
+      retryable,
+      httpStatus: retryable ? 502 : listR.status,
+      metadata: { upstream_status: listR.status },
+    });
     return toolError({
       error: `gmail_list_${listR.status}`,
       hint: retryable
@@ -58,6 +73,10 @@ export async function GET(req: Request) {
   const listJ = await listR.json();
   const messages = (listJ.messages || []) as { id: string; threadId: string }[];
   if (messages.length === 0) {
+    tracer.success(
+      { count: 0 },
+      { account: tok.account_email, unread_only: unreadOnly, empty: true },
+    );
     return NextResponse.json({
       account: tok.account_email,
       count: 0,
@@ -101,6 +120,10 @@ export async function GET(req: Request) {
     }),
   );
 
+  tracer.success(
+    { count: items.length },
+    { account: tok.account_email, max, unread_only: unreadOnly },
+  );
   return NextResponse.json({
     account: tok.account_email,
     count: items.length,

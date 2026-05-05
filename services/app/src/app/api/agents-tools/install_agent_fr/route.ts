@@ -22,26 +22,37 @@ import {
   toolValidationError,
   toolUpstreamError,
 } from "@/lib/tool-errors";
+import { startToolTrace } from "@/lib/langfuse";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
+  const tracer = startToolTrace({ toolName: "install_agent_fr", req });
+
   let body: { slug?: unknown; approval_token?: unknown };
   try {
     body = (await req.json()) as { slug?: unknown; approval_token?: unknown };
   } catch {
+    tracer.failure({ errorCode: "bad_json", retryable: false, httpStatus: 400 });
     return toolValidationError("bad_json", "Body JSON invalide");
   }
   const slug = typeof body.slug === "string" ? body.slug : "";
   if (!slug) {
+    tracer.failure({ errorCode: "missing_slug", retryable: false, httpStatus: 400 });
     return toolValidationError("missing_slug", "Champ 'slug' requis");
   }
 
   const catalog = await readBoxiaFrCatalog().catch(() => null);
   const tpl = catalog?.templates.find((t) => t.slug === slug);
   if (!tpl) {
+    tracer.failure({
+      errorCode: "not_in_catalog",
+      retryable: false,
+      httpStatus: 404,
+      metadata: { slug },
+    });
     return toolError({
       error: "not_in_catalog",
       hint: `Le template '${slug}' n'existe pas dans le catalogue BoxIA-FR.`,
@@ -59,7 +70,14 @@ export async function POST(req: Request) {
     params: { slug },
     caller_actor: "concierge-agent",
   });
-  if (!gate.go) return gate.response;
+  if (!gate.go) {
+    tracer.failure({
+      errorCode: "approval_pending_or_denied",
+      retryable: false,
+      metadata: { stage: "approval_gate", slug },
+    });
+    return gate.response;
+  }
   const approvedSlug = gate.params.slug;
 
   try {
@@ -88,6 +106,10 @@ export async function POST(req: Request) {
       null,
     );
 
+    tracer.success(
+      { app_id: installed.app_id, name: installed.name, slug: persisted.slug },
+      { boxia_fr_slug: approvedSlug, via: "approval-gate" },
+    );
     return NextResponse.json({
       ok: true,
       app_id: installed.app_id,
@@ -96,6 +118,12 @@ export async function POST(req: Request) {
       next_action_url: `/?agent=${persisted.slug}`,
     });
   } catch (e) {
+    tracer.failure({
+      errorCode: "install_failed",
+      retryable: true,
+      httpStatus: 502,
+      metadata: { slug: approvedSlug },
+    });
     return toolUpstreamError({
       error: "install_failed",
       hint: "L'installation du template a échoué (Dify upstream). Réessayable.",
