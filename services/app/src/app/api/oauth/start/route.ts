@@ -38,6 +38,12 @@ export async function GET(req: Request) {
   const provider = url.searchParams.get("provider");
   const connectorSlug = url.searchParams.get("connector_slug");
   const narrow = url.searchParams.get("narrow") === "1";
+  // ?prompt=select_account → bouton « Ajouter un autre compte »
+  const promptParam = url.searchParams.get("prompt");
+  const promptMode: "select_account" | "consent" | undefined =
+    promptParam === "select_account" ? "select_account"
+    : promptParam === "consent" ? "consent"
+    : undefined;
   if (!provider || !connectorSlug) {
     return NextResponse.json({ error: "missing_params" }, { status: 400 });
   }
@@ -52,6 +58,7 @@ export async function GET(req: Request) {
       connectorSlug,
       session.user.email,
       broadScopes,
+      promptMode,
     );
     await logAction("settings.update", `oauth_oidc_started:${provider}:${connectorSlug}`, {
       actor: session.user.email,

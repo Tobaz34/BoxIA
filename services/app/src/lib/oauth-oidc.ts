@@ -84,6 +84,15 @@ export function startOIDC(
   connectorSlug: string,
   initiatedBy?: string,
   extraScopes?: string[],
+  /**
+   * "select_account" → force le provider à afficher le sélecteur de
+   *   compte même si l'utilisateur a une session active. Indispensable
+   *   pour le bouton « Ajouter un autre compte ».
+   * "consent" → re-demande explicitement le consent (utile pour Google
+   *   quand on veut être sûr d'obtenir un refresh_token).
+   * "none" → laisse le provider décider (default).
+   */
+  promptMode?: "select_account" | "consent" | "none",
 ): StartOIDCResult {
   const provider = OAUTH_PROVIDERS[providerId];
   if (!provider) throw new Error(`unknown_provider:${providerId}`);
@@ -113,7 +122,13 @@ export function startOIDC(
   if (provider.requires_offline_access) {
     params.set("access_type", "offline");
   }
-  if (provider.requires_consent_prompt) {
+  // Choix du `prompt` :
+  //   - select_account explicit (override par l'appelant) → toujours
+  //   - sinon, requires_consent_prompt (Google) → consent
+  //   - sinon rien (= "none" implicite, provider décide)
+  if (promptMode === "select_account") {
+    params.set("prompt", "select_account");
+  } else if (promptMode === "consent" || provider.requires_consent_prompt) {
     params.set("prompt", "consent");
   }
 
@@ -201,7 +216,12 @@ export async function handleOIDCCallback(
   const refreshToken = data.refresh_token as string | undefined;
   const expiresIn = (data.expires_in as number) || 3600;
 
-  // Récupère email + name
+  // Récupère email + name — important pour :
+  //   - afficher "Connecté avec X" dans l'UI
+  //   - regrouper les sibling-slugs sous le même account_email
+  //   - le check "écraser un autre account ?" du broadcast sibling
+  // Si userinfo échoue silencieusement on log une erreur explicite (visible
+  // dans `docker logs aibox-app`) au lieu de juste laisser un null.
   let accountEmail: string | undefined;
   let accountName: string | undefined;
   if (provider.userinfo_endpoint) {
@@ -209,12 +229,28 @@ export async function handleOIDCCallback(
       const ui = await fetch(provider.userinfo_endpoint, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (ui.ok) {
+      if (!ui.ok) {
+        const txt = await ui.text().catch(() => "");
+        console.error(
+          `[oauth-oidc] userinfo fetch failed for ${pending.provider_id}: ` +
+          `HTTP ${ui.status} — ${txt.slice(0, 200)}`,
+        );
+      } else {
         const uj = await ui.json();
+        // Microsoft Graph /me : `mail` (souvent null pour comptes perso) ou
+        // `userPrincipalName` (toujours présent). Google : `email`.
         accountEmail = uj.email || uj.mail || uj.userPrincipalName;
         accountName = uj.name || uj.displayName;
+        if (!accountEmail) {
+          console.warn(
+            `[oauth-oidc] userinfo OK mais aucun email pour ${pending.provider_id} — ` +
+            `payload keys: ${Object.keys(uj).join(",")}`,
+          );
+        }
       }
-    } catch { /* tolère */ }
+    } catch (e) {
+      console.error(`[oauth-oidc] userinfo throw for ${pending.provider_id}:`, e);
+    }
   }
 
   const id = `${pending.provider_id}:${pending.connector_slug}`;

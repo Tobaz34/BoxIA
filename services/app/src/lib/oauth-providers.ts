@@ -100,26 +100,30 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
     client_id: process.env.MICROSOFT_OAUTH_CLIENT_ID,
     // Public client → pas de secret côté Azure AD si "Allow public client flows" activé
     client_secret: process.env.MICROSOFT_OAUTH_CLIENT_SECRET,
-    default_scopes: ["openid", "email", "profile", "offline_access"],
+    // User.Read est requis pour /v1.0/me (userinfo) — sans ça l'email
+    // du compte n'est jamais renseigné, et l'UI affiche juste "Connecté"
+    // sans préciser quel compte. Vérifié 2026-05-04 : 5 connexions
+    // existantes sans account_email à cause de cet oubli.
+    default_scopes: ["openid", "email", "profile", "offline_access", "User.Read"],
     connector_scopes: {
       "onedrive": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Files.Read", "Files.Read.All",
       ],
       "outlook-graph": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Mail.Read",
       ],
       "outlook-calendar": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Calendars.Read",
       ],
       "sharepoint": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Sites.Read.All",
       ],
       "microsoft-teams": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Channel.ReadBasic.All", "ChannelMessage.Read.All",
       ],
     },
@@ -132,6 +136,55 @@ export function providerForAuthMethod(authMethod: string | undefined): OAuthProv
   if (authMethod === "google_oauth") return "google";
   if (authMethod === "azure_ad") return "microsoft";
   return null;
+}
+
+/**
+ * Convertit un scope OAuth verbeux ("Files.Read", "https://www.googleapis
+ * .com/auth/drive.readonly") en label humain pour l'UI ("OneDrive — lecture").
+ *
+ * Renvoie `null` pour les scopes "infrastructure" (openid, email, profile,
+ * offline_access, User.Read) qui n'apportent pas d'info à l'utilisateur.
+ */
+export function humanizeScope(scope: string): string | null {
+  // Infrastructure → on les masque
+  if (
+    scope === "openid" || scope === "email" || scope === "profile" ||
+    scope === "offline_access" || scope === "User.Read"
+  ) return null;
+
+  // Google
+  if (scope === "https://www.googleapis.com/auth/drive.readonly") return "Google Drive — lecture";
+  if (scope === "https://www.googleapis.com/auth/gmail.readonly") return "Gmail — lecture";
+  if (scope === "https://www.googleapis.com/auth/calendar.readonly") return "Google Calendar — lecture";
+  if (scope === "https://www.googleapis.com/auth/contacts.readonly") return "Contacts — lecture";
+
+  // Microsoft Graph
+  if (scope === "Files.Read" || scope === "Files.Read.All") return "OneDrive / Drive — lecture";
+  if (scope === "Mail.Read") return "Outlook Mail — lecture";
+  if (scope === "Calendars.Read") return "Outlook Calendar — lecture";
+  if (scope === "Sites.Read.All") return "SharePoint — lecture";
+  if (scope.startsWith("Channel")) return "Teams — lecture canaux";
+  if (scope.startsWith("ChannelMessage")) return "Teams — lecture messages";
+
+  // Inconnu : on retourne tel quel pour ne pas tromper l'utilisateur
+  return scope;
+}
+
+/**
+ * Liste de scopes → liste de labels humains, sans doublons, sans nulls.
+ * Utilisée par l'UI pour afficher "Ce compte donne accès à : OneDrive…"
+ */
+export function humanizeScopes(scopes: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of scopes) {
+    const h = humanizeScope(s);
+    if (h && !seen.has(h)) {
+      seen.add(h);
+      out.push(h);
+    }
+  }
+  return out;
 }
 
 /**
