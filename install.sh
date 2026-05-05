@@ -70,11 +70,19 @@ gen_secret() {
 gen_strong_pass() {
   local len="${1:-24}"
   if [[ $len -lt 8 ]]; then len=8; fi
-  local fixed="Aa1!"  # garantit les 4 classes
+  # Préfixe garantit les 4 classes : majuscule, minuscule, chiffre, spécial.
+  # On évite le '!' (history expansion bash interactif). On utilise '#' qui
+  # est safe dans tous les contextes shell + accepté par toutes les policies.
+  local fixed="Aa1#"
   local rest_len=$((len - 4))
   local rest
-  # Idem gen_secret : subshell pour isoler la désactivation de pipefail.
-  rest=$( set +o pipefail; tr -dc 'A-Za-z0-9!#$%*+-=?@_' </dev/urandom | head -c "$rest_len" )
+  # CRITIQUE — Pool tr : éviter les plages accidentelles. Dans 'A-Za-z0-9...',
+  # le `-` est interprété comme plage entre 2 chars. La version précédente
+  # avait '+-=' qui était une plage de + (43) à = (61), incluant `<`, `;`,
+  # `:`, `/`, `,` etc. — TOUS dangereux dans un .env (cassent le source).
+  # Fix : ne mettre que des chars individuels. `-` doit être en première
+  # ou DERNIÈRE position de la string pour être literal.
+  rest=$( set +o pipefail; tr -dc 'A-Za-z0-9_.@#%' </dev/urandom | head -c "$rest_len" )
   ( set +o pipefail; echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n' )
 }
 
