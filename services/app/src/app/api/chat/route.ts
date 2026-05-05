@@ -26,6 +26,7 @@ import {
   updateTrace,
 } from "@/lib/langfuse";
 import { stripThinkFromSSE } from "@/lib/strip-think";
+import { redactSecretsFromSSE } from "@/lib/secrets-redact";
 import { wrapStreamWithFileDetector } from "@/lib/chat-stream-files";
 import { wrapStreamWithCloudFallbackHint } from "@/lib/local-failure-detect";
 
@@ -110,13 +111,19 @@ export async function POST(req: NextRequest) {
   // activé par défaut, le `/no_think` dans le pre_prompt est ignoré
   // par Ollama). Defense-in-depth : même si un agent n'a pas /no_think,
   // l'utilisateur ne verra jamais le raisonnement intermédiaire.
+  // P2 #11 — stripper renforcé (depth counter, multi-tags think/thinking/
+  // internal_reasoning/reasoning/reflection/scratchpad).
   const stripped = stripThinkFromSSE(result.body);
+  // P2 #13 — redact les secrets (clés API, JWT, PEM, password=...) que
+  // le LLM aurait pu régurgiter depuis un email RAG ou un .env exposé.
+  // Patterns dans lib/secrets-redact.ts. Defense-in-depth après strip-think.
+  const redacted = redactSecretsFromSSE(stripped);
   // BUG-006 wire — détecte les blocs [FILE:nom.ext]…[/FILE] que l'agent
   // peut émettre, génère le DOCX/XLSX/PDF/PS1/etc côté serveur, stocke
   // dans /data/generated/UUID, et remplace le bloc par un marker
   // `{{file:UUID:nom:size:mime}}` que MessageMarkdown.tsx rend en chip
-  // download cliquable. Patch additif (chain post strip-think).
-  const fileDetected = wrapStreamWithFileDetector(stripped, {
+  // download cliquable. Patch additif (chain post strip-think + redact).
+  const fileDetected = wrapStreamWithFileDetector(redacted, {
     user: ctx.user,
     outputDir: "/data/generated",
     conversationId: body.conversation_id || undefined,
