@@ -180,13 +180,23 @@ scp -q "$LOCAL_TMP" "$SSH_TARGET:$REMOTE_TMP"
 ssh -t "$SSH_TARGET" "
   set -euo pipefail
   if [[ \$(id -u) -eq 0 ]]; then SUDO=''; else SUDO='sudo'; fi
-  # Mode 755 sur le dossier (pas 700) pour permettre aux non-root de
-  # détecter l'existence du fichier via [[ -f cloudflare.env ]] (qui a besoin
-  # de traverse + read sur le dossier parent). Le fichier lui-même reste 600
-  # root:root → contenu inaccessible aux non-root. Niveau sécurité :
-  # exposer le NOM "cloudflare.env" n'est pas un secret.
+  # Mode 755 sur le dossier : permet aux non-root de détecter l'existence
+  # du fichier via [[ -f cloudflare.env ]] (test -f a besoin de traverse
+  # sur le dossier parent).
   \$SUDO install -d -m 755 -o root -g root /etc/aibox-master
-  \$SUDO install -m 600 -o root -g root \"$REMOTE_TMP\" /etc/aibox-master/cloudflare.env
+  # Mode 640 root:docker : docker-compose CLIENT (qui tourne en clikinfo,
+  # membre du group docker) peut lire le fichier quand il parse env_file:
+  # dans services/setup/docker-compose.yml. Sans ça :
+  #   open /etc/aibox-master/cloudflare.env: permission denied
+  # au démarrage du wizard. Le contenu reste protégé : seuls root et les
+  # membres du group docker peuvent lire, pas les autres users de la box.
+  # Si le group 'docker' n'existe pas (rare), fallback sur root:root 600
+  # (ne marchera que si docker-compose tourne en root → install.sh sudo).
+  if getent group docker >/dev/null 2>&1; then
+    \$SUDO install -m 640 -o root -g docker \"$REMOTE_TMP\" /etc/aibox-master/cloudflare.env
+  else
+    \$SUDO install -m 600 -o root -g root \"$REMOTE_TMP\" /etc/aibox-master/cloudflare.env
+  fi
   rm -f \"$REMOTE_TMP\"
   echo ''
   echo '  ✓ Récap fichier :'

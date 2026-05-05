@@ -327,8 +327,7 @@ provision_master_creds() {
     SUDO="sudo"
   fi
 
-  # Mode 755 (pas 700) pour permettre aux non-root de détecter l'existence
-  # du fichier (test -f). Le contenu reste protégé par le 600 du fichier.
+  # Mode 755 dossier : permet aux non-root de faire test -f cloudflare.env
   $SUDO install -d -m 755 -o root -g root /etc/aibox-master
 
   # Atomic write via fichier temporaire + rename, comme ça pas de fenêtre
@@ -345,7 +344,14 @@ CF_DEFAULT_API_TOKEN=$cf_token
 CF_DEFAULT_ZONE_ID=$cf_zone
 CF_DEFAULT_ROOT_DOMAIN=$cf_root
 EOF
-  $SUDO install -m 600 -o root -g root "$tmpfile" /etc/aibox-master/cloudflare.env
+  # Mode 640 root:docker pour que docker-compose CLIENT puisse lire le
+  # fichier (cf. provision-master-creds.sh pour le détail). Fallback 600
+  # root:root si le group docker n'existe pas.
+  if getent group docker >/dev/null 2>&1; then
+    $SUDO install -m 640 -o root -g docker "$tmpfile" /etc/aibox-master/cloudflare.env
+  else
+    $SUDO install -m 600 -o root -g root "$tmpfile" /etc/aibox-master/cloudflare.env
+  fi
   rm -f "$tmpfile"
 
   c_green "  ✓ Master Cloudflare credentials écrits (root:root 600, $(echo "$cf_token" | wc -c | awk '{print $1-1}') chars token)"
@@ -721,11 +727,17 @@ deploy_stack
 # ex: par Nextcloud sur xefia → SETUP_PORT=8080).
 if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
   hr
-  c_blue "  → Démarrage du wizard de setup (services/setup)..."
-  ( cd services/setup && \
-    SETUP_PORT="${SETUP_PORT:-80}" docker compose --env-file ../../.env up -d ) || \
-    c_yellow "  ⚠ Le démarrage du wizard a échoué (port ${SETUP_PORT:-80} occupé ?). Vérifie : docker logs aibox-setup-caddy"
-  c_green "    ✓ Wizard accessible sur http://<box>:${SETUP_PORT:-80}"
+  c_blue "  → Démarrage du wizard de setup (services/setup) sur :${SETUP_PORT:-80}..."
+  if ( cd services/setup && SETUP_PORT="${SETUP_PORT:-80}" \
+       docker compose --env-file ../../.env up -d ); then
+    c_green "    ✓ Wizard accessible sur http://<box>:${SETUP_PORT:-80}"
+    BOOTSTRAP_WIZARD_URL="http://<box>:${SETUP_PORT:-80}"
+  else
+    c_yellow "    ⚠ Le wizard n'a pas démarré (port ${SETUP_PORT:-80} occupé ?)."
+    c_yellow "      Logs    : docker logs aibox-setup-caddy"
+    c_yellow "      Retry   : SETUP_PORT=<autre> ./install.sh"
+    BOOTSTRAP_WIZARD_URL=""
+  fi
 fi
 
 hr

@@ -38,6 +38,28 @@ STATE_FILE = Path(os.environ.get("STATE_FILE", "/state/configured"))
 QUESTIONNAIRE_FULL_PATH = AIBOX_ROOT / "config" / "questionnaire.yaml"
 QUESTIONNAIRE_ESSENTIALS_PATH = AIBOX_ROOT / "config" / "questionnaire-essentials.yaml"
 
+# ---- Cloudflare master credentials — chargés depuis volume mount ----------
+# Le compose monte /etc/aibox-master:/etc/aibox-master:ro (au lieu d'utiliser
+# env_file: qui fail si docker-compose CLIENT n'a pas la permission de lire
+# le fichier 600 root). Le container tourne en root → peut lire le fichier
+# même en mode strict 600 root:root. On populate les env vars manuellement
+# au boot pour que le reste du code (qui lit os.environ.get("CF_DEFAULT_*"))
+# fonctionne sans changement.
+_CF_MASTER_PATH = Path("/etc/aibox-master/cloudflare.env")
+if _CF_MASTER_PATH.is_file():
+    try:
+        for _line in _CF_MASTER_PATH.read_text().splitlines():
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            # setdefault → ne PAS écraser une var déjà présente dans l'env
+            # (cas dev où on veut overrider via -e CF_DEFAULT_*=... au run).
+            os.environ.setdefault(_k.strip(), _v.strip())
+        print(f"[setup-api] Loaded {_CF_MASTER_PATH} (master CF creds detected)")
+    except Exception as _e:
+        print(f"[setup-api] Failed to load {_CF_MASTER_PATH}: {_e}")
+
 # Mot de passe par défaut livré avec la box. Le wizard ne demande PAS au
 # client de saisir un mot de passe (évite les fautes de frappe lors de
 # l'install). Le client doit le changer à sa 1re connexion ; un flag
