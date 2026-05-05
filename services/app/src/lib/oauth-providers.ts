@@ -133,3 +133,34 @@ export function providerForAuthMethod(authMethod: string | undefined): OAuthProv
   if (authMethod === "azure_ad") return "microsoft";
   return null;
 }
+
+/**
+ * Slugs frères qui partagent le même compte OAuth chez un provider.
+ * Ex: connecter Google Drive autorise aussi Gmail + Calendar avec le
+ * même token (si l'utilisateur consent aux scopes union).
+ *
+ * Source : keys de `connector_scopes` du provider.
+ */
+export function siblingSlugs(providerId: OAuthProviderId): string[] {
+  const p = OAUTH_PROVIDERS[providerId];
+  return Object.keys(p.connector_scopes || {});
+}
+
+/**
+ * Union de tous les scopes des connecteurs frères chez un provider.
+ * Permet de demander en 1 seul consent l'accès à Drive+Gmail+Calendar
+ * (Google) ou OneDrive+Outlook+Calendar+SharePoint+Teams (Microsoft).
+ *
+ * Utilisé par /api/oauth/start avec ?broad=1 pour activer le mode
+ * "1 connexion couvre tous les connecteurs du provider".
+ *
+ * Inclut toujours les `default_scopes` (openid/email/profile/offline_access).
+ */
+export function unionConnectorScopes(providerId: OAuthProviderId): string[] {
+  const p = OAUTH_PROVIDERS[providerId];
+  const all = new Set<string>(p.default_scopes);
+  for (const scopes of Object.values(p.connector_scopes || {})) {
+    for (const s of scopes) all.add(s);
+  }
+  return Array.from(all);
+}

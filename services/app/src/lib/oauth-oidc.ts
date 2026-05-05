@@ -218,22 +218,80 @@ export async function handleOIDCCallback(
   }
 
   const id = `${pending.provider_id}:${pending.connector_slug}`;
+  const accessTokenEncrypted = encryptToken(accessToken);
+  const refreshTokenEncrypted = refreshToken ? encryptToken(refreshToken) : undefined;
+  const expiresAt = Date.now() + expiresIn * 1000;
+
   const conn: OAuthConnection = {
     id,
     provider_id: pending.provider_id,
     connector_slug: pending.connector_slug,
     scopes: pending.scopes,
-    access_token_encrypted: encryptToken(accessToken),
-    refresh_token_encrypted: refreshToken ? encryptToken(refreshToken) : undefined,
-    expires_at: Date.now() + expiresIn * 1000,
+    access_token_encrypted: accessTokenEncrypted,
+    refresh_token_encrypted: refreshTokenEncrypted,
+    expires_at: expiresAt,
     account_email: accountEmail,
     account_name: accountName,
     connected_at: Date.now(),
     connected_by: pending.initiated_by,
     last_refreshed_at: Date.now(),
   };
+
   const s = await _readStore();
   s.connections[id] = conn;
+
+  // ---- Account-sharing : si le token couvre les scopes des slugs
+  // frères (ex Google Drive + Gmail + Calendar), on auto-crée des
+  // entrées pour eux. L'admin n'a pas besoin de re-cliquer "Connecter
+  // avec Google" sur chaque connecteur. Cf siblingSlugs() dans
+  // oauth-providers.ts.
+  //
+  // Règles :
+  //   - On ne broadcast QUE si on a effectivement reçu les scopes
+  //     requis par le sibling (cas du mode broad=1 de /api/oauth/start).
+  //   - On n'écrase PAS une entrée sibling existante avec un account
+  //     DIFFÉRENT (l'admin a peut-être un compte perso pour Drive et un
+  //     compte pro pour Gmail — on respecte ça).
+  try {
+    const { siblingSlugs } = await import("./oauth-providers");
+    const grantedScopes = String(data.scope || "").split(/\s+/).filter(Boolean);
+    const haveScopes = new Set([...pending.scopes, ...grantedScopes]);
+    const siblings = siblingSlugs(pending.provider_id);
+    const { OAUTH_PROVIDERS } = await import("./oauth-providers");
+    const provider = OAUTH_PROVIDERS[pending.provider_id];
+
+    for (const sib of siblings) {
+      if (sib === pending.connector_slug) continue;
+      const sibId = `${pending.provider_id}:${sib}`;
+      const existing = s.connections[sibId];
+      if (existing && existing.account_email && accountEmail
+          && existing.account_email !== accountEmail) {
+        // Compte différent → on ne touche pas
+        continue;
+      }
+      // Le sibling exige-t-il des scopes qu'on a effectivement reçus ?
+      const requiredSibScopes = provider.connector_scopes?.[sib] || [];
+      const haveAll = requiredSibScopes.every((sc) => haveScopes.has(sc));
+      if (!haveAll) continue;
+      s.connections[sibId] = {
+        id: sibId,
+        provider_id: pending.provider_id,
+        connector_slug: sib,
+        scopes: requiredSibScopes,
+        access_token_encrypted: accessTokenEncrypted,
+        refresh_token_encrypted: refreshTokenEncrypted,
+        expires_at: expiresAt,
+        account_email: accountEmail,
+        account_name: accountName,
+        connected_at: existing?.connected_at || Date.now(),
+        connected_by: pending.initiated_by,
+        last_refreshed_at: Date.now(),
+      };
+    }
+  } catch {
+    // best-effort, on ne bloque pas la connexion principale
+  }
+
   await _writeStore(s);
   return { ok: true, connection: conn };
 }

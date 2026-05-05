@@ -337,8 +337,13 @@ export function OAuthConnectButton({
   }
 
   // État initial : bouton OIDC (primaire) + lien Device Flow (fallback)
+  // Sibling-account hint : si un autre slug du même provider est déjà
+  // connecté (ex: l'admin a connecté Drive, et il ouvre maintenant la
+  // modale Gmail), on lui dit "votre compte X est déjà connecté pour
+  // ce provider — réutilisez-le ?"
   return (
     <div className="space-y-2">
+      <SiblingAccountHint provider={provider} connectorSlug={connectorSlug} />
       <button
         onClick={handleConnectOIDC}
         disabled={!providerInfo || oidcInProgress}
@@ -351,6 +356,10 @@ export function OAuthConnectButton({
           ? "Autorisation en cours…"
           : `Connecter avec ${providerInfo?.name || provider}`}
       </button>
+      <p className="text-[10px] text-muted">
+        Une seule connexion {providerInfo?.name || provider} couvre tous les services compatibles
+        {provider === "google" ? " (Drive, Gmail, Calendar)" : provider === "microsoft" ? " (OneDrive, Outlook, Calendar, SharePoint, Teams)" : ""}.
+      </p>
       <div className="flex items-center justify-end">
         <button
           onClick={handleConnectDevice}
@@ -366,6 +375,81 @@ export function OAuthConnectButton({
           <AlertTriangle size={11} className="mt-0.5 shrink-0" /> {oauthError}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Si une connexion OAuth existe pour le même provider mais un AUTRE
+ * connector_slug, on l'affiche en hint + propose un bouton "Activer ici
+ * aussi" qui copie le token vers le slug courant. Compatible avec les
+ * connexions créées avant le broadcast automatique du callback.
+ */
+function SiblingAccountHint({
+  provider, connectorSlug,
+}: { provider: ProviderId; connectorSlug: string }) {
+  const [sibling, setSibling] = useState<Connection | null>(null);
+  const [adopting, setAdopting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch("/api/oauth/connections", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        const conns = (j.connections as Connection[]) || [];
+        const sameProvider = conns.find(
+          (c) => c.provider_id === provider && c.connector_slug !== connectorSlug,
+        );
+        if (!cancelled) setSibling(sameProvider || null);
+      } catch { /* tolère */ }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [provider, connectorSlug]);
+
+  if (!sibling) return null;
+
+  async function adopt() {
+    if (!sibling) return;
+    setAdopting(true);
+    try {
+      // POST sur /api/oauth/connections/adopt (créé en parallèle)
+      await fetch("/api/oauth/connections/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_id: sibling.id,
+          target_slug: connectorSlug,
+        }),
+      });
+      // Recharger l'état parent (refresh via reload — robuste, simple)
+      window.location.reload();
+    } catch {
+      setAdopting(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-xs">
+      <div className="flex items-center gap-1.5 mb-1">
+        <CheckCircle2 size={12} className="text-blue-400" />
+        <span className="font-medium text-blue-300">
+          Compte déjà connecté{sibling.account_email ? ` (${sibling.account_email})` : ""}
+        </span>
+      </div>
+      <div className="text-muted text-[11px] mb-2">
+        Vous l'utilisez déjà pour <code className="text-foreground">{sibling.connector_slug}</code>.
+        Activer ici sans nouveau consent ?
+      </div>
+      <button
+        onClick={adopt}
+        disabled={adopting}
+        className="text-[11px] px-2 py-1 rounded bg-blue-500/15 hover:bg-blue-500/25 text-blue-200 disabled:opacity-50"
+      >
+        {adopting ? "…" : "Réutiliser ce compte"}
+      </button>
     </div>
   );
 }
