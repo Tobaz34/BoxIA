@@ -13,7 +13,7 @@
  * à la place du bloc dans le `answer` retourné au client.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { requireDifyContext, difyFetch, DIFY_BASE_URL } from "@/lib/dify";
+import { requireDifyContext, difyFetch, difyChatStream } from "@/lib/dify";
 import {
   addUserMemory,
   formatMemoryContext,
@@ -89,29 +89,19 @@ export async function POST(req: NextRequest) {
       })
     : "";
 
-  const upstream = await fetch(`${DIFY_BASE_URL}/v1/chat-messages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${ctx.key}`,
-    },
-    body: JSON.stringify({
-      inputs: {},
-      query: augmentedQuery,
-      response_mode: "streaming",
-      conversation_id: body.conversation_id || "",
-      user: ctx.user,
-      // Fichiers attachés (images uploadées via /api/files/upload)
-      files: Array.isArray(body.files) ? body.files : [],
-    }),
+  const result = await difyChatStream({
+    user: ctx.user,
+    key: ctx.key,
+    query: augmentedQuery,
+    conversationId: body.conversation_id || "",
+    // Fichiers attachés (images uploadées via /api/files/upload)
+    files: Array.isArray(body.files) ? body.files : [],
     signal: req.signal,
   });
 
-  if (!upstream.ok || !upstream.body) {
-    const text = await upstream.text().catch(() => "");
+  if (!result.ok) {
     return NextResponse.json(
-      { error: "dify_upstream_error", status: upstream.status,
-        body: text.slice(0, 500) },
+      { error: "dify_upstream_error", status: result.status, body: result.bodyPreview },
       { status: 502 },
     );
   }
@@ -120,7 +110,7 @@ export async function POST(req: NextRequest) {
   // activé par défaut, le `/no_think` dans le pre_prompt est ignoré
   // par Ollama). Defense-in-depth : même si un agent n'a pas /no_think,
   // l'utilisateur ne verra jamais le raisonnement intermédiaire.
-  const stripped = stripThinkFromSSE(upstream.body);
+  const stripped = stripThinkFromSSE(result.body);
   // BUG-006 wire — détecte les blocs [FILE:nom.ext]…[/FILE] que l'agent
   // peut émettre, génère le DOCX/XLSX/PDF/PS1/etc côté serveur, stocke
   // dans /data/generated/UUID, et remplace le bloc par un marker
