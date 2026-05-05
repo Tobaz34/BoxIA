@@ -741,8 +741,12 @@ if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
   hr
   c_blue "  → Démarrage du wizard de setup (services/setup) sur :${SETUP_PORT:-80}..."
   # Networks aibox_net + ollama_net déjà créés par deploy_stack juste avant.
+  # --build : sans ça, docker compose réutilise l'image existante et ignore
+  # tout changement dans services/setup/app/ (main.py, templates/, etc.).
+  # Pas idéal pour la perf au 2e deploy, mais essentiel pour qu'un fix de
+  # bug dans le wizard soit pris en compte sans manipuler les images.
   if ( cd services/setup && SETUP_PORT="${SETUP_PORT:-80}" \
-       docker compose --env-file ../../.env up -d ); then
+       docker compose --env-file ../../.env up -d --build ); then
     c_green "    ✓ Wizard accessible sur http://<box>:${SETUP_PORT:-80}"
     BOOTSTRAP_WIZARD_URL="http://<box>:${SETUP_PORT:-80}"
   else
