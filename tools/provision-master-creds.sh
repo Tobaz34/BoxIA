@@ -171,22 +171,24 @@ REMOTE_TMP="/tmp/aibox-cloudflare.env.$$"
 scp -q "$LOCAL_TMP" "$SSH_TARGET:$REMOTE_TMP"
 
 # Déplacement avec sudo via ssh -t (TTY pour permettre le prompt sudo).
-# Note : éviter les single quotes imbriquées dans la commande SSH — chaque
-# `'...'` interrompt la chaîne ssh externe. On laisse le script remote
-# afficher lui-même un récap via `ls -la` + `sha256sum` (pas de subshell
-# nested dans des quotes).
-ssh -t "$SSH_TARGET" bash <<REMOTE_EOF
-set -euo pipefail
-if [[ \$(id -u) -eq 0 ]]; then SUDO=""; else SUDO="sudo"; fi
-\$SUDO install -d -m 700 -o root -g root /etc/aibox-master
-\$SUDO install -m 600 -o root -g root '$REMOTE_TMP' /etc/aibox-master/cloudflare.env
-rm -f '$REMOTE_TMP'
-echo
-echo "  ✓ Récap fichier :"
-\$SUDO ls -la /etc/aibox-master/cloudflare.env
-echo "  ✓ Hash SHA256   :"
-\$SUDO sha256sum /etc/aibox-master/cloudflare.env
-REMOTE_EOF
+# IMPORTANT : la commande remote est passée INLINE (pas via heredoc), parce
+# que `-t` alloue un PTY et redirige stdin vers ce PTY → un heredoc piperait
+# du contenu sur stdin et bloquerait l'allocation TTY ("Pseudo-terminal will
+# not be allocated because stdin is not a terminal" + sudo qui plante).
+# Quotes : on entoure tout en double-quotes côté local, les `\$` sont expansés
+# côté remote, les `$VAR` locaux sont expansés côté local AVANT envoi.
+ssh -t "$SSH_TARGET" "
+  set -euo pipefail
+  if [[ \$(id -u) -eq 0 ]]; then SUDO=''; else SUDO='sudo'; fi
+  \$SUDO install -d -m 700 -o root -g root /etc/aibox-master
+  \$SUDO install -m 600 -o root -g root \"$REMOTE_TMP\" /etc/aibox-master/cloudflare.env
+  rm -f \"$REMOTE_TMP\"
+  echo ''
+  echo '  ✓ Récap fichier :'
+  \$SUDO ls -la /etc/aibox-master/cloudflare.env
+  echo '  ✓ Hash SHA256 :'
+  \$SUDO sha256sum /etc/aibox-master/cloudflare.env
+"
 
 c_green "✓ Provisioning terminé"
 c_green ""
