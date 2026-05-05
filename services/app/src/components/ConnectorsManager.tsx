@@ -24,6 +24,7 @@ import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connector
 import { OAuthConnectButton } from "@/components/OAuthConnectButton";
 import { ConnectorSyncStatus } from "@/components/ConnectorSyncStatus";
 import { SharePointPicker, type SelectedDrive } from "@/components/SharePointPicker";
+import { ConnectorStatusPanel } from "@/components/ConnectorStatusPanel";
 
 interface Field {
   key: string;
@@ -540,6 +541,14 @@ export function ConnectorsManager() {
             {/* Bouton OAuth Device Flow si le connecteur le supporte. Le form
              *  ci-dessous reste visible pour les options non-OAuth (ex: shared
              *  drive ID). La connexion OAuth est complémentaire, pas exclusive. */}
+            {/* Panneau de statut détaillé : compte connecté, périmètre,
+             *  indexation RAG, count emails/events. Visible avant la
+             *  config (la modale devient un écran de monitoring + gestion
+             *  plutôt que juste un form). */}
+            <div className="mb-4">
+              <ConnectorStatusPanel slug={editing.slug} />
+            </div>
+
             {(editing.authMethod === "google_oauth" || editing.authMethod === "azure_ad") && (
               <div className="mb-4">
                 <OAuthConnectButton
