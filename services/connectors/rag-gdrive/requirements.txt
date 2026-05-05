@@ -4,5 +4,8 @@ google-auth-httplib2==0.2.0
 httpx==0.28.1
 qdrant-client==1.12.1
 unstructured[pdf,docx,xlsx,pptx,md]==0.16.13
+# pdfminer.six 20251230 a renommé PSSyntaxError en PDFSyntaxError →
+# casse unstructured 0.16.13 sur tous les PDFs. Cf rag-msgraph/requirements.txt.
+pdfminer.six<20251201
 python-magic==0.4.27
 tenacity==9.0.0
