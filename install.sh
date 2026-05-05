@@ -197,7 +197,117 @@ deploy_stack() {
   fi
 }
 
+# ---- Provisioning des master credentials BoxIA (Cloudflare, etc.) ----------
+#
+# Pourquoi : sur une box neuve, le wizard de premier démarrage doit pouvoir
+# masquer la section "credentials Cloudflare" et ne demander au CLIENT que le
+# sous-domaine (ex: "acme" → acme.ialocal.pro). Pour ça, le container wizard
+# (cf. services/setup/docker-compose.yml) lit /etc/aibox-master/cloudflare.env
+# au démarrage. Si ce fichier existe, le wizard saute la section credentials.
+#
+# Cette fonction écrit /etc/aibox-master/cloudflare.env si — et seulement si —
+# les variables CF_MASTER_* sont définies dans l'environnement qui lance ce
+# script. Workflow type :
+#
+#   # Sur ta machine (Andre) :
+#   source ~/.boxia/master-creds.env  # contient CF_MASTER_ACCOUNT_ID, etc.
+#   scp -r . root@new-box:/srv/ai-stack/
+#   ssh root@new-box "cd /srv/ai-stack && CF_MASTER_ACCOUNT_ID=$CF_MASTER_ACCOUNT_ID \
+#     CF_MASTER_TUNNEL_ID=$CF_MASTER_TUNNEL_ID \
+#     CF_MASTER_API_TOKEN=$CF_MASTER_API_TOKEN \
+#     CF_MASTER_ZONE_ID=$CF_MASTER_ZONE_ID \
+#     ./install.sh"
+#
+# Si les vars sont absentes (cas dev local, ou client qui réinstalle sa propre
+# box sans nos credentials BoxIA) → on skippe avec un warning et le wizard
+# basculera en mode "demander les credentials au client".
+#
+# Idempotent : si /etc/aibox-master/cloudflare.env existe déjà, on le réécrit
+# (les credentials peuvent avoir été rotés depuis la dernière install). Si on
+# ne veut PAS l'écraser, exporter AIBOX_KEEP_EXISTING_MASTER_CREDS=1.
+provision_master_creds() {
+  local cf_account="${CF_MASTER_ACCOUNT_ID:-}"
+  local cf_tunnel="${CF_MASTER_TUNNEL_ID:-}"
+  local cf_token="${CF_MASTER_API_TOKEN:-}"
+  local cf_zone="${CF_MASTER_ZONE_ID:-}"
+  local cf_root="${CF_MASTER_ROOT_DOMAIN:-ialocal.pro}"
+
+  # Aucun credential maître fourni → mode "client autonome"
+  if [[ -z "$cf_account" && -z "$cf_tunnel" && -z "$cf_token" && -z "$cf_zone" ]]; then
+    if [[ -f /etc/aibox-master/cloudflare.env ]]; then
+      c_green "  ✓ Master credentials Cloudflare déjà présents (/etc/aibox-master/cloudflare.env), conservés"
+    else
+      c_yellow "  ⚠ Pas de master credentials Cloudflare fournis (CF_MASTER_*)"
+      c_yellow "    → Le wizard demandera les 4 IDs Cloudflare au client lui-même."
+      c_yellow "    → Pour les pré-injecter (ce que BoxIA fait avant livraison), relance avec :"
+      c_yellow "      CF_MASTER_ACCOUNT_ID=... CF_MASTER_TUNNEL_ID=... \\\\"
+      c_yellow "      CF_MASTER_API_TOKEN=... CF_MASTER_ZONE_ID=... ./install.sh"
+    fi
+    return 0
+  fi
+
+  # Au moins un credential fourni → on exige les 4 obligatoires (root_domain optionnel)
+  local missing=()
+  [[ -z "$cf_account" ]] && missing+=("CF_MASTER_ACCOUNT_ID")
+  [[ -z "$cf_tunnel" ]]  && missing+=("CF_MASTER_TUNNEL_ID")
+  [[ -z "$cf_token" ]]   && missing+=("CF_MASTER_API_TOKEN")
+  [[ -z "$cf_zone" ]]    && missing+=("CF_MASTER_ZONE_ID")
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    c_red "  ✗ Provisioning master creds incomplet — variables manquantes : ${missing[*]}"
+    c_red "    Soit fournis les 4 (account/tunnel/token/zone), soit aucune."
+    exit 1
+  fi
+
+  # Si le fichier existe et qu'on ne veut pas l'écraser → skip
+  if [[ -f /etc/aibox-master/cloudflare.env && "${AIBOX_KEEP_EXISTING_MASTER_CREDS:-0}" == "1" ]]; then
+    c_yellow "  ⚠ /etc/aibox-master/cloudflare.env existe et AIBOX_KEEP_EXISTING_MASTER_CREDS=1 → préservé"
+    return 0
+  fi
+
+  c_blue "  → Provisioning /etc/aibox-master/cloudflare.env (master Cloudflare BoxIA)..."
+
+  # On a besoin de root pour écrire dans /etc/. Détection du contexte :
+  # - Si on est root (UID 0) : pas de sudo
+  # - Sinon : sudo (qui peut prompter le mot de passe en interactif)
+  local SUDO=""
+  if [[ "$(id -u)" -ne 0 ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      c_red "  ✗ Ni root, ni sudo disponible. Impossible d'écrire /etc/aibox-master/."
+      exit 1
+    fi
+    SUDO="sudo"
+  fi
+
+  $SUDO install -d -m 700 -o root -g root /etc/aibox-master
+
+  # Atomic write via fichier temporaire + rename, comme ça pas de fenêtre
+  # où le fichier serait partiellement écrit pendant qu'un container le lit.
+  local tmpfile
+  tmpfile=$(mktemp)
+  cat > "$tmpfile" <<EOF
+# /etc/aibox-master/cloudflare.env
+# Master credentials Cloudflare BoxIA — généré par install.sh le $(date -Iseconds)
+# Ne pas commit, ne pas partager. Survit aux resets clients (hors /srv/ai-stack/).
+CF_DEFAULT_ACCOUNT_ID=$cf_account
+CF_DEFAULT_TUNNEL_ID=$cf_tunnel
+CF_DEFAULT_API_TOKEN=$cf_token
+CF_DEFAULT_ZONE_ID=$cf_zone
+CF_DEFAULT_ROOT_DOMAIN=$cf_root
+EOF
+  $SUDO install -m 600 -o root -g root "$tmpfile" /etc/aibox-master/cloudflare.env
+  rm -f "$tmpfile"
+
+  c_green "  ✓ Master Cloudflare credentials écrits (root:root 600, $(echo "$cf_token" | wc -c | awk '{print $1-1}') chars token)"
+  c_green "    Le wizard masquera la section credentials et ne demandera que le sous-domaine."
+}
+
 # ---- Mode non-interactif (utilisé par le wizard web ou CI) -----------------
+# Note : provision_master_creds n'est appelée QUE en mode interactif. En mode
+# non-interactif, install.sh tourne dans le container du wizard (qui n'a pas
+# /etc/aibox-master/ monté) et de toute façon les CF_DEFAULT_* ont déjà été
+# lues par le container au démarrage (env_file dans services/setup/docker-compose.yml).
+# Provisionner les master creds est une étape "préparation hardware par BoxIA",
+# pas une étape "déploiement runtime par le client".
 if [[ "${AIBOX_NONINTERACTIVE:-0}" == "1" ]]; then
   c_blue "════════════════════════════════════════════════════════════════════"
   c_blue "  AI Box — Déploiement non-interactif (mode wizard web)"
@@ -238,6 +348,11 @@ else
   GPU_VRAM="0"
   c_yellow "  ⚠ Pas de GPU NVIDIA — certains modèles seront lents en CPU"
 fi
+# Provisionne /etc/aibox-master/cloudflare.env si CF_MASTER_* sont set dans
+# l'env qui lance install.sh (c'est le moment "préparation hardware par BoxIA",
+# avant livraison au client). Sinon, simple warning et on continue → le wizard
+# basculera en mode "demander les credentials au client".
+provision_master_creds
 hr
 
 # ---- Étape 2 : identité client ----------------------------------------------
