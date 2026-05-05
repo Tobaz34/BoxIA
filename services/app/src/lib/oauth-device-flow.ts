@@ -182,6 +182,24 @@ export async function pollDeviceFlow(requestId: string): Promise<PollResult> {
   s.connections[id] = conn;
   delete s.pending[requestId];
   await _writeStore(s);
+
+  // Best-effort : pousse la (les) credential(s) n8n correspondantes.
+  // Cf. oauth-oidc.ts pour l'explication détaillée — même logique.
+  try {
+    const { pushCredentialsFromConnector, bridgedConnectorSlugs } =
+      await import("./n8n-credentials");
+    if (bridgedConnectorSlugs().includes(pending.connector_slug)) {
+      pushCredentialsFromConnector(pending.connector_slug).catch((e) => {
+        console.warn(
+          `[oauth-device-flow] push n8n cred for ${pending.connector_slug} failed:`,
+          e,
+        );
+      });
+    }
+  } catch (e) {
+    console.warn("[oauth-device-flow] n8n credential push module failed to load:", e);
+  }
+
   return { state: "success", connection: conn };
 }
 

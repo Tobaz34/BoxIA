@@ -20,6 +20,7 @@ import { authOptions } from "@/lib/auth";
 import {
   installMarketplaceWorkflow,
   readCatalog,
+  PrerequisitesError,
 } from "@/lib/n8n-marketplace";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
@@ -79,6 +80,8 @@ export async function POST(req: Request) {
         name: result.name,
         workflow_id: result.workflow_id,
         category: entry.category,
+        credentials_pushed: result.credentials_pushed || [],
+        nodes_credentialed: result.nodes_credentialed || [],
       },
       ipFromHeaders(req),
     );
@@ -86,8 +89,21 @@ export async function POST(req: Request) {
       ok: true,
       workflow_id: result.workflow_id,
       name: result.name,
+      credentials_pushed: result.credentials_pushed || [],
+      nodes_credentialed: result.nodes_credentialed || [],
     });
   } catch (e) {
+    if (e instanceof PrerequisitesError) {
+      return NextResponse.json(
+        {
+          error: "prerequisites_missing",
+          message: e.message,
+          missing: e.status.missing,
+          missing_labels: e.status.missing_labels,
+        },
+        { status: 422 },
+      );
+    }
     return NextResponse.json(
       { error: "install_failed", detail: String(e).slice(0, 500) },
       { status: 502 },

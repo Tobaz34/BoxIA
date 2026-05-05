@@ -355,6 +355,36 @@ export const CONNECTORS: ConnectorSpec[] = [
         ] },
     ],
   },
+  {
+    slug: "smtp",
+    name: "SMTP (envoi email)",
+    icon: "📤",
+    description: "Serveur SMTP pour envoyer des emails (relances, alertes, rapports). " +
+      "Utilisé par les workflows n8n via la credential 'boxia:smtp' poussée automatiquement.",
+    category: "email",
+    implStatus: "implemented",
+    authMethod: "form",
+    fields: [
+      { key: "host",     label: "Serveur SMTP", type: "text", required: true,
+        placeholder: "smtp.ovh.net" },
+      { key: "port",     label: "Port", type: "text", placeholder: "587",
+        helpText: "587 pour STARTTLS, 465 pour SSL/TLS direct." },
+      { key: "username", label: "Identifiant", type: "text", required: true,
+        placeholder: "ai-box@entreprise.fr" },
+      { key: "password", label: "Mot de passe", type: "password",
+        required: true, secret: true,
+        helpText: "Préférez un mot de passe d'application si dispo." },
+      { key: "tls",      label: "Chiffrement", type: "select",
+        options: [
+          { value: "starttls", label: "STARTTLS (port 587)" },
+          { value: "ssl",      label: "SSL/TLS (port 465)" },
+          { value: "none",     label: "Aucun (déconseillé)" },
+        ] },
+      { key: "from_email", label: "Adresse expéditeur (From)", type: "text",
+        placeholder: "ai-box@entreprise.fr",
+        helpText: "Si vide, l'identifiant est utilisé." },
+    ],
+  },
 
   // ---------- ERP / CRM ----------
   {

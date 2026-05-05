@@ -88,20 +88,44 @@ const SERVICES: Record<string, ServiceConfig> = {
   },
 };
 
+/**
+ * Préfixe sous-domaine standard pour chaque service.
+ * Convention répétable client : `<prefix>.<AIBOX_PUBLIC_DOMAIN>`.
+ * Doit rester aligné avec services/edge/Caddyfile et avec le script
+ * tools/setup-cloudflare-tunnel-hostnames.sh.
+ */
+const SERVICE_SUBDOMAIN: Record<string, string> = {
+  dify: "agents",
+  n8n: "flows",
+  portainer: "admin",
+  grafana: "metrics",
+};
+
+/** Ports internes (utilisés en LAN/IP, pas via Cloudflare Tunnel). */
+const SERVICE_PORT: Record<string, number> = {
+  dify: 8081, n8n: 5678, portainer: 9443, grafana: 3001,
+};
+
 function deriveServiceUrl(service: string, host: string | null): string {
-  // Override ENV en priorité
+  // 1. Override ENV par service (priorité absolue, ex: N8N_PUBLIC_URL)
   const envOverride = PUBLIC_BASES[service];
   if (envOverride) return envOverride;
 
-  // Si pas de Host header (impossible normalement), fallback localhost
-  if (!host) {
-    const ports: Record<string, number> = {
-      dify: 8081, n8n: 5678, portainer: 9443, grafana: 3001,
-    };
-    return `http://localhost:${ports[service]}`;
+  // 2. Domaine public global (recommandé pour Cloudflare Tunnel + Let's Encrypt) :
+  //    AIBOX_PUBLIC_DOMAIN=demo.ialocal.pro → flows.demo.ialocal.pro etc.
+  //    Convention répétable pour tous les clients : 1 var d'env, des sous-
+  //    domaines standardisés (cf. tools/setup-cloudflare-tunnel-hostnames.sh
+  //    qui crée les ingress rules + DNS CNAMEs côté Cloudflare).
+  const publicDomain = process.env.AIBOX_PUBLIC_DOMAIN;
+  if (publicDomain) {
+    const sub = SERVICE_SUBDOMAIN[service];
+    if (sub) return `https://${sub}.${publicDomain}`;
   }
 
-  // Stratégie : on dérive depuis le Host header de aibox-app
+  // 3. Fallback : on dérive depuis le Host header de aibox-app
+  if (!host) {
+    return `http://localhost:${SERVICE_PORT[service]}`;
+  }
   const hostname = host.split(":")[0];
   const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
   const isLocal = hostname === "localhost";
@@ -109,29 +133,23 @@ function deriveServiceUrl(service: string, host: string | null): string {
 
   if (isIp || isLocal) {
     // Mode IP brute / localhost : ports différents sur même IP
-    const ports: Record<string, number> = {
-      dify: 8081, n8n: 5678, portainer: 9443, grafana: 3001,
-    };
-    return `http://${hostname}:${ports[service]}`;
+    return `http://${hostname}:${SERVICE_PORT[service]}`;
   }
   if (isMdns) {
     // Mode flat-mDNS : aibox.local → aibox-<svc>.local
     const prefix = hostname.split(".")[0].split("-")[0];
-    const subs: Record<string, string> = {
-      dify: "agents", n8n: "flows", portainer: "admin", grafana: "metrics",
-    };
-    return `https://${prefix}-${subs[service]}.local`;
+    return `https://${prefix}-${SERVICE_SUBDOMAIN[service]}.local`;
   }
-  // Mode prod multi-label : foo.client.fr → <svc>.client.fr
+  // Dernier fallback : host multi-label sans AIBOX_PUBLIC_DOMAIN défini.
+  // On remplace parts[0] par le préfixe service (legacy heuristique).
+  // /!\ Demande que `<prefix>.<base>` existe dans le DNS — préférer plutôt
+  // définir AIBOX_PUBLIC_DOMAIN pour ne plus dépendre du Host header.
   const parts = hostname.split(".");
   if (parts.length >= 2) {
-    const subs: Record<string, string> = {
-      dify: "agents", n8n: "flows", portainer: "admin", grafana: "metrics",
-    };
-    parts[0] = subs[service];
+    parts[0] = SERVICE_SUBDOMAIN[service];
     return `https://${parts.join(".")}`;
   }
-  return `http://${hostname}:8081`;
+  return `http://${hostname}:${SERVICE_PORT[service]}`;
 }
 
 function escapeHtml(s: string): string {

@@ -13,6 +13,7 @@ import { authOptions } from "@/lib/auth";
 import {
   readCatalog,
   readWorkflowTemplateName,
+  checkPrerequisites,
 } from "@/lib/n8n-marketplace";
 import { listWorkflows } from "@/lib/n8n";
 
@@ -37,11 +38,16 @@ export async function GET() {
       catalog.workflows.map(async (w) => {
         const n8nName = (await readWorkflowTemplateName(w.file)) || w.name;
         const inst = installedByName.get(n8nName);
+        // Préflight pré-requis : seulement utile si pas encore installé
+        // (sinon on risque juste d'alourdir la réponse). On le calcule
+        // quand même pour cohérence — c'est juste un getState par slug.
+        const prereq = await checkPrerequisites(w);
         return {
           ...w,
           installed: !!inst,
           workflow_id: inst?.id || null,
           active: inst?.active || false,
+          prerequisites: prereq,
         };
       }),
     );

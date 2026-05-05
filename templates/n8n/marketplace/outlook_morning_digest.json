@@ -1,0 +1,90 @@
+{
+  "name": "AI Box — Digest Outlook matinal",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "trigger_morning",
+      "name": "Lun-Ven 7h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "limit": 15,
+        "filtersUI": {
+          "values": {
+            "filters": {
+              "isRead": "unread"
+            }
+          }
+        },
+        "additionalFields": {
+          "fields": ["subject", "from", "receivedDateTime", "bodyPreview", "importance"]
+        }
+      },
+      "id": "outlook_unread",
+      "name": "Outlook : non lus",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const msgs = $input.all().map(i => i.json);\nif (msgs.length === 0) return [{ json: { skip: true, body: 'Aucun email non lu ce matin. Bonne journée !' } }];\nconst lines = msgs.slice(0, 15).map(m => {\n  const from = m.from?.emailAddress?.name || m.from?.emailAddress?.address || 'inconnu';\n  const subj = m.subject || '(sans objet)';\n  const prev = (m.bodyPreview || '').slice(0, 80).replace(/\\s+/g, ' ');\n  const flag = m.importance === 'high' ? '🔴 ' : '';\n  return `- ${flag}${from} | ${subj}\\n    ${prev}…`;\n}).join('\\n\\n');\nconst body = `Bonjour,\\n\\nVoici votre digest matinal — ${msgs.length} email(s) non lu(s) :\\n\\n${lines}\\n\\nBonne journée !\\n— AI Box`;\nreturn [{ json: { count: msgs.length, body } }];"
+      },
+      "id": "format_digest",
+      "name": "Format digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "subject": "=📬 AI Box — Digest matinal ({{$json.count}} emails non lus)",
+        "bodyContent": "={{$json.body}}",
+        "bodyContentType": "Text",
+        "toRecipients": "={{$env.ADMIN_EMAIL}}",
+        "additionalFields": {}
+      },
+      "id": "send_digest",
+      "name": "Envoyer digest admin",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Lun-Ven 7h": {
+      "main": [[{ "node": "Outlook : non lus", "type": "main", "index": 0 }]]
+    },
+    "Outlook : non lus": {
+      "main": [[{ "node": "Format digest", "type": "main", "index": 0 }]]
+    },
+    "Format digest": {
+      "main": [[{ "node": "Envoyer digest admin", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "AI Box" },
+    { "name": "Microsoft" },
+    { "name": "Email" },
+    { "name": "Marketplace" }
+  ]
+}

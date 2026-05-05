@@ -10,6 +10,10 @@ import { authOptions } from "@/lib/auth";
 import { activateConnector } from "@/lib/connectors-state";
 import { getConnector } from "@/lib/connectors";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
+import {
+  pushCredentialFromConnector,
+  bridgedConnectorSlugs,
+} from "@/lib/n8n-credentials";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +117,20 @@ export async function POST(
       }
     }
 
+    // Best-effort : si ce slug a un mapper de credential n8n (cf.
+    // lib/n8n-credentials.ts), pousse les creds dans n8n pour que les
+    // workflows marketplace IMAP/SMTP/Slack puissent les réutiliser
+    // sans saisie manuelle dans la console n8n.
+    let n8n_credential_pushed = false;
+    if (bridgedConnectorSlugs().includes(slug)) {
+      try {
+        const ref = await pushCredentialFromConnector(slug);
+        if (ref) n8n_credential_pushed = true;
+      } catch (e) {
+        console.warn(`[connectors/${slug}/activate] n8n credential push failed:`, e);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       slug: next.slug,
@@ -120,6 +138,7 @@ export async function POST(
       activated_at: next.activated_at,
       impl_status: spec.implStatus,
       initial_sync_triggered,
+      n8n_credential_pushed,
       note: spec.implStatus !== "implemented"
         ? "Connecteur enregistré mais le worker n'est pas encore implémenté côté backend. " +
           "La configuration sera utilisée dès que le connecteur sera disponible."
