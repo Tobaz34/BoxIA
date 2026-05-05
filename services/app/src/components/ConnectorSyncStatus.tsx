@@ -2,7 +2,7 @@
 
 /**
  * Chip live-status pour les connecteurs RAG OAuth (google-drive, onedrive,
- * sharepoint-online).
+ * sharepoint).
  *
  * Affiche, en complément du libellé "sync : il y a 5 min" basé sur
  * connectors-state, un indicateur LIVE :
@@ -19,7 +19,7 @@
  */
 import { useEffect, useState } from "react";
 
-const SYNC_SLUGS = new Set(["google-drive", "onedrive", "sharepoint-online"]);
+const SYNC_SLUGS = new Set(["google-drive", "onedrive", "sharepoint"]);
 const POLL_MS = 10_000;
 
 interface SyncStatus {

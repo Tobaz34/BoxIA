@@ -1,6 +1,6 @@
 /**
  * POST /api/oauth/connections/adopt
- * body: { source_id: "google:google-drive", target_slug: "gmail-workspace" }
+ * body: { source_id: "google:google-drive", target_slug: "gmail" }
  *
  * Copie le token + scopes d'une connexion OAuth source vers un autre
  * connector_slug du même provider. Sert au cas où l'admin a déjà connecté

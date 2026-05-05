@@ -73,7 +73,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
         "profile",
         "https://www.googleapis.com/auth/drive.readonly",
       ],
-      "gmail-workspace": [
+      "gmail": [
         "openid",
         "email",
         "profile",
@@ -114,7 +114,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
         "openid", "email", "profile", "offline_access",
         "Calendars.Read",
       ],
-      "sharepoint-online": [
+      "sharepoint": [
         "openid", "email", "profile", "offline_access",
         "Sites.Read.All",
       ],

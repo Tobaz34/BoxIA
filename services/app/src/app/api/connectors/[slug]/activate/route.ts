@@ -52,7 +52,7 @@ export async function POST(
     // n'échoue pas — l'admin verra le chip "non démarré" et lancera le
     // worker manuellement.
     let initial_sync_triggered = false;
-    if (["google-drive", "onedrive", "sharepoint-online"].includes(slug)) {
+    if (["google-drive", "onedrive", "sharepoint"].includes(slug)) {
       try {
         const http = await import("node:http");
         const container = slug === "google-drive"

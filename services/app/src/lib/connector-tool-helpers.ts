@@ -4,7 +4,7 @@
  *
  * Pattern : l'agent Dify call `/api/agents-tools/gmail_read_inbox`,
  * Bearer AGENTS_API_KEY → handler récupère le token user actif via
- * getAccessToken("google:gmail-workspace") → call Gmail API → retourne
+ * getAccessToken("google:gmail") → call Gmail API → retourne
  * une réponse simplifiée parseable par le LLM.
  *
  * Si pas de connection : retourne un message clair que l'agent peut

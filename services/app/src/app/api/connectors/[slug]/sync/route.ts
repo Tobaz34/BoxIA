@@ -3,7 +3,7 @@
  *
  * Comportement :
  *   - Pour les connecteurs RAG OAuth (google-drive, onedrive,
- *     sharepoint-online) : redémarre le worker Docker via UDS Engine API,
+ *     sharepoint) : redémarre le worker Docker via UDS Engine API,
  *     ce qui force un sync au boot du container (cf worker.py main loop).
  *   - Pour tous les autres : marque last_sync_at = now (mock V1, le worker
  *     réel n'existe pas encore — ça valide juste l'UX).
@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
 const RAG_WORKERS: Record<string, { container: string }> = {
   "google-drive": { container: "aibox-conn-rag-gdrive" },
   "onedrive": { container: "aibox-conn-rag-msgraph" },
-  "sharepoint-online": { container: "aibox-conn-rag-msgraph" },
+  "sharepoint": { container: "aibox-conn-rag-msgraph" },
 };
 
 const DOCKER_SOCK = process.env.DOCKER_SOCKET_PATH || "/var/run/docker.sock";
