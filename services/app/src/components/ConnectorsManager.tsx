@@ -23,6 +23,7 @@ import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connector
 import { OAuthConnectButton } from "@/components/OAuthConnectButton";
 import { ConnectorSyncStatus } from "@/components/ConnectorSyncStatus";
 import { SharePointPicker, type SelectedDrive } from "@/components/SharePointPicker";
+import { ProviderAccountsBar } from "@/components/ProviderAccountsBar";
 
 interface Field {
   key: string;
@@ -376,11 +377,19 @@ export function ConnectorsManager() {
       {loading ? (
         <div className="text-center text-sm text-muted py-12">Chargement…</div>
       ) : !isFlatView ? (
-        /* ---------- VUE HUB (grille de grandes tuiles métier) ---------- */
-        <HubGrid
-          stats={hubStats}
-          onPick={(h) => setCurrentHub(h)}
-        />
+        /* ---------- VUE HUB (vue d'accueil) ---------- */
+        <>
+          {/* Section "Comptes connectés" : 1 tuile par provider OAuth.
+              Une connexion broad-scope active d'un coup tous les frères
+              (Microsoft = Outlook+OneDrive+SharePoint+Calendar+Teams). */}
+          <ProviderAccountsBar onChange={refresh} />
+
+          {/* Grille de grandes tuiles par hub métier */}
+          <HubGrid
+            stats={hubStats}
+            onPick={(h) => setCurrentHub(h)}
+          />
+        </>
       ) : (
         <>
           {/* Breadcrumb : si on est dans un hub précis, montre le chemin de retour. */}
