@@ -12,6 +12,7 @@ import {
   CheckCircle2, XCircle, Server,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { ServicesVersionsCard } from "@/components/ServicesVersionsCard";
 
 interface AgentStat {
   slug: string;
@@ -305,6 +306,9 @@ export function SystemDashboard() {
           </div>
         </Section>
       )}
+
+      {/* Versions des services tiers + check GitHub Releases */}
+      <ServicesVersionsCard />
     </div>
   );
 }

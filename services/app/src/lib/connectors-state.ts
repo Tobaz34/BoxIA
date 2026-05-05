@@ -149,10 +149,27 @@ export async function activateConnector(
 ): Promise<ConnectorState> {
   const spec = getConnector(slug);
   if (!spec) throw new Error(`Unknown connector: ${slug}`);
-  // Validation minimale : champs required présents
-  for (const f of spec.fields) {
-    if (f.required && !config[f.key]) {
-      throw new Error(`Champ requis manquant : ${f.label}`);
+
+  // Si le connecteur supporte OAuth ET qu'une connexion OAuth existe pour
+  // ce provider+slug, on bypasse la validation des champs `required` du
+  // form (le worker récupérera le token via /api/oauth/internal/token).
+  // Sinon validation classique.
+  let oauthBypass = false;
+  if (spec.oauthProvider) {
+    try {
+      const { getConnection } = await import("./oauth-storage");
+      const conn = await getConnection(`${spec.oauthProvider}:${slug}`);
+      if (conn) oauthBypass = true;
+    } catch {
+      // Si oauth-storage cassé, fallback sur validation classique
+    }
+  }
+
+  if (!oauthBypass) {
+    for (const f of spec.fields) {
+      if (f.required && !config[f.key]) {
+        throw new Error(`Champ requis manquant : ${f.label}`);
+      }
     }
   }
   const next = await mutate((cur) => {

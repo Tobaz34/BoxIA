@@ -34,7 +34,7 @@ if ! echo "$COMMAND" | grep -qE '(ssh|scp).*(xefia|192\.168\.15\.210)'; then
 fi
 
 # 2. Whitelist : passe par le script officiel
-if echo "$COMMAND" | grep -qE 'tools/deploy-to-xefia\.sh'; then
+if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|start-connector)\.sh'; then
   exit 0
 fi
 

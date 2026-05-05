@@ -17,7 +17,7 @@ import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import {
-  Check, Copy, Eye, Download, Loader2,
+  Check, Copy, Eye, Download, Loader2, Brain, ChevronDown, ChevronRight,
   File as FileIcon, FileText, FileType, FileSpreadsheet, FileCode,
 } from "lucide-react";
 import { useMemo, useState, type ComponentProps } from "react";
@@ -99,7 +99,15 @@ interface TextToken {
   type: "text";
   value: string;
 }
-type Segment = FileToken | TextToken;
+interface ThinkToken {
+  type: "think";
+  /** Contenu brut du bloc raisonnement (sans les balises). */
+  value: string;
+  /** True si le bloc est encore en cours de stream (`<think>` ouvert
+   *  mais `</think>` pas encore reçu). */
+  open: boolean;
+}
+type Segment = FileToken | TextToken | ThinkToken;
 
 function parseFileMarkers(content: string): Segment[] {
   const re = /\{\{file:([0-9a-f-]+):([^:]+):(\d+):([^}]+)\}\}/g;
@@ -123,6 +131,39 @@ function parseFileMarkers(content: string): Segment[] {
     out.push({ type: "text", value: content.slice(lastIdx) });
   }
   return out.length > 0 ? out : [{ type: "text", value: content }];
+}
+
+/** Extrait les blocs `<think>...</think>` (et `<thinking>...</thinking>`)
+ *  comme segments distincts. Le strip-think côté serveur (lib/strip-think.ts)
+ *  peut rater certains streams (différents providers, formats…) — on
+ *  fait donc un fallback côté UI : si le contenu contient ces balises,
+ *  on les rend en bloc collapsible plutôt qu'en texte brut.
+ *
+ *  Streaming : si `<think>` est ouvert mais `</think>` pas encore reçu,
+ *  on émet un ThinkToken `open=true` (le composant affiche "réfléchit
+ *  en cours…" plutôt que le contenu).
+ */
+function parseThinkBlocks(content: string): Array<{ type: "think" | "normal"; value: string; open?: boolean }> {
+  const out: Array<{ type: "think" | "normal"; value: string; open?: boolean }> = [];
+  const re = /<think(?:ing)?>([\s\S]*?)(?:<\/think(?:ing)?>|$)/gi;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    if (m.index > lastIdx) {
+      out.push({ type: "normal", value: content.slice(lastIdx, m.index) });
+    }
+    // Détecte si la balise fermante a été matchée (m[0] contient </think>)
+    // ou si on a fini sur la fin de chaîne (= encore en stream).
+    const closed = /<\/think(?:ing)?>/i.test(m[0]);
+    out.push({ type: "think", value: m[1], open: !closed });
+    lastIdx = m.index + m[0].length;
+    // Si pas fermé, on stoppe : tout le reste est dans le think
+    if (!closed) break;
+  }
+  if (lastIdx < content.length) {
+    out.push({ type: "normal", value: content.slice(lastIdx) });
+  }
+  return out.length > 0 ? out : [{ type: "normal", value: content }];
 }
 
 function iconForExt(name: string): typeof FileIcon {
@@ -215,20 +256,72 @@ function extractText(node: unknown): string {
   return "";
 }
 
+/** Bloc de raisonnement modèle (qwen3 thinking, GPT o1, Claude extended-
+ *  thinking, etc.) collapsible. Closed par défaut pour ne pas polluer
+ *  l'UI ; un click révèle le raisonnement intégral. Si l'open prop=true,
+ *  le bloc est en cours de streaming et on affiche un loader.
+ */
+function ThinkingBlock({ value, open: streaming }: { value: string; open?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  // Estimation grossière : ~5 chars / mot
+  const wordCount = useMemo(() => Math.round(value.trim().length / 5), [value]);
+
+  return (
+    <div className="my-2 rounded-md border border-muted/30 bg-muted/5">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted hover:bg-muted/10 transition-default"
+      >
+        {streaming
+          ? <Loader2 size={12} className="animate-spin shrink-0" />
+          : <Brain size={12} className="shrink-0 opacity-70" />}
+        <span className="font-medium">
+          {streaming
+            ? "Le modèle réfléchit…"
+            : expanded
+              ? "Masquer le raisonnement"
+              : `Voir le raisonnement (~${wordCount} mots)`}
+        </span>
+        <span className="ml-auto">
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 pt-1 text-[11px] text-muted/80 whitespace-pre-wrap font-mono leading-relaxed border-t border-muted/20">
+          {value.trim()}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MessageMarkdown({ content }: { content: string }) {
-  // BUG-006 — Split le content sur les markers `{{file:UUID:nom:size:mime}}`
-  // injectés par le proxy `/api/chat` quand l'agent émet [FILE:...]. Pour
-  // chaque segment fichier on rend une chip download cliquable, sinon
-  // markdown standard.
-  const segments = useMemo(() => parseFileMarkers(content), [content]);
+  // 1. Split d'abord sur les blocs <think>...</think> (collapsible UI fallback
+  //    quand strip-think côté serveur n'a pas attrapé).
+  // 2. Sur chaque sous-bloc "normal", split sur les file markers
+  //    {{file:UUID:nom:size:mime}} (BUG-006).
+  const blocks = useMemo(() => parseThinkBlocks(content), [content]);
 
   return (
     <div className="prose-chat">
-      {segments.map((seg, i) =>
-        seg.type === "file"
-          ? <DownloadChip key={`f-${seg.id}-${i}`} {...seg} />
-          : <MarkdownPart key={`t-${i}`} content={seg.value} />,
-      )}
+      {blocks.map((b, bi) => {
+        if (b.type === "think") {
+          return <ThinkingBlock key={`th-${bi}`} value={b.value} open={b.open} />;
+        }
+        const segments = parseFileMarkers(b.value);
+        return (
+          <div key={`n-${bi}`}>
+            {segments.map((seg, i) =>
+              seg.type === "file"
+                ? <DownloadChip key={`f-${seg.id}-${i}`} {...seg} />
+                : seg.type === "text"
+                  ? <MarkdownPart key={`t-${i}`} content={seg.value} />
+                  : null,
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

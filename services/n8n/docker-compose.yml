@@ -41,6 +41,11 @@ services:
       # « Your n8n server is configured to use a secure cookie ».
       # En prod (Caddy edge avec TLS), passer cette var à "true".
       N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+      # Variables BoxIA exposées aux templates n8n via $env.<NAME>.
+      # Utilisées par les workflows marketplace pour les destinataires d'alertes
+      # (digest, monitoring, relances) et l'auth vers les workers BoxIA.
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      AGENTS_API_KEY: ${AGENTS_API_KEY:-}
     volumes:
       - n8n_data:/home/node/.n8n
     networks:

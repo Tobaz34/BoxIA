@@ -1,0 +1,84 @@
+/**
+ * GET /api/oauth/start?provider=google&connector_slug=google-drive[&narrow=1]
+ *
+ * Démarre un flow OIDC Authorization Code + PKCE :
+ *   - Génère code_verifier + state
+ *   - Pose un cookie httpOnly avec le pending chiffré
+ *   - Redirige vers le authorize_endpoint du provider
+ *
+ * Par défaut (mode "broad") demande l'union des scopes de tous les
+ * connecteurs frères du provider — donc un seul consent Google active
+ * Drive + Gmail + Calendar pour le même compte. Cf
+ * unionConnectorScopes() dans oauth-providers.ts.
+ *
+ * `?narrow=1` : redemande uniquement les scopes du connector_slug
+ * (mode legacy / debug).
+ *
+ * L'admin atterrit sur Google/Microsoft, autorise, est redirigé vers
+ * /api/oauth/callback. La callback distribue le token aux slugs frères
+ * éligibles. Cf lib/oauth-oidc.ts.
+ */
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { logAction, ipFromHeaders } from "@/lib/audit-helper";
+import { startOIDC, OAUTH_STATE_COOKIE } from "@/lib/oauth-oidc";
+import type { OAuthProviderId } from "@/lib/oauth-providers";
+import { unionConnectorScopes } from "@/lib/oauth-providers";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(req: Request) {
+  const session = await getServerSession(authOptions);
+  const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+  if (!isAdmin || !session?.user?.email) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const provider = url.searchParams.get("provider");
+  const connectorSlug = url.searchParams.get("connector_slug");
+  const narrow = url.searchParams.get("narrow") === "1";
+  // ?prompt=select_account → bouton « Ajouter un autre compte »
+  const promptParam = url.searchParams.get("prompt");
+  const promptMode: "select_account" | "consent" | undefined =
+    promptParam === "select_account" ? "select_account"
+    : promptParam === "consent" ? "consent"
+    : undefined;
+  if (!provider || !connectorSlug) {
+    return NextResponse.json({ error: "missing_params" }, { status: 400 });
+  }
+  if (provider !== "google" && provider !== "microsoft") {
+    return NextResponse.json({ error: "unsupported_provider" }, { status: 400 });
+  }
+  try {
+    // Mode broad par défaut : 1 consent active tous les connecteurs frères.
+    const broadScopes = narrow ? undefined : unionConnectorScopes(provider as OAuthProviderId);
+    const result = startOIDC(
+      provider as OAuthProviderId,
+      connectorSlug,
+      session.user.email,
+      broadScopes,
+      promptMode,
+    );
+    await logAction("settings.update", `oauth_oidc_started:${provider}:${connectorSlug}`, {
+      actor: session.user.email,
+      ip: ipFromHeaders(req),
+      redirect_uri: result.redirect_uri,
+    });
+    const resp = NextResponse.redirect(result.authorize_url, { status: 302 });
+    // Cookie httpOnly + Secure si HTTPS, sameSite=Lax pour suivre le retour
+    // de Google. 10 min de durée (cap aligné avec l'expiration du state).
+    const isHttps = result.redirect_uri.startsWith("https://");
+    resp.cookies.set(OAUTH_STATE_COOKIE, result.state_cookie_value, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isHttps,
+      maxAge: 10 * 60,
+      path: "/api/oauth",
+    });
+    return resp;
+  } catch (e) {
+    const msg = String(e instanceof Error ? e.message : e);
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
+}

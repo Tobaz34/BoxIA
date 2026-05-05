@@ -130,6 +130,50 @@ seulement par les comptables) :
 | Connecteur en erreur | Credentials expirés (token Microsoft, mdp NAS, etc.) | **Connecteurs** → clic sur ⚙️ Reconfigurer |
 | Workflow n8n en échec | Credentials externes (SMTP, Pennylane) à mettre à jour | **Automatisations** → clic sur ⤴️ Ouvrir dans n8n → onglet Credentials |
 
+## 6bis. Accès distant à la BoxIA (optionnel)
+
+Par défaut, la BoxIA est accessible **uniquement depuis ton réseau local**
+(via `aibox.local`). Si tu veux y accéder depuis l'extérieur (mobile,
+télétravail, support), trois options :
+
+### Option A — Cloudflare Tunnel (recommandé, gratuit)
+
+1. Crée un compte gratuit sur https://www.cloudflare.com/
+2. Achète/transfère un domaine vers Cloudflare (ex: `tonentreprise.fr`)
+3. Crée un tunnel : **Zero Trust → Networks → Tunnels → Create**, suis les
+   instructions pour installer `cloudflared` sur ta BoxIA (ou demande au
+   support si tu préfères qu'on le fasse pour toi)
+4. Récupère 4 valeurs : **API Token**, **Account ID**, **Tunnel ID**,
+   **Zone ID** (toutes visibles dans le dashboard CF)
+5. Ajoute-les dans `/srv/ai-stack/.env` (ainsi que ton domaine choisi) :
+   ```
+   AIBOX_PUBLIC_DOMAIN=ai.tonentreprise.fr
+   CF_API_TOKEN=<token>
+   CF_ACCOUNT_ID=<account_id>
+   CF_TUNNEL_ID=<tunnel_id>
+   CF_ZONE_ID=<zone_id>
+   ```
+6. Lance le script de configuration : il crée automatiquement les
+   sous-domaines `flows.`, `agents.`, `auth.`, `admin.`, `metrics.` :
+   ```bash
+   tools/setup-cloudflare-tunnel-hostnames.sh
+   ```
+7. Restart aibox-app pour qu'il prenne `AIBOX_PUBLIC_DOMAIN` en compte
+
+Tu pourras désormais accéder à ta BoxIA depuis n'importe où via
+`https://ai.tonentreprise.fr` (et `https://flows.ai.tonentreprise.fr`
+pour n8n, etc.).
+
+### Option B — VPN
+
+Configure un VPN (WireGuard, Tailscale…) sur ta box internet et
+accède à la BoxIA via son IP locale comme si tu étais au bureau.
+
+### Option C — Ne rien faire
+
+LAN seulement, pas d'accès distant. Le plus simple, le plus sécurisé.
+Recommandé si l'usage de la BoxIA reste au bureau.
+
 ## 7. Support technique
 
 - **Email support** : (à définir par l'intégrateur)

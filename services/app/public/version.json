@@ -1,0 +1,9 @@
+{
+  "app_version": "0.2.0",
+  "build_date": "2026-05-03T23:11:55.784Z",
+  "commit_sha": "eb00188fb54dc4bb155f58f3b1ae7d3b693b5335",
+  "commit_short": "eb00188",
+  "commit_date": "2026-05-04T01:11:41+02:00",
+  "commit_message": "Merge claude/sharp-rhodes-2832ae : 13 fixes UI + Vision VRAM + React #418 + migration 0002",
+  "branch": "claude/reverent-davinci-6cef54"
+}

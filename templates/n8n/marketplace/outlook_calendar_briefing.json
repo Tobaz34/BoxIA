@@ -1,0 +1,84 @@
+{
+  "name": "AI Box — Briefing agenda Outlook",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "trigger_briefing",
+      "name": "Lun-Ven 7h30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "limit": 20,
+        "additionalFields": {
+          "filter": "=start/dateTime ge '{{ new Date(new Date().setHours(0,0,0,0)).toISOString() }}' and end/dateTime le '{{ new Date(new Date().setHours(23,59,59,999)).toISOString() }}'",
+          "fields": ["subject", "start", "end", "location", "attendees", "bodyPreview", "isOnlineMeeting"]
+        }
+      },
+      "id": "calendar_today",
+      "name": "Agenda du jour",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.all().map(i => i.json);\nif (events.length === 0) return [{ json: { count: 0, body: 'Aucun rendez-vous prévu aujourd\\'hui. Journée libre !' } }];\nconst fmtTime = (iso) => {\n  if (!iso) return '?';\n  const d = new Date(iso);\n  return `${String(d.getHours()).padStart(2,'0')}h${String(d.getMinutes()).padStart(2,'0')}`;\n};\nconst lines = events.map(e => {\n  const start = fmtTime(e.start?.dateTime);\n  const end = fmtTime(e.end?.dateTime);\n  const subj = e.subject || '(sans objet)';\n  const attendees = (e.attendees || []).map(a => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean);\n  const where = e.isOnlineMeeting ? '🎥 visio' : (e.location?.displayName || '');\n  const att = attendees.length ? ` avec ${attendees.slice(0,3).join(', ')}${attendees.length>3?'…':''}` : '';\n  return `- ${start}-${end} | ${subj}${where ? ' — '+where : ''}${att}`;\n}).join('\\n');\nconst body = `Bonjour,\\n\\nVoici votre agenda d'aujourd'hui — ${events.length} rendez-vous :\\n\\n${lines}\\n\\nBon courage !\\n— AI Box`;\nreturn [{ json: { count: events.length, body } }];"
+      },
+      "id": "format_briefing",
+      "name": "Format briefing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "subject": "=📅 AI Box — Briefing agenda ({{$json.count}} RDV aujourd'hui)",
+        "bodyContent": "={{$json.body}}",
+        "bodyContentType": "Text",
+        "toRecipients": "={{$env.ADMIN_EMAIL}}",
+        "additionalFields": {}
+      },
+      "id": "send_briefing",
+      "name": "Envoyer briefing admin",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Lun-Ven 7h30": {
+      "main": [[{ "node": "Agenda du jour", "type": "main", "index": 0 }]]
+    },
+    "Agenda du jour": {
+      "main": [[{ "node": "Format briefing", "type": "main", "index": 0 }]]
+    },
+    "Format briefing": {
+      "main": [[{ "node": "Envoyer briefing admin", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "AI Box" },
+    { "name": "Microsoft" },
+    { "name": "Calendar" },
+    { "name": "Marketplace" }
+  ]
+}

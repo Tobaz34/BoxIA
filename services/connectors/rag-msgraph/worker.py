@@ -1,17 +1,21 @@
 """
 RAG MS Graph — indexe SharePoint / OneDrive dans Qdrant.
 
-Authentification : OAuth2 client_credentials (App Registration Azure AD).
+Authentification : 2 modes via AUTH_MODE :
+  - "client_credentials" (legacy, default) : OAuth2 client_credentials
+    (App Registration Azure AD avec admin consent). Variables MS_TENANT_ID
+    + MS_CLIENT_ID + MS_CLIENT_SECRET + scope ".default". Adapté à un
+    déploiement admin centralisé indexant un drive partagé.
+  - "oauth" (recommandé prod multi-user) : utilise le token OAuth user
+    saisi via /connectors UI (cf services/app/src/lib/oauth-oidc.ts).
+    Variables OAUTH_API_BASE + CONNECTOR_INTERNAL_TOKEN. Le worker
+    indexe le OneDrive perso du user qui a autorisé.
+
 Sync : delta queries Microsoft Graph → ne re-traite que les changements.
 ACL : récupère les permissions de chaque item → propage dans le payload Qdrant
       pour permettre le filtrage par user au moment du retrieval.
 
-Variables d'environnement :
-  MS_TENANT_ID         GUID du tenant
-  MS_CLIENT_ID         Application (client) ID
-  MS_CLIENT_SECRET     Secret client
-  MS_DRIVE_ID          (mode OneDrive User) ID du drive à indexer
-  MS_SITE_ID           (mode SharePoint) ID du site (alternative)
+Variables communes :
   TENANT_ID            slug du client AI Box (ex: nom court)
   OLLAMA_URL           http://ollama:11434
   LLM_EMBED            bge-m3
@@ -20,31 +24,71 @@ Variables d'environnement :
   SYNC_INTERVAL_MINUTES (default 30)
   INCLUDE_EXT          .pdf,.docx,.xlsx,.pptx,.txt,.md,.html
   MAX_FILE_MB          (default 50)
+
+Variables mode client_credentials :
+  MS_TENANT_ID         GUID du tenant
+  MS_CLIENT_ID         Application (client) ID
+  MS_CLIENT_SECRET     Secret client
+  MS_DRIVE_ID          (mode OneDrive User) ID du drive à indexer
+  MS_SITE_ID           (mode SharePoint) ID du site (alternative)
+
+Variables mode oauth :
+  OAUTH_API_BASE               http://aibox-app:3100 (réseau docker)
+  CONNECTOR_INTERNAL_TOKEN     shared secret avec aibox-app .env
+  OAUTH_CONNECTOR_SLUG         défaut "onedrive"
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import pathlib
 import sys
 import time
 import traceback
 from pathlib import Path
 from typing import Iterator
 
+# --- Monkey-patch pdfminer.six avant l'import d'unstructured -------------
+# pdfminer.six ≥ ~20250324 a renommé PSSyntaxError → PDFSyntaxError.
+# unstructured 0.16.13 utilise encore l'ancien nom au runtime (parse PDF)
+# → ImportError sur tous les PDFs. On re-expose PSSyntaxError comme alias
+# avant qu'unstructured ne soit importé. Cf rag-msgraph/requirements.txt.
+try:
+    from pdfminer.pdfparser import PSSyntaxError  # noqa: F401
+except ImportError:
+    import pdfminer.pdfparser as _pp
+    if hasattr(_pp, "PDFSyntaxError"):
+        _pp.PSSyntaxError = _pp.PDFSyntaxError
+# ------------------------------------------------------------------------
+
 import httpx
-from msal import ConfidentialClientApplication
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 from tenacity import retry, stop_after_attempt, wait_exponential
 from unstructured.partition.auto import partition
 
+# Chemin vers _lib partagé. Bind-mount défini dans docker-compose.yml du
+# connector. Cf services/connectors/_lib/oauth.py.
+sys.path.insert(0, "/lib_shared")
+
 # ---------------------------------------------------------------- Config
-MS_TENANT_ID = os.environ["MS_TENANT_ID"]
-MS_CLIENT_ID = os.environ["MS_CLIENT_ID"]
-MS_CLIENT_SECRET = os.environ["MS_CLIENT_SECRET"]
+AUTH_MODE = os.environ.get("AUTH_MODE", "client_credentials").strip().lower()
+
+MS_TENANT_ID = os.environ.get("MS_TENANT_ID", "")
+MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "")
+MS_CLIENT_SECRET = os.environ.get("MS_CLIENT_SECRET", "")
 MS_DRIVE_ID = os.environ.get("MS_DRIVE_ID", "")
 MS_SITE_ID = os.environ.get("MS_SITE_ID", "")
+
+if AUTH_MODE == "client_credentials" and (
+    not MS_TENANT_ID or not MS_CLIENT_ID or not MS_CLIENT_SECRET
+):
+    raise RuntimeError(
+        "AUTH_MODE=client_credentials requires MS_TENANT_ID + MS_CLIENT_ID + "
+        "MS_CLIENT_SECRET env vars",
+    )
 
 TENANT_ID = os.environ.get("TENANT_ID", "default")
 COLLECTION = f"rag_msgraph_{TENANT_ID}"
@@ -63,8 +107,16 @@ CHUNK_TOKENS = int(os.environ.get("CHUNK_TOKENS", "800"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "100"))
 
 # Persiste le delta token entre les runs (pour ne pas tout retraiter)
-DELTA_FILE = Path(os.environ.get("DELTA_FILE", "/data/delta.token"))
-DELTA_FILE.parent.mkdir(parents=True, exist_ok=True)
+DELTA_DIR = Path(os.environ.get("DELTA_DIR", "/state"))
+DELTA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _delta_file_for(drive_id: str) -> Path:
+    """Delta token par drive_id (multi-drive support).
+    On hash le drive_id pour générer un nom court, file-system safe.
+    """
+    h = hashlib.sha1(drive_id.encode("utf-8")).hexdigest()[:12]
+    return DELTA_DIR / f"delta.{h}.token"
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
@@ -73,16 +125,38 @@ log = logging.getLogger("rag-msgraph")
 
 
 # ---------------------------------------------------------------- Auth
-_msal_app = ConfidentialClientApplication(
-    client_id=MS_CLIENT_ID,
-    client_credential=MS_CLIENT_SECRET,
-    authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
-)
+_msal_app = None
+_oauth_source = None
+
+
+def _get_msal_app():
+    global _msal_app
+    if _msal_app is None:
+        from msal import ConfidentialClientApplication
+        _msal_app = ConfidentialClientApplication(
+            client_id=MS_CLIENT_ID,
+            client_credential=MS_CLIENT_SECRET,
+            authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
+        )
+    return _msal_app
+
+
+def _get_oauth_source():
+    global _oauth_source
+    if _oauth_source is None:
+        from oauth import OAuthTokenSource  # services/connectors/_lib/oauth.py
+        _oauth_source = OAuthTokenSource(
+            provider="microsoft",
+            connector_slug=os.environ.get("OAUTH_CONNECTOR_SLUG", "onedrive"),
+        )
+    return _oauth_source
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
 def get_access_token() -> str:
-    res = _msal_app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
+    if AUTH_MODE == "oauth":
+        return _get_oauth_source().token()
+    res = _get_msal_app().acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
     if "access_token" not in res:
         raise RuntimeError(f"Token acquisition failed: {res.get('error_description')}")
     return res["access_token"]
@@ -123,25 +197,71 @@ def download_file(item_id: str, drive_id: str) -> bytes:
 
 
 # ---------------------------------------------------------------- Drive resolution
-def resolve_drive_id() -> str:
+# Fichier généré par /api/connectors/sharepoint/activate quand l'admin
+# coche des bibliothèques dans le picker visuel. Format :
+#   { "drive_ids": ["b!aaa...", "b!bbb..."], "updated_at": "2026-..." }
+# Mounté en RO via /data dans docker-compose.yml.
+# Bind mount RO du /data host (cf docker-compose.yml). aibox-app écrit
+# /srv/ai-stack/data/sharepoint-config.json depuis /api/connectors/[slug]/
+# activate quand l'admin coche des bibliothèques dans le picker visuel.
+SHAREPOINT_CONFIG_FILE = pathlib.Path(
+    os.environ.get("SHAREPOINT_CONFIG_FILE", "/shared/sharepoint-config.json")
+)
+
+
+def resolve_drive_ids() -> list[str]:
+    """Liste de drive_ids à indexer.
+    Priorité :
+      1. /data/sharepoint-config.json (saisie via l'UI picker)
+      2. MS_DRIVE_ID (legacy, env var)
+      3. MS_SITE_ID → Graph /sites/{id}/drive (legacy)
+    """
+    # 1. Config UI (multi-drive)
+    if SHAREPOINT_CONFIG_FILE.exists():
+        try:
+            data = json.loads(SHAREPOINT_CONFIG_FILE.read_text())
+            ids = data.get("drive_ids") or []
+            # Format attendu : list[str] OU list[{drive_id: str, ...}]
+            normalized = []
+            for entry in ids:
+                if isinstance(entry, str):
+                    normalized.append(entry)
+                elif isinstance(entry, dict) and entry.get("drive_id"):
+                    normalized.append(entry["drive_id"])
+            if normalized:
+                return normalized
+        except Exception as e:
+            log.warning("sharepoint-config.json invalide : %s", e)
+
+    # 2. Legacy single-drive
     if MS_DRIVE_ID:
-        return MS_DRIVE_ID
+        return [MS_DRIVE_ID]
     if MS_SITE_ID:
-        # Drive par défaut du site SharePoint
         d = graph_get(f"/sites/{MS_SITE_ID}/drive")
-        return d["id"]
-    raise RuntimeError("Configure MS_DRIVE_ID ou MS_SITE_ID")
+        return [d["id"]]
+
+    raise RuntimeError(
+        "Aucun drive à indexer. Active SharePoint dans /connectors et coche "
+        "au moins une bibliothèque, ou configure MS_DRIVE_ID / MS_SITE_ID en env."
+    )
+
+
+def resolve_drive_id() -> str:
+    """Compat : legacy code path qui appelait resolve_drive_id() (1 drive).
+    On renvoie le premier de la liste."""
+    return resolve_drive_ids()[0]
 
 
 # ---------------------------------------------------------------- Delta walk
 def iter_delta_changes(drive_id: str) -> Iterator[dict]:
     """Itère les changements depuis le dernier delta token (ou full scan si premier run)."""
-    if DELTA_FILE.exists():
-        url = DELTA_FILE.read_text().strip()
+    delta_file = _delta_file_for(drive_id)
+    if delta_file.exists():
+        url = delta_file.read_text().strip()
         log.info("Reprise delta depuis %s", url[:80])
     else:
         url = f"{GRAPH_BASE}/drives/{drive_id}/root/delta"
-        log.info("Premier run — full scan via delta")
+        log.info("Premier run pour %s — full scan via delta", drive_id[:20])
 
     while True:
         data = graph_get_url(url)
@@ -151,8 +271,8 @@ def iter_delta_changes(drive_id: str) -> Iterator[dict]:
         if "@odata.nextLink" in data:
             url = data["@odata.nextLink"]
         elif "@odata.deltaLink" in data:
-            DELTA_FILE.write_text(data["@odata.deltaLink"])
-            log.info("Delta token sauvegardé pour la prochaine sync")
+            delta_file.write_text(data["@odata.deltaLink"])
+            log.info("Delta token sauvegardé pour %s", drive_id[:20])
             return
         else:
             return
@@ -227,7 +347,10 @@ def ensure_collection(qd: QdrantClient, dim: int) -> None:
 
 
 def stable_id(item_id: str, chunk_idx: int, h: str) -> str:
-    return hashlib.sha256(f"{item_id}|{chunk_idx}|{h}".encode()).hexdigest()
+    """Qdrant exige UUID ou unsigned int. UUID v5 déterministe (DNS ns)."""
+    import uuid as _uuid
+    NS = _uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+    return str(_uuid.uuid5(NS, f"{item_id}|{chunk_idx}|{h}"))
 
 
 def delete_item(qd: QdrantClient, item_id: str) -> None:
@@ -298,19 +421,26 @@ def index_item(qd: QdrantClient, drive_id: str, item: dict) -> int:
 def sync_once() -> dict:
     log.info("=== Sync MS Graph start ===")
     qd = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-    drive_id = resolve_drive_id()
-    log.info("Drive: %s", drive_id)
+    drive_ids = resolve_drive_ids()
+    log.info("Drives: %s (%d)", drive_ids, len(drive_ids))
 
     total_items, added, errors = 0, 0, 0
-    for item in iter_delta_changes(drive_id):
-        total_items += 1
-        try:
-            added += index_item(qd, drive_id, item)
-        except Exception as e:
-            errors += 1
-            log.error("erreur item %s : %s", item.get("name", item.get("id")), e)
-            log.debug(traceback.format_exc())
-    return {"items": total_items, "chunks_added": added, "errors": errors}
+    for drive_id in drive_ids:
+        log.info("--- Drive %s ---", drive_id)
+        for item in iter_delta_changes(drive_id):
+            total_items += 1
+            try:
+                added += index_item(qd, drive_id, item)
+            except Exception as e:
+                errors += 1
+                log.error("erreur item %s : %s", item.get("name", item.get("id")), e)
+                log.debug(traceback.format_exc())
+    return {
+        "drives": len(drive_ids),
+        "items": total_items,
+        "chunks_added": added,
+        "errors": errors,
+    }
 
 
 def main() -> None:

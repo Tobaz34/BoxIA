@@ -45,6 +45,14 @@ services:
       data-init:
         condition: service_completed_successfully
     restart: unless-stopped
+    # Ajoute le GID du group `docker` host au user nextjs (uid 1001) du
+    # container, pour que /api/connectors/sync-status (Docker UDS API) et
+    # /api/connectors/[slug]/sync (POST .../restart) puissent ouvrir
+    # /var/run/docker.sock. Sans ça : EACCES.
+    # DOCKER_GID est auto-détecté par install.sh via `getent group docker`
+    # (988 sur RHEL/CentOS, 999 sur Debian/Ubuntu). Default 988 = xefia.
+    group_add:
+      - "${DOCKER_GID:-988}"
     # network_mode: host = le container partage le namespace réseau de l'hôte.
     # Avantage : il joint TOUS les services via localhost:<port> et l'IP LAN
     # du serveur (pas de hairpin Docker, pas de DNS interne incohérent).
@@ -92,6 +100,32 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3100}
       NEXTAUTH_SECRET: ${APP_NEXTAUTH_SECRET}
 
+      # ---- OAuth providers pour les connecteurs (Google Drive/Gmail/Calendar,
+      # Microsoft 365 OneDrive/Outlook/Teams) — lib/oauth-providers.ts.
+      # Si vide, le bouton « Connecter avec Google/Microsoft » affiche le
+      # message ambre « provider non configuré ». Setup côté Tobaz34 dans
+      # console.cloud.google.com et entra.microsoft.com.
+      # Cf docs/oauth-setup.md (à venir) et tools/configure-aibox-domain.sh.
+      OAUTH_REDIRECT_BASE_URL:         ${OAUTH_REDIRECT_BASE_URL:-}
+      GOOGLE_OAUTH_CLIENT_ID:          ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET:      ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      MICROSOFT_OAUTH_CLIENT_ID:       ${MICROSOFT_OAUTH_CLIENT_ID:-}
+      MICROSOFT_OAUTH_CLIENT_SECRET:   ${MICROSOFT_OAUTH_CLIENT_SECRET:-}
+
+      # ---- GitHub master token (self-update + check-updates depuis l'UI) ----
+      # Si vide, fallback sur /data/github-token.json saisi par l'admin
+      # depuis /settings → carte « Connexion GitHub ». Cf lib/github-token.ts.
+      GITHUB_TOKEN:                    ${GITHUB_TOKEN:-}
+
+      # ---- Shared secret entre aibox-app et les workers connecteurs Python.
+      # Utilisé par /api/oauth/internal/token : les workers présentent ce
+      # token dans X-Connector-Token pour récupérer un access_token OAuth
+      # déchiffré (déchiffrement géré server-side par aibox-app, jamais
+      # exposé côté worker).
+      # >=16 chars random. À synchroniser avec les vars connector compose
+      # files (cf services/connectors/rag-gdrive/docker-compose.yml).
+      CONNECTOR_INTERNAL_TOKEN:        ${CONNECTOR_INTERNAL_TOKEN:-}
+
       # ---- Authentik OIDC ----
       # En host mode, localhost:9000 = le port mappé par Authentik
       AUTHENTIK_ISSUER: ${AUTHENTIK_APP_ISSUER:-http://localhost:9000/application/o/aibox-app/}
@@ -112,6 +146,13 @@ services:
       PROMETHEUS_URL: http://localhost:9090
       AUTHENTIK_API_URL: http://localhost:9000
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
+
+      # Qdrant — utilisé par /api/connectors/sync-status pour compter
+      # les points indexés de la collection rag_*_<TENANT>. En host mode
+      # localhost:6333 fonctionne. La clé est requise (mode auth) ; sans
+      # elle on récupère un 401 et le chip affiche "état inconnu".
+      QDRANT_URL: ${QDRANT_URL:-http://localhost:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
 
       # Clés API Dify des agents (créés au wizard).
       # DIFY_DEFAULT_APP_API_KEY = agent "Assistant général" (toujours présent).
@@ -171,6 +212,16 @@ services:
       # ---- Connecteurs sidecars (URLs) ----
       PENNYLANE_TOOL_URL:              ${PENNYLANE_TOOL_URL:-http://127.0.0.1:8090}
       FEC_TOOL_URL:                    ${FEC_TOOL_URL:-http://127.0.0.1:8091}
+
+      # ---- Versions des services tiers (lues par /api/system/services-versions
+      # pour comparer avec les latest GitHub Releases). Si vide, "current"
+      # affiche "?" dans l'UI mais le check latest fonctionne quand même.
+      DIFY_VERSION:                    ${DIFY_VERSION:-}
+      QDRANT_VERSION:                  ${QDRANT_VERSION:-}
+      AUTHENTIK_VERSION:               ${AUTHENTIK_VERSION:-}
+      N8N_VERSION:                     ${N8N_VERSION:-}
+      OLLAMA_VERSION:                  ${OLLAMA_VERSION:-}
+      LANGFUSE_VERSION:                ${LANGFUSE_VERSION:-}
 
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}

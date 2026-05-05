@@ -21,6 +21,16 @@ services:
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
       QDRANT__LOG_LEVEL: INFO
+    # Qdrant + RocksDB ouvre énormément de fichiers (un par segment) quand
+    # une collection grossit. Le ulimit Docker default (~1024) cause des
+    # erreurs « Too many open files » dès qu'une collection passe ~3000
+    # points. Vu live 2026-05-05 sur xefia (rag_msgraph_CLIKINFO en sync
+    # actif → Qdrant unreachable). 65536 est le ulimit recommandé par la
+    # doc Qdrant production.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       # Bindé sur 0.0.0.0 pour accès LAN/VPN. Pour exposition WAN, retirer
       # ces ports et passer par NPM avec TLS.

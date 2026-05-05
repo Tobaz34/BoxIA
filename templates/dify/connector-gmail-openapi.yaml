@@ -1,0 +1,111 @@
+openapi: 3.0.3
+info:
+  title: BoxIA Gmail Tools
+  version: 0.1.0
+  description: |
+    Tools que les agents IA BoxIA utilisent pour lire et chercher dans la
+    boîte Gmail de l'utilisateur connecté via OAuth (cf
+    /connectors → Gmail → "Connecter avec Google").
+
+    L'agent doit appeler ces tools quand l'utilisateur lui demande
+    "regarde mes emails", "qu'est-ce qu'il m'a envoyé ?", "résume le
+    fil de discussion avec X", "y a-t-il une facture en attente ?", etc.
+
+    Si aucune connexion Gmail n'existe, les tools retournent une erreur
+    `connector_not_connected` que l'agent doit relayer à l'utilisateur :
+    « Connectez d'abord votre compte Google dans Connecteurs → Gmail. »
+
+servers:
+  - url: http://host.docker.internal:3100/api/agents-tools
+    description: |
+      aibox-app tourne en network_mode:host. Les Custom Tools Dify
+      atteignent host.docker.internal:host-gateway (cf compose Dify
+      extra_hosts).
+
+paths:
+  /gmail_read_inbox:
+    get:
+      operationId: gmailReadInbox
+      summary: Liste les derniers emails reçus dans la boîte de réception.
+      description: |
+        Retourne les N derniers emails de la boîte de réception (inbox).
+        Utiliser quand l'utilisateur demande « mes derniers emails »,
+        « qu'est-ce que j'ai reçu », « lis mes mails non lus » etc.
+
+        Pour une recherche ciblée, utiliser plutôt `gmailSearch`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: max
+          in: query
+          description: Nombre d'emails à retourner (1-50, default 20).
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: unread
+          in: query
+          description: Si "1", filtre seulement les emails non lus.
+          schema: { type: string, enum: ["0", "1"], default: "0" }
+      responses:
+        "200": { description: "Liste d'emails (id, thread_id, from, subject, date, snippet, unread, etc.)" }
+        "404": { description: "Connexion Gmail absente — l'agent doit demander à l'utilisateur de connecter son compte." }
+
+  /gmail_search:
+    get:
+      operationId: gmailSearch
+      summary: Cherche des emails avec la syntaxe Gmail.
+      description: |
+        Cherche des emails dans toute la mailbox (pas juste inbox) avec
+        la syntaxe Gmail : `from:`, `to:`, `subject:`, `before:YYYY/MM/DD`,
+        `after:YYYY/MM/DD`, `has:attachment`, `is:unread`, `label:facture`,
+        opérateurs OR / quotes pour exact match.
+
+        Exemples :
+          - `from:contact@xefi.fr is:unread`
+          - `subject:"facture 2026" has:attachment`
+          - `to:me before:2026/05/01`
+
+        L'agent doit construire la query Gmail à partir de la demande
+        en langage naturel de l'utilisateur.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: La requête Gmail (syntaxe officielle Gmail).
+          schema: { type: string }
+        - name: max
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200": { description: "Résultats de recherche (id, thread_id, from, subject, date, snippet)." }
+        "400": { description: "?q= requis" }
+        "404": { description: "Connexion Gmail absente." }
+
+  /gmail_get_thread:
+    get:
+      operationId: gmailGetThread
+      summary: Lit le contenu complet d'un thread (corps des messages).
+      description: |
+        Retourne tous les messages du thread avec leur corps texte
+        décodé. Utiliser après `gmailReadInbox` ou `gmailSearch` pour
+        obtenir le détail d'un thread précis (résumé, citation, réponse).
+
+        Le corps est cap à 50k caractères pour éviter d'exploser le
+        contexte du LLM. Les pièces jointes ne sont pas téléchargées,
+        juste listées (filename, mime, size).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Le thread_id retourné par gmailReadInbox / gmailSearch.
+          schema: { type: string }
+      responses:
+        "200": { description: "Détail du thread (subject + array de messages avec body_text + attachments)." }
+        "400": { description: "?id= requis" }
+        "404": { description: "Connexion Gmail absente OU thread introuvable." }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer AGENTS_API_KEY (généré au provisioning, dans .env xefia)

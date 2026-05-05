@@ -242,12 +242,36 @@ main() {
   log "Pour rollback manuel : tools/deploy-to-xefia.sh --rollback (ou git reset --hard $backup_tag)"
 
   reset_to_branch "$branch"
+  recreate_top_level_if_changed
   rebuild_app
   run_pending_migrations
   smoke_test
 
   log_deploy "deploy" "$branch" "OK"
   ok "Déploiement terminé. Backup tag : $backup_tag"
+}
+
+# Si le docker-compose.yml top-level (Qdrant + autres services partagés) a
+# changé dans le pull qu'on vient de faire, on re-up les services concernés
+# pour appliquer les nouvelles options (ex: ulimits sur Qdrant).
+# Idempotent : si rien n'a changé, `docker compose up -d` ne fait rien.
+recreate_top_level_if_changed() {
+  log "Vérification des services top-level (Qdrant…) après git reset"
+  ssh_cmd "cd $SERVER_REPO && \
+    [ -f $ENV_FILE ] && set -a && . $ENV_FILE && set +a; \
+    docker compose --env-file $ENV_FILE up -d 2>&1 | tail -5" >&2
+  ok "Services top-level synchronisés"
+
+  # Dify : re-up uniquement le SSRF proxy si on a touché à sa config (la
+  # whitelist /etc/squid/conf.d/allow-boxia.conf a un volume mount, donc
+  # la recreate prend en compte le nouveau fichier). On évite de re-up
+  # toute la stack Dify (api, web, db, …) qui ferait planter les
+  # conversations en cours.
+  log "Re-up dify-ssrf-proxy si squid-allow-boxia.conf changé"
+  ssh_cmd "cd $SERVER_REPO/services/dify && \
+    [ -f $ENV_FILE ] && set -a && . $ENV_FILE && set +a; \
+    docker compose --env-file $ENV_FILE up -d --no-deps --force-recreate dify-ssrf-proxy 2>&1 | tail -3" >&2
+  ok "dify-ssrf-proxy synchronisé"
 }
 
 main "$@"

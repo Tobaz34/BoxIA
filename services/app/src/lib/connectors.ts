@@ -65,6 +65,19 @@ export interface ConnectorSpec {
   fields: ConnectorField[];
   /** Lien doc / aide en ligne (optionnel). */
   docUrl?: string;
+  /**
+   * Provider OAuth attendu pour ce connecteur. Si défini, et qu'une connexion
+   * OAuth pour ce provider+slug existe (cf lib/oauth-storage.ts), alors les
+   * champs `required: true` du form sont SKIPPÉS pendant l'activation : le
+   * worker récupérera son access_token via /api/oauth/internal/token.
+   *
+   * Exemples :
+   *   - google-drive  → "google"
+   *   - onedrive      → "microsoft"
+   *   - sharepoint*   → "microsoft"
+   *   - gmail-*       → "google"
+   */
+  oauthProvider?: "google" | "microsoft";
 }
 
 export const CATEGORIES: Record<ConnectorCategory, { label: string; icon: string }> = {
@@ -184,17 +197,22 @@ export const CONNECTORS: ConnectorSpec[] = [
     slug: "sharepoint",
     name: "SharePoint Online",
     icon: "🔵",
-    description: "Indexer une bibliothèque SharePoint Microsoft 365.",
+    description: "Indexer une ou plusieurs bibliothèques SharePoint Microsoft 365.",
     category: "storage",
     implStatus: "beta",
     authMethod: "azure_ad",
+    oauthProvider: "microsoft",
     fields: [
-      { key: "tenant_id", label: "Tenant Azure AD", type: "text", required: true,
-        placeholder: "12345678-...-...-..." },
-      { key: "client_id", label: "App ID (Azure registration)", type: "text", required: true },
-      { key: "client_secret", label: "App secret", type: "password", required: true, secret: true },
-      { key: "site_url", label: "URL du site", type: "url", required: true,
-        placeholder: "https://contoso.sharepoint.com/sites/intranet" },
+      // drive_ids est un JSON sérialisé de SelectedDrive[] — alimenté par
+      // le composant SharePointPicker dans ConnectorsManager. Pas de UI
+      // legacy nécessaire (le picker s'occupe de tout).
+      { key: "drive_ids", label: "Bibliothèques sélectionnées (JSON)", type: "text",
+        helpText: "Géré automatiquement par le sélecteur visuel." },
+      { key: "tenant_id", label: "Tenant Azure AD (legacy app-only)", type: "text",
+        placeholder: "12345678-...-...-...",
+        helpText: "Inutile en mode OAuth — laisser vide." },
+      { key: "client_id", label: "App ID (legacy app-only)", type: "text" },
+      { key: "client_secret", label: "App secret (legacy app-only)", type: "password", secret: true },
     ],
     docUrl: "https://learn.microsoft.com/en-us/graph/auth-v2-service",
   },
@@ -204,12 +222,14 @@ export const CONNECTORS: ConnectorSpec[] = [
     icon: "☁️",
     description: "Indexer le OneDrive personnel ou business des utilisateurs.",
     category: "storage",
-    implStatus: "coming_soon",
+    implStatus: "beta",
     authMethod: "azure_ad",
+    oauthProvider: "microsoft",
     fields: [
-      { key: "tenant_id", label: "Tenant Azure AD", type: "text", required: true },
-      { key: "client_id", label: "App ID", type: "text", required: true },
-      { key: "client_secret", label: "App secret", type: "password", required: true, secret: true },
+      { key: "tenant_id", label: "Tenant Azure AD (legacy app-only)", type: "text",
+        helpText: "Inutile en mode OAuth — laisser vide." },
+      { key: "client_id", label: "App ID (legacy app-only)", type: "text" },
+      { key: "client_secret", label: "App secret (legacy app-only)", type: "password", secret: true },
     ],
   },
   {
@@ -220,10 +240,11 @@ export const CONNECTORS: ConnectorSpec[] = [
     category: "storage",
     implStatus: "beta",
     authMethod: "google_oauth",
+    oauthProvider: "google",
     fields: [
-      { key: "service_account_json", label: "Clé service account (JSON)", type: "text",
-        required: true, secret: true,
-        helpText: "Compte de service Google Cloud avec accès au Drive." },
+      { key: "service_account_json", label: "Clé service account (JSON, legacy)", type: "text",
+        secret: true,
+        helpText: "Inutile en mode OAuth (compte personnel) — laisser vide." },
       { key: "shared_drive_id", label: "Drive partagé ID (optionnel)", type: "text",
         placeholder: "0ANxxx..." },
     ],
@@ -281,16 +302,17 @@ export const CONNECTORS: ConnectorSpec[] = [
     category: "email",
     implStatus: "beta",
     authMethod: "azure_ad",
+    oauthProvider: "microsoft",
     fields: [
-      { key: "tenant_id", label: "Tenant Azure AD", type: "text", required: true },
-      { key: "client_id", label: "App ID", type: "text", required: true },
-      { key: "client_secret", label: "App secret", type: "password", required: true, secret: true },
+      { key: "tenant_id", label: "Tenant Azure AD (legacy app-only)", type: "text",
+        helpText: "Inutile en mode OAuth — laisser vide." },
+      { key: "client_id", label: "App ID (legacy app-only)", type: "text" },
+      { key: "client_secret", label: "App secret (legacy app-only)", type: "password", secret: true },
       { key: "scope", label: "Scope", type: "select",
         options: [
           { value: "users", label: "Tous les utilisateurs" },
           { value: "shared_mailbox", label: "Boîte partagée uniquement" },
-        ],
-        required: true },
+        ] },
     ],
   },
   {
@@ -299,11 +321,13 @@ export const CONNECTORS: ConnectorSpec[] = [
     icon: "📨",
     description: "Indexer les emails Google Workspace.",
     category: "email",
-    implStatus: "coming_soon",
+    implStatus: "beta",
     authMethod: "google_oauth",
+    oauthProvider: "google",
     fields: [
-      { key: "service_account_json", label: "Clé service account (JSON)",
-        type: "text", required: true, secret: true },
+      { key: "service_account_json", label: "Clé service account (JSON, legacy)",
+        type: "text", secret: true,
+        helpText: "Inutile en mode OAuth (compte personnel) — laisser vide." },
       { key: "delegated_user", label: "Utilisateur délégué",
         type: "text", placeholder: "admin@entreprise.fr",
         helpText: "Pour le domain-wide delegation Workspace." },
@@ -329,6 +353,36 @@ export const CONNECTORS: ConnectorSpec[] = [
           { value: "starttls", label: "STARTTLS (port 143)" },
           { value: "none",     label: "Aucun (déconseillé)" },
         ] },
+    ],
+  },
+  {
+    slug: "smtp",
+    name: "SMTP (envoi email)",
+    icon: "📤",
+    description: "Serveur SMTP pour envoyer des emails (relances, alertes, rapports). " +
+      "Utilisé par les workflows n8n via la credential 'boxia:smtp' poussée automatiquement.",
+    category: "email",
+    implStatus: "implemented",
+    authMethod: "form",
+    fields: [
+      { key: "host",     label: "Serveur SMTP", type: "text", required: true,
+        placeholder: "smtp.ovh.net" },
+      { key: "port",     label: "Port", type: "text", placeholder: "587",
+        helpText: "587 pour STARTTLS, 465 pour SSL/TLS direct." },
+      { key: "username", label: "Identifiant", type: "text", required: true,
+        placeholder: "ai-box@entreprise.fr" },
+      { key: "password", label: "Mot de passe", type: "password",
+        required: true, secret: true,
+        helpText: "Préférez un mot de passe d'application si dispo." },
+      { key: "tls",      label: "Chiffrement", type: "select",
+        options: [
+          { value: "starttls", label: "STARTTLS (port 587)" },
+          { value: "ssl",      label: "SSL/TLS (port 465)" },
+          { value: "none",     label: "Aucun (déconseillé)" },
+        ] },
+      { key: "from_email", label: "Adresse expéditeur (From)", type: "text",
+        placeholder: "ai-box@entreprise.fr",
+        helpText: "Si vide, l'identifiant est utilisé." },
     ],
   },
 
@@ -529,12 +583,14 @@ export const CONNECTORS: ConnectorSpec[] = [
     icon: "🟣",
     description: "Conversations équipes et canaux Teams.",
     category: "comms",
-    implStatus: "coming_soon",
+    implStatus: "beta",
     authMethod: "azure_ad",
+    oauthProvider: "microsoft",
     fields: [
-      { key: "tenant_id", label: "Tenant", type: "text", required: true },
-      { key: "client_id", label: "App ID", type: "text", required: true },
-      { key: "client_secret", label: "Secret", type: "password", required: true, secret: true },
+      { key: "tenant_id", label: "Tenant (legacy app-only)", type: "text",
+        helpText: "Inutile en mode OAuth — laisser vide." },
+      { key: "client_id", label: "App ID (legacy app-only)", type: "text" },
+      { key: "client_secret", label: "Secret (legacy app-only)", type: "password", secret: true },
     ],
   },
   {
@@ -710,19 +766,19 @@ export const CONNECTORS: ConnectorSpec[] = [
     icon: "🗓️",
     description: "Préparation RDV avec contexte client, résumé de la semaine, suggestions de créneaux.",
     category: "calendar",
-    implStatus: "coming_soon",
+    implStatus: "beta",
     authMethod: "azure_ad",
+    oauthProvider: "microsoft",
     fields: [
-      { key: "tenant_id", label: "Tenant Azure AD", type: "text", required: true },
-      { key: "client_id", label: "App ID", type: "text", required: true },
-      { key: "client_secret", label: "App secret", type: "password",
-        required: true, secret: true },
+      { key: "tenant_id", label: "Tenant Azure AD (legacy app-only)", type: "text",
+        helpText: "Inutile en mode OAuth — laisser vide." },
+      { key: "client_id", label: "App ID (legacy app-only)", type: "text" },
+      { key: "client_secret", label: "App secret (legacy app-only)", type: "password", secret: true },
       { key: "scope", label: "Scope", type: "select",
         options: [
           { value: "users", label: "Tous les utilisateurs" },
           { value: "shared_calendar", label: "Calendrier partagé uniquement" },
-        ],
-        required: true },
+        ] },
     ],
   },
   {
@@ -731,11 +787,13 @@ export const CONNECTORS: ConnectorSpec[] = [
     icon: "📅",
     description: "Calendrier Google Workspace ou perso — préparation et résumé d'agenda.",
     category: "calendar",
-    implStatus: "coming_soon",
+    implStatus: "beta",
     authMethod: "google_oauth",
+    oauthProvider: "google",
     fields: [
-      { key: "service_account_json", label: "Clé service account (JSON)",
-        type: "text", required: true, secret: true },
+      { key: "service_account_json", label: "Clé service account (JSON, legacy)",
+        type: "text", secret: true,
+        helpText: "Inutile en mode OAuth (compte personnel) — laisser vide." },
       { key: "delegated_user", label: "Utilisateur délégué",
         type: "text", placeholder: "admin@entreprise.fr",
         helpText: "Pour le domain-wide delegation Workspace." },
