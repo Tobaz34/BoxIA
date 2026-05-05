@@ -155,67 +155,61 @@ REMOTE_DOCKER
 fi
 hr
 
-# ---- Étape 3 : push du repo via rsync --------------------------------------
-c_blue "[3/5] Push du repo vers $SSH_TARGET:$REMOTE_PATH..."
+# ---- Étape 3 : sync du code via git côté serveur ---------------------------
+# Pourquoi pas rsync : pas dispo par défaut dans Git Bash Windows. git est
+# universel (déjà requis pour cloner ce repo), et on bénéficie en bonus du
+# tracking de version (HEAD identifié, history, rollback git reset --hard).
+#
+# Logique :
+#   - Si /srv/ai-stack/.git existe → git fetch + reset --hard sur le ref voulu
+#   - Sinon → git clone (cas box neuve sans repo)
+#
+# Le `--branch` permet de déployer une branche différente de main (utile pour
+# tester un PR avant merge). Default = main.
+c_blue "[3/5] Sync du code via git côté serveur..."
+GIT_REF="${BRANCH:-main}"
+GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/Tobaz34/BoxIA.git}"
 
-# Si --branch fourni, on bascule localement avant de rsync. On sauvegarde
-# l'état courant pour restaurer ensuite.
-ORIG_BRANCH=""
-if [[ -n "$BRANCH" ]]; then
-  ORIG_BRANCH=$(cd "$REPO_ROOT" && git rev-parse --abbrev-ref HEAD)
-  c_blue "  → checkout local sur $BRANCH (était sur $ORIG_BRANCH)"
-  (cd "$REPO_ROOT" && git checkout "$BRANCH")
-fi
+c_blue "  → Repo  : $GIT_REPO_URL"
+c_blue "  → Ref   : $GIT_REF"
 
-# Crée le dossier distant si nécessaire. On évite sudo quand l'user courant
-# possède déjà le dossier (cas typique sur une box BoxIA déjà montée), sinon
-# sudo est requis et demandera le mdp interactivement → l'opérateur doit
-# lancer ce script depuis un vrai terminal pour ce cas (cf. CLAUDE Code Bash
-# tool n'a pas de TTY).
 ssh "$SSH_TARGET" "
-  if [ -w '$REMOTE_PATH' ] || [ ! -e '$REMOTE_PATH' -a -w \"\$(dirname '$REMOTE_PATH')\" ]; then
-    # L'user peut écrire (ou créer le dossier). Pas besoin de sudo.
+  set -e
+  # Création du dossier (sans sudo si possible — cf. fix précédent)
+  if [ -w '$REMOTE_PATH' ] || ([ ! -e '$REMOTE_PATH' ] && [ -w \"\$(dirname '$REMOTE_PATH')\" ]); then
     mkdir -p '$REMOTE_PATH'
   elif [ \"\$(id -u)\" -eq 0 ]; then
     mkdir -p '$REMOTE_PATH'
   else
-    # Cas dernier recours : sudo (peut prompter mdp si pas NOPASSWD)
     sudo mkdir -p '$REMOTE_PATH'
     sudo chown -R \$(id -u):\$(id -g) '$REMOTE_PATH'
   fi
+
+  cd '$REMOTE_PATH'
+  if [ -d .git ]; then
+    echo '  → git fetch + reset --hard origin/$GIT_REF'
+    git fetch origin '$GIT_REF'
+    git reset --hard 'origin/$GIT_REF'
+  else
+    echo '  → git clone $GIT_REPO_URL (initial)'
+    # Pour cloner dans un dossier non-vide on doit être créatif :
+    # clone dans /tmp puis bouger les fichiers .git
+    if [ \"\$(ls -A 2>/dev/null | wc -l)\" -gt 0 ]; then
+      # Le dossier n'est pas vide — on ne peut pas clone direct
+      # On clone dans tmp et on copie .git
+      TMPCLONE=\$(mktemp -d)
+      git clone --branch '$GIT_REF' --single-branch '$GIT_REPO_URL' \"\$TMPCLONE/repo\"
+      mv \"\$TMPCLONE/repo/.git\" .
+      git reset --hard 'origin/$GIT_REF'
+      rm -rf \"\$TMPCLONE\"
+    else
+      git clone --branch '$GIT_REF' --single-branch '$GIT_REPO_URL' .
+    fi
+  fi
+
+  echo '  → HEAD :' \$(git rev-parse --short HEAD) '(' \$(git log -1 --pretty=%s | head -c 80) ')'
 "
-
-# Rsync avec exclusions des trucs lourds/sensibles + état applicatif persistant.
-# CRITIQUE — `--delete` doit PRÉSERVER ce qui existe déjà côté box mais n'a
-# pas d'équivalent dans le repo (sinon on wipe des données client) :
-#   - data/                : état applicatif (audit.jsonl, agents installés…)
-#   - .env                 : secrets générés à l'install
-#   - client_config.yaml   : config wizard
-#   - .deploy.lock         : lock du script deploy-to-xefia.sh (CLAUDE.md règle 3)
-rsync -az --delete \
-  --exclude='.git/' \
-  --exclude='node_modules/' \
-  --exclude='.next/' \
-  --exclude='__pycache__/' \
-  --exclude='.claude/' \
-  --exclude='.env' \
-  --exclude='client_config.yaml' \
-  --exclude='deploy.log' \
-  --exclude='*.log' \
-  --exclude='data/' \
-  --exclude='.deploy.lock' \
-  --exclude='services/app/.next/' \
-  --exclude='services/app/node_modules/' \
-  -e ssh \
-  "$REPO_ROOT/" "$SSH_TARGET:$REMOTE_PATH/"
-
-c_green "  ✓ Code synchronisé"
-
-# Restore branche d'origine
-if [[ -n "$ORIG_BRANCH" ]]; then
-  c_blue "  → restore branche locale : $ORIG_BRANCH"
-  (cd "$REPO_ROOT" && git checkout "$ORIG_BRANCH")
-fi
+c_green "  ✓ Code synchronisé sur $GIT_REF"
 hr
 
 # ---- Étape 4 : push master credentials -------------------------------------
