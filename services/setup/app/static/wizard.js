@@ -18,8 +18,22 @@ const state = {
     admin_password: DEFAULT_ADMIN_PASSWORD,
     hw_profile: 'tpe',
     technologies: {},
+    // Cloudflare (rempli à l'étape 3, validé via /api/cloudflare/test)
+    cloudflare_subdomain: '',
+    cf_account_id: '',
+    cf_tunnel_id: '',
+    cf_api_token: '',
+    cf_zone_id: '',
+    // Branding (étape 5, optionnel)
+    brand_name_display: '',
+    brand_logo_url: '',
+    brand_primary_color: '#3b82f6',
+    brand_accent_color: '#10b981',
+    brand_footer_text: '',
   },
   questionnaire: null,
+  cloudflareDefaults: null,  // chargé via /api/cloudflare/defaults au load
+  cloudflareValidated: false,  // bouton Suivant désactivé tant que !validé
 };
 
 function show(step) {
@@ -60,6 +74,22 @@ function gather(step) {
     if (!state.data.admin_email) { alert('Email requis'); return false; }
   }
   if (step === 3) {
+    // Cloudflare obligatoire
+    state.data.cloudflare_subdomain = document.getElementById('cloudflare_subdomain').value.trim().toLowerCase();
+    state.data.cf_account_id = document.getElementById('cf_account_id').value.trim();
+    state.data.cf_tunnel_id = document.getElementById('cf_tunnel_id').value.trim();
+    state.data.cf_api_token = document.getElementById('cf_api_token').value.trim();
+    state.data.cf_zone_id = document.getElementById('cf_zone_id').value.trim();
+    if (!/^[a-z0-9-]{2,30}$/.test(state.data.cloudflare_subdomain)) {
+      alert('Sous-domaine invalide (lettres minuscules, chiffres, tiret, 2-30 chars)');
+      return false;
+    }
+    if (!state.cloudflareValidated) {
+      alert('Cliquez d\'abord sur « Tester la connexion Cloudflare » pour valider les credentials');
+      return false;
+    }
+  }
+  if (step === 4) {
     state.data.technologies = {};
     state.data.activates = [];
     document.querySelectorAll('#questionnaire select.item-input').forEach(sel => {
@@ -72,17 +102,125 @@ function gather(step) {
       acts.forEach(a => state.data.activates.push(a));
     });
   }
+  if (step === 5) {
+    // Branding (tout optionnel — pas de validation bloquante)
+    state.data.brand_name_display = document.getElementById('brand_name_display').value.trim();
+    state.data.brand_logo_url = document.getElementById('brand_logo_url').value.trim();
+    state.data.brand_primary_color = document.getElementById('brand_primary_color').value;
+    state.data.brand_accent_color = document.getElementById('brand_accent_color').value;
+    state.data.brand_footer_text = document.getElementById('brand_footer_text').value.trim();
+  }
   return true;
 }
 
 function next(from) {
   if (!gather(from)) return;
-  if (from === 2 && !state.questionnaire) loadQuestionnaire();
-  if (from === 3) renderRecap();
+  // Pré-charge le questionnaire à l'arrivée sur l'étape 4 (ex-étape 3)
+  if (from === 3 && !state.questionnaire) loadQuestionnaire();
+  if (from === 5) renderRecap();
   show(from + 1);
 }
 
 function prev(from) { show(from - 1); }
+
+async function loadCloudflareDefaults() {
+  try {
+    const r = await fetch('/api/cloudflare/defaults');
+    const j = await r.json();
+    state.cloudflareDefaults = j;
+
+    // Met à jour le suffix affiché .ialocal.pro / .autre-domaine.pro
+    const root = document.getElementById('cf_root_domain');
+    if (root) root.textContent = j.root_domain || 'ialocal.pro';
+
+    // Si l'admin a pré-injecté les 4 IDs CF via env du container, on
+    // pré-remplit les champs ET on cache la section "Credentials master"
+    // (le client final ne devrait pas les voir).
+    if (j.has_master_creds) {
+      const acc = document.getElementById('cf_account_id');
+      const tun = document.getElementById('cf_tunnel_id');
+      const zone = document.getElementById('cf_zone_id');
+      const tok = document.getElementById('cf_api_token');
+      if (acc) acc.value = j.account_id;
+      if (tun) tun.value = j.tunnel_id;
+      if (zone) zone.value = j.zone_id;
+      // Token : on n'a pas la valeur (sensible) côté API, on met un placeholder
+      // qui sera renvoyé tel quel — le backend remplacera par celui de l'env.
+      if (tok) {
+        tok.value = '__USE_MASTER_TOKEN__';
+        tok.placeholder = '(injecté depuis env du container)';
+      }
+      // Cache la section credentials
+      const sec = document.getElementById('cf_master_creds_section');
+      if (sec) sec.hidden = true;
+    }
+  } catch (e) {
+    console.warn('Cloudflare defaults indisponibles :', e);
+  }
+}
+
+async function testCloudflare() {
+  const btn = document.getElementById('cf_test_btn');
+  const result = document.getElementById('cf_test_result');
+  const nextBtn = document.getElementById('cf_next_btn');
+
+  // Capture les valeurs sans appeler gather() (qui bloquerait sur cloudflareValidated)
+  const subdomain = document.getElementById('cloudflare_subdomain').value.trim().toLowerCase();
+  const account = document.getElementById('cf_account_id').value.trim();
+  const tunnel = document.getElementById('cf_tunnel_id').value.trim();
+  const token = document.getElementById('cf_api_token').value.trim();
+  const zone = document.getElementById('cf_zone_id').value.trim();
+
+  if (!/^[a-z0-9-]{2,30}$/.test(subdomain)) {
+    result.innerHTML = '<span style="color:var(--danger)">✗ Sous-domaine invalide</span>';
+    return;
+  }
+  if (!account || !tunnel || !token || !zone) {
+    result.innerHTML = '<span style="color:var(--danger)">✗ Tous les champs Cloudflare sont requis</span>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Test en cours…';
+  result.innerHTML = '<span style="color:var(--muted)">Validation auprès de l\'API Cloudflare…</span>';
+
+  try {
+    const r = await fetch('/api/cloudflare/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cloudflare_subdomain: subdomain,
+        cf_account_id: account,
+        cf_tunnel_id: tunnel,
+        cf_api_token: token,
+        cf_zone_id: zone,
+      }),
+    });
+    const j = await r.json();
+
+    if (!r.ok) {
+      const detail = j.detail || j;
+      const msg = detail.message || j.error || `HTTP ${r.status}`;
+      result.innerHTML = `<span style="color:var(--danger)">✗ ${msg}</span>`;
+      state.cloudflareValidated = false;
+      nextBtn.disabled = true;
+    } else {
+      const warning = j.subdomain_already_used
+        ? `<br><span style="color:var(--warning,#fa0)">⚠ ${j.existing_records_count} record(s) DNS existent déjà pour ${j.subdomain_full} — ils seront remplacés</span>`
+        : '';
+      result.innerHTML = `<span style="color:var(--success,#3a3)">✓ Tunnel « ${j.tunnel_name} », zone « ${j.zone_name} ». URL future : <code>https://${j.subdomain_full}</code></span>${warning}`;
+      state.cloudflareValidated = true;
+      nextBtn.disabled = false;
+    }
+  } catch (e) {
+    result.innerHTML = `<span style="color:var(--danger)">✗ Erreur réseau : ${e}</span>`;
+    state.cloudflareValidated = false;
+    nextBtn.disabled = true;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Tester la connexion Cloudflare';
+  }
+}
 
 async function loadQuestionnaire() {
   try {
@@ -135,23 +273,40 @@ function renderRecap() {
   const actsStr = acts.length
     ? `\nConnecteurs/templates qui seront activés :\n${acts.map(a => '  ✓ ' + a).join('\n')}`
     : '\n(aucune activation spécifique — IA générique uniquement)';
+
+  const cfRoot = (state.cloudflareDefaults && state.cloudflareDefaults.root_domain) || 'ialocal.pro';
+  const publicUrl = d.cloudflare_subdomain
+    ? `https://${d.cloudflare_subdomain}.${cfRoot}`
+    : '(non configuré — mode LAN-only)';
+
+  const brandSummary = (d.brand_logo_url || d.brand_footer_text || d.brand_name_display
+    || d.brand_primary_color !== '#3b82f6' || d.brand_accent_color !== '#10b981')
+    ? `\n  Nom affiché : ${d.brand_name_display || '(défaut : ' + d.client_name + ')'}\n` +
+      `  Logo URL    : ${d.brand_logo_url || '(défaut : hexagone)'}\n` +
+      `  Couleur primaire : ${d.brand_primary_color}\n` +
+      `  Couleur accent   : ${d.brand_accent_color}\n` +
+      `  Footer      : ${d.brand_footer_text || '(vide)'}`
+    : '\n  (défauts — modifiable plus tard via Paramètres → Branding)';
+
   document.getElementById('recap').textContent =
     `Entreprise   : ${d.client_name}\n` +
     `Secteur      : ${d.client_sector}\n` +
     `Utilisateurs : ${d.users_count}\n` +
     `Profil HW    : ${d.hw_profile}\n` +
-    `Domaine      : ${d.domain}\n\n` +
+    `Domaine LAN  : ${d.domain}\n` +
+    `URL publique : ${publicUrl}\n\n` +
     `Compte administrateur (premier utilisateur) :\n` +
     `  Nom    : ${d.admin_fullname}\n` +
     `  Login  : ${d.admin_username}\n` +
     `  Email  : ${d.admin_email}\n` +
     `  Mot de passe par défaut : ${DEFAULT_ADMIN_PASSWORD}\n` +
     `  ⚠ À CHANGER à la 1re connexion (rappel automatique dans l'app)\n\n` +
+    `Branding :${brandSummary}\n\n` +
     `Technologies sélectionnées :\n${techs}${actsStr}`;
 }
 
 async function deploy() {
-  show(5);
+  show(7);
   const out = document.getElementById('log-output');
   out.textContent = 'Génération de la configuration...\n';
 
@@ -261,6 +416,28 @@ async function deploy() {
         out.textContent += '  ⚠ Erreur import templates : ' + e + '\n';
       }
 
+      // 7. Configuration du tunnel Cloudflare (DNS + ingress) si subdomain fourni
+      if (state.data.cloudflare_subdomain) {
+        out.textContent += '\n[4/4] Configuration du tunnel Cloudflare (DNS + ingress)...\n';
+        try {
+          const r6 = await fetch('/api/deploy/setup-cloudflare-tunnel', { method: 'POST' });
+          const j6 = await r6.json();
+          if (j6.ok) {
+            out.textContent += '  ✓ Tunnel Cloudflare configuré\n';
+            if (j6.stdout_tail) {
+              const lines = j6.stdout_tail.split('\n').filter(l => l.includes('✓') || l.includes('→')).slice(-5);
+              for (const l of lines) out.textContent += '    ' + l + '\n';
+            }
+          } else {
+            out.textContent += '  ⚠ Cloudflare : ' + (j6.error || 'échec') + '\n';
+            if (j6.stderr_tail) out.textContent += '    ' + j6.stderr_tail.slice(0, 200) + '\n';
+            out.textContent += '  → Tu peux le relancer manuellement : sudo /srv/ai-stack/tools/setup-cloudflare-tunnel-hostnames.sh\n';
+          }
+        } catch (e) {
+          out.textContent += '  ⚠ Erreur réseau Cloudflare : ' + e + '\n';
+        }
+      }
+
       ws.close();
       await fetch('/api/configure/finish', { method: 'POST' });
       finalize();
@@ -286,3 +463,23 @@ function goToDashboard() {
 
 // Init
 show(1);
+// Charge les credentials CF pré-injectées (si présentes dans l'env du
+// container wizard) → permet de cacher la section "Credentials master"
+// pour les futures box clients où l'admin BoxIA les a déjà fournies.
+loadCloudflareDefaults();
+
+// Pré-active le bouton « Suivant » de l'étape Cloudflare quand l'user
+// modifie un champ après un test réussi (= invalide la validation).
+['cloudflare_subdomain', 'cf_account_id', 'cf_tunnel_id', 'cf_api_token', 'cf_zone_id'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    if (state.cloudflareValidated) {
+      state.cloudflareValidated = false;
+      const nextBtn = document.getElementById('cf_next_btn');
+      const result = document.getElementById('cf_test_result');
+      if (nextBtn) nextBtn.disabled = true;
+      if (result) result.innerHTML = '<span style="color:var(--muted)">⚠ Champs modifiés — re-tester</span>';
+    }
+  });
+});

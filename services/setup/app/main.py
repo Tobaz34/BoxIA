@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import secrets
 import string
 import subprocess
@@ -67,6 +68,39 @@ class WizardSubmit(BaseModel):
     hw_profile: str = "tpe"
     technologies: dict[str, Any] = {}
 
+    # ---- Cloudflare Tunnel (obligatoire à partir de 2026-05-05) ----
+    # Le sous-domaine prefix devient l'URL publique : <prefix>.ialocal.pro
+    # (zone DNS toujours ialocal.pro, gérée côté ops). Ex: "demo" → demo.ialocal.pro.
+    # Validation regex côté frontend : ^[a-z0-9-]{2,30}$
+    cloudflare_subdomain: str = ""
+    # 4 IDs Cloudflare nécessaires pour appeler l'API CF lors du provisioning.
+    # Pour les futurs clients, ces 4 valeurs seront pré-injectées via env du
+    # container wizard (CF_DEFAULT_*) → champs cachés. Pour la 1re install
+    # (xefia / démo), Andre saisit dans le wizard.
+    cf_account_id: str = ""
+    cf_tunnel_id: str = ""
+    cf_api_token: str = ""
+    cf_zone_id: str = ""
+
+    # ---- Branding (optionnel) ----
+    # Si vides → défaults appliqués (logo hexagone, bleu primary, vert accent,
+    # nom = client_name, footer vide). Aussi modifiable post-install via
+    # /settings → BrandingCard.
+    brand_logo_url: str = ""
+    brand_primary_color: str = "#3b82f6"
+    brand_accent_color: str = "#10b981"
+    brand_name_display: str = ""  # Vide = utilise client_name
+    brand_footer_text: str = ""
+
+
+class CloudflareTestPayload(BaseModel):
+    """Payload de validation des credentials CF avant submit du wizard."""
+    cf_account_id: str
+    cf_tunnel_id: str
+    cf_api_token: str
+    cf_zone_id: str
+    cloudflare_subdomain: str
+
 
 # ---- Helpers --------------------------------------------------------------
 def is_configured() -> bool:
@@ -112,6 +146,109 @@ async def configured_page(request: Request):
 @app.get("/api/state")
 async def state():
     return {"configured": is_configured()}
+
+
+@app.get("/api/cloudflare/defaults")
+async def cloudflare_defaults():
+    """Retourne les credentials CF pré-injectées dans l'env du container
+    wizard, si présentes. Permet à l'UI de pré-remplir les champs et de les
+    masquer si c'est l'admin BoxIA qui les a déjà fournies à la box neuve.
+
+    Variables d'env attendues :
+      CF_DEFAULT_ACCOUNT_ID, CF_DEFAULT_TUNNEL_ID,
+      CF_DEFAULT_API_TOKEN, CF_DEFAULT_ZONE_ID, CF_DEFAULT_ROOT_DOMAIN
+
+    Si CF_DEFAULT_ROOT_DOMAIN n'est pas set, default = ialocal.pro.
+    Pour la 1re install (xefia/démo) ces vars ne sont PAS dans l'env →
+    le wizard les demandera au user (Andre saisit). Pour les futures
+    box clients, l'admin posera ces vars en pré-install et le client
+    ne verra que le champ "sous-domaine".
+    """
+    has_account = bool(os.environ.get("CF_DEFAULT_ACCOUNT_ID"))
+    has_tunnel = bool(os.environ.get("CF_DEFAULT_TUNNEL_ID"))
+    has_token = bool(os.environ.get("CF_DEFAULT_API_TOKEN"))
+    has_zone = bool(os.environ.get("CF_DEFAULT_ZONE_ID"))
+    return {
+        "root_domain": os.environ.get("CF_DEFAULT_ROOT_DOMAIN", "ialocal.pro"),
+        "has_master_creds": has_account and has_tunnel and has_token and has_zone,
+        "account_id": os.environ.get("CF_DEFAULT_ACCOUNT_ID", ""),
+        "tunnel_id": os.environ.get("CF_DEFAULT_TUNNEL_ID", ""),
+        "zone_id": os.environ.get("CF_DEFAULT_ZONE_ID", ""),
+        # On NE retourne PAS le token (sensible) — juste un flag is_set.
+        "api_token_set": has_token,
+    }
+
+
+@app.post("/api/cloudflare/test")
+async def cloudflare_test(payload: CloudflareTestPayload):
+    """Valide les credentials Cloudflare en appelant l'API CF :
+      1. GET /accounts/<id>/cfd_tunnel/<tunnel_id> → confirme le tunnel existe
+      2. GET /zones/<zone_id> → confirme l'accès à la zone
+      3. Optionnel : check que le sous-domaine n'est pas déjà pris (DNS record)
+
+    Pas d'écriture côté CF (juste read-only). Le provisioning effectif
+    arrive lors de /api/configure puis du script
+    setup-cloudflare-tunnel-hostnames.sh.
+    """
+    import urllib.request
+    import urllib.error
+    import json
+
+    # Validation regex du sous-domaine
+    if not re.match(r"^[a-z0-9-]{2,30}$", payload.cloudflare_subdomain):
+        raise HTTPException(400, {
+            "error": "invalid_subdomain",
+            "message": "Sous-domaine invalide (lettres minuscules, chiffres, tiret, 2-30 chars)"
+        })
+
+    headers = {
+        "Authorization": f"Bearer {payload.cf_api_token}",
+        "Content-Type": "application/json",
+    }
+    api_base = "https://api.cloudflare.com/client/v4"
+
+    def cf_get(path: str) -> tuple[bool, dict]:
+        try:
+            req = urllib.request.Request(f"{api_base}{path}", headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return True, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return False, {"status": e.code, "reason": e.reason, "body": e.read().decode("utf-8", "replace")[:500]}
+        except Exception as e:
+            return False, {"status": 0, "reason": str(e)}
+
+    # 1. Tunnel
+    ok_tunnel, j_tunnel = cf_get(f"/accounts/{payload.cf_account_id}/cfd_tunnel/{payload.cf_tunnel_id}")
+    if not ok_tunnel:
+        raise HTTPException(400, {
+            "error": "tunnel_not_found",
+            "message": "Tunnel Cloudflare inaccessible (vérifier Account ID, Tunnel ID, et que le token a la permission Tunnel:Read)",
+            "detail": j_tunnel,
+        })
+
+    # 2. Zone
+    ok_zone, j_zone = cf_get(f"/zones/{payload.cf_zone_id}")
+    if not ok_zone:
+        raise HTTPException(400, {
+            "error": "zone_not_found",
+            "message": "Zone Cloudflare inaccessible (vérifier Zone ID et que le token a la permission Zone.DNS:Edit + Zone:Read)",
+            "detail": j_zone,
+        })
+    zone_name = (j_zone.get("result") or {}).get("name", "")
+
+    # 3. Check subdomain disponibilité (optionnel — info, pas blocant)
+    subdomain_full = f"{payload.cloudflare_subdomain}.{zone_name}"
+    ok_dns, j_dns = cf_get(f"/zones/{payload.cf_zone_id}/dns_records?name={subdomain_full}")
+    existing_records = (j_dns.get("result") or []) if ok_dns else []
+
+    return {
+        "ok": True,
+        "tunnel_name": (j_tunnel.get("result") or {}).get("name", ""),
+        "zone_name": zone_name,
+        "subdomain_full": subdomain_full,
+        "subdomain_already_used": len(existing_records) > 0,
+        "existing_records_count": len(existing_records),
+    }
 
 
 @app.get("/api/apps")
@@ -345,6 +482,43 @@ async def configure(payload: WizardSubmit):
         f"SEARXNG_SECRET={searxng_secret}",
         "SEARXNG_URL=http://127.0.0.1:8888",
     ]
+
+    # ----- Cloudflare Tunnel (toujours présent depuis 2026-05-05) -----
+    # Le wizard demande au client juste le sous-domaine prefix ; les 4 IDs
+    # CF sont injectées soit via env du container (cas client : pré-rempli
+    # par l'admin BoxIA), soit saisies manuellement par l'admin lors de la
+    # 1re install démo. Le script tools/setup-cloudflare-tunnel-hostnames.sh
+    # est appelé automatiquement à la fin du déploiement pour créer DNS +
+    # ingress tunnel via API Cloudflare.
+    if payload.cloudflare_subdomain:
+        cf_root = os.environ.get("CF_DEFAULT_ROOT_DOMAIN", "ialocal.pro")
+        public_domain = f"{payload.cloudflare_subdomain}.{cf_root}"
+        env_lines.extend([
+            "",
+            "# ----- Cloudflare Tunnel (set par wizard) -----",
+            f"AIBOX_PUBLIC_DOMAIN={public_domain}",
+            f"CLOUDFLARE_ACCOUNT_ID={shell_escape(payload.cf_account_id)}",
+            f"CLOUDFLARE_TUNNEL_ID={shell_escape(payload.cf_tunnel_id)}",
+            f"CLOUDFLARE_API_TOKEN={shell_escape(payload.cf_api_token)}",
+            f"CLOUDFLARE_ZONE_ID={shell_escape(payload.cf_zone_id)}",
+        ])
+
+    # ----- Branding (optionnel, défauts hexagone bleu/vert) -----
+    # Toutes les vars sont aussi modifiables post-install via /settings →
+    # BrandingCard. Le wizard les pré-remplit pour qu'on puisse livrer une
+    # box "marquée client" dès le 1er accès.
+    brand_name_final = payload.brand_name_display.strip() or payload.client_name
+    env_lines.extend([
+        "",
+        "# ----- Branding (set par wizard, modifiable via /settings) -----",
+        f"BRAND_NAME={shell_escape(brand_name_final)}",
+        f"BRAND_LOGO_URL={shell_escape(payload.brand_logo_url.strip())}",
+        f"BRAND_PRIMARY_COLOR={shell_escape(payload.brand_primary_color or '#3b82f6')}",
+        f"BRAND_ACCENT_COLOR={shell_escape(payload.brand_accent_color or '#10b981')}",
+        f"BRAND_FOOTER_TEXT={shell_escape(payload.brand_footer_text.strip())}",
+        # CLIENT_NAME déjà set en haut (l. 270), pas de doublon
+    ])
+
     for key, val in payload.technologies.items():
         if isinstance(val, bool):
             env_lines.append(f"CLIENT_HAS_{key.upper()}={'true' if val else 'false'}")
@@ -663,6 +837,50 @@ async def deploy_start():
         stderr=subprocess.STDOUT,
     )
     return {"pid": proc.pid, "log": str(log_path)}
+
+
+@app.post("/api/deploy/setup-cloudflare-tunnel")
+async def setup_cloudflare_tunnel():
+    """Provisionne le tunnel Cloudflare en appelant le script
+    tools/setup-cloudflare-tunnel-hostnames.sh à la racine du repo.
+
+    Pré-requis : .env contient AIBOX_PUBLIC_DOMAIN + 4 vars CLOUDFLARE_*
+    (set par /api/configure si l'user a fourni le sous-domaine au wizard).
+
+    Si AIBOX_PUBLIC_DOMAIN absent → no-op (mode LAN-only, pas d'erreur).
+    Le script crée DNS records + ingress rules CF pour les sous-domaines
+    standards : flows.<domain>, agents.<domain>, auth.<domain>, etc.
+    """
+    env_file = AIBOX_ROOT / ".env"
+    if not env_file.exists():
+        raise HTTPException(400, "Pas de .env — lance /api/configure d'abord")
+    env_text = env_file.read_text()
+    if "AIBOX_PUBLIC_DOMAIN=" not in env_text:
+        return {"ok": True, "skipped": "no_public_domain", "message": "Mode LAN-only — pas de tunnel à configurer"}
+
+    script_path = AIBOX_ROOT / "tools" / "setup-cloudflare-tunnel-hostnames.sh"
+    if not script_path.exists():
+        return {"ok": False, "error": "script_not_found", "path": str(script_path)}
+
+    # Le script lit /srv/ai-stack/.env automatiquement, pas besoin de passer
+    # les credentials en arg.
+    try:
+        proc = subprocess.run(
+            ["bash", str(script_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(AIBOX_ROOT),
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "timeout_120s"}
+
+    return {
+        "ok": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "stdout_tail": proc.stdout[-2000:],
+        "stderr_tail": proc.stderr[-1000:] if proc.stderr else "",
+    }
 
 
 @app.post("/api/configure/finish")
