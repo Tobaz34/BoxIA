@@ -62,13 +62,25 @@ export async function POST(req: Request) {
     });
   }
 
-  // Approval gate
+  // Approval gate avec propagation P0 #2 (userId/conversation/auto_approve)
+  // + P0 #3 (audit_context) depuis les headers Dify si forwardés.
+  const userIdHeader = req.headers.get("x-user-id") || undefined;
+  const conversationHeader = req.headers.get("x-conversation-id") || undefined;
+  const auditContextHeader = req.headers.get("x-audit-context") || undefined;
+  const autoApproveKey = conversationHeader
+    ? `${conversationHeader}:install_agent_fr`
+    : undefined;
+
   const gate = await requireApproval<{ slug: string }>({
     body: body as { slug: string; approval_token?: unknown },
     action: "install_agent_fr",
     description: `Installer l'assistant BoxIA-FR « ${tpl.name || slug} » (catégorie ${tpl.category || "?"})`,
     params: { slug },
     caller_actor: "concierge-agent",
+    user_id: userIdHeader,
+    conversation_id: conversationHeader,
+    auto_approve_key: autoApproveKey,
+    audit_context: auditContextHeader,
   });
   if (!gate.go) {
     tracer.failure({

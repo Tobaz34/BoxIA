@@ -71,12 +71,30 @@ export async function POST(req: Request) {
   // Approval gate : 1ère passe → enregistre pending + 202.
   // 2ème passe (avec approval_token) → continue avec les params APPROUVÉS
   // (pas ceux du body, qui pourraient avoir été altérés entre temps).
+  //
+  // Sprint 2a P0 #3 — propagation user_id / conversation_id / audit_context
+  // depuis les headers que Dify peut forwarder. Si absents, fallback no-op
+  // (l'auditor LLM ne s'active que si audit_context est non-vide).
+  const userIdHeader = req.headers.get("x-user-id") || undefined;
+  const conversationHeader = req.headers.get("x-conversation-id") || undefined;
+  const auditContextHeader = req.headers.get("x-audit-context") || undefined;
+  // auto_approve_key : (conversation_id, action) — permet à l'user de
+  // cocher "ne plus me redemander pour cette tâche" et de bypasser le
+  // banner pour les futurs install_workflow dans la même conversation.
+  const autoApproveKey = conversationHeader
+    ? `${conversationHeader}:install_workflow`
+    : undefined;
+
   const gate = await requireApproval<{ file: string }>({
     body: body as { file: string; approval_token?: unknown },
     action: "install_workflow",
     description: `Installer le workflow n8n « ${entry.name || file} » (désactivé par défaut)`,
     params: { file },
     caller_actor: "concierge-agent",
+    user_id: userIdHeader,
+    conversation_id: conversationHeader,
+    auto_approve_key: autoApproveKey,
+    audit_context: auditContextHeader,
   });
   if (!gate.go) {
     // Approval pending (202) ou refusée — tracer comme « failure » légère

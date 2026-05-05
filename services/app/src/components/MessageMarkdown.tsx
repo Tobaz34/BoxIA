@@ -22,11 +22,32 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type ComponentProps } from "react";
 import { ArtifactPanel } from "./ArtifactPanel";
+import { DelegationCard } from "./DelegationCard";
 import {
   artifactKindFromLang,
   deriveArtifactTitle,
   type ArtifactKind,
 } from "@/lib/artifacts";
+
+/** Map slug → emoji affiché à côté du nom de l'agent dans DelegationCard.
+ *  Source : services/app/src/lib/agents.ts AGENTS[slug].icon mais on
+ *  duplique côté client pour ne pas charger l'objet AGENTS complet. */
+const AGENT_ICONS: Record<string, string> = {
+  general: "🤖",
+  vision: "👁",
+  accountant: "📊",
+  hr: "👥",
+  support: "🎧",
+  concierge: "🛎️",
+};
+const AGENT_NAMES: Record<string, string> = {
+  general: "Assistant général",
+  vision: "Assistant vision",
+  accountant: "Assistant comptable",
+  hr: "Assistant RH",
+  support: "Support clients",
+  concierge: "Concierge AI Box",
+};
 
 function CodeBlockHeader({
   lang,
@@ -107,7 +128,15 @@ interface ThinkToken {
    *  mais `</think>` pas encore reçu). */
   open: boolean;
 }
-type Segment = FileToken | TextToken | ThinkToken;
+interface DelegationToken {
+  type: "delegation";
+  slug: string;
+  depth: number;
+  status: "success" | "failed" | "pending";
+  /** Réponse brute du specialist (ou hint d'erreur). */
+  answer: string;
+}
+type Segment = FileToken | TextToken | ThinkToken | DelegationToken;
 
 function parseFileMarkers(content: string): Segment[] {
   const re = /\{\{file:([0-9a-f-]+):([^:]+):(\d+):([^}]+)\}\}/g;
@@ -124,6 +153,44 @@ function parseFileMarkers(content: string): Segment[] {
       name: decodeURIComponent(m[2]),
       size: parseInt(m[3], 10),
       mime: m[4],
+    });
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < content.length) {
+    out.push({ type: "text", value: content.slice(lastIdx) });
+  }
+  return out.length > 0 ? out : [{ type: "text", value: content }];
+}
+
+/**
+ * Parse les blocs `[DELEGATION:slug:depth:status]...[/DELEGATION]` émis
+ * par le Concierge quand il délègue à un specialist (cf migration 0013
+ * `[DELEGATE-V1]`). Le bloc est rendu en <DelegationCard> collapsible
+ * inline ; le texte autour du bloc reste rendu en markdown normal.
+ *
+ * Format attendu :
+ *   [DELEGATION:accountant:1:success]
+ *   <réponse brute du specialist>
+ *   [/DELEGATION]
+ *
+ * Sprint 2b P0 #4 part 4/4.
+ */
+function parseDelegationMarkers(content: string): Segment[] {
+  // Multi-line regex (s flag pour . matchant les newlines)
+  const re = /\[DELEGATION:([a-z0-9_-]+):(\d+):(success|failed|pending)\]([\s\S]*?)\[\/DELEGATION\]/gi;
+  const out: Segment[] = [];
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    if (m.index > lastIdx) {
+      out.push({ type: "text", value: content.slice(lastIdx, m.index) });
+    }
+    out.push({
+      type: "delegation",
+      slug: m[1],
+      depth: parseInt(m[2], 10) || 1,
+      status: m[3].toLowerCase() as "success" | "failed" | "pending",
+      answer: m[4].trim(),
     });
     lastIdx = m.index + m[0].length;
   }
@@ -299,7 +366,9 @@ function ThinkingBlock({ value, open: streaming }: { value: string; open?: boole
 export function MessageMarkdown({ content }: { content: string }) {
   // 1. Split d'abord sur les blocs <think>...</think> (collapsible UI fallback
   //    quand strip-think côté serveur n'a pas attrapé).
-  // 2. Sur chaque sous-bloc "normal", split sur les file markers
+  // 2. Sur chaque sous-bloc "normal", split sur les delegation markers
+  //    [DELEGATION:slug:depth:status]...[/DELEGATION] (P0 #4).
+  // 3. Sur chaque sous-sous-bloc "text", split sur les file markers
   //    {{file:UUID:nom:size:mime}} (BUG-006).
   const blocks = useMemo(() => parseThinkBlocks(content), [content]);
 
@@ -309,16 +378,41 @@ export function MessageMarkdown({ content }: { content: string }) {
         if (b.type === "think") {
           return <ThinkingBlock key={`th-${bi}`} value={b.value} open={b.open} />;
         }
-        const segments = parseFileMarkers(b.value);
+        const delegationSegs = parseDelegationMarkers(b.value);
         return (
           <div key={`n-${bi}`}>
-            {segments.map((seg, i) =>
-              seg.type === "file"
-                ? <DownloadChip key={`f-${seg.id}-${i}`} {...seg} />
-                : seg.type === "text"
-                  ? <MarkdownPart key={`t-${i}`} content={seg.value} />
-                  : null,
-            )}
+            {delegationSegs.map((dseg, di) => {
+              if (dseg.type === "delegation") {
+                return (
+                  <DelegationCard
+                    key={`d-${bi}-${di}`}
+                    targetSlug={dseg.slug}
+                    targetName={AGENT_NAMES[dseg.slug]}
+                    targetIcon={AGENT_ICONS[dseg.slug]}
+                    answer={dseg.answer}
+                    depth={dseg.depth}
+                    pending={dseg.status === "pending"}
+                    failed={dseg.status === "failed"}
+                    errorHint={dseg.status === "failed" ? dseg.answer : undefined}
+                  />
+                );
+              }
+              if (dseg.type === "text") {
+                const segments = parseFileMarkers(dseg.value);
+                return (
+                  <div key={`tt-${bi}-${di}`}>
+                    {segments.map((seg, i) =>
+                      seg.type === "file"
+                        ? <DownloadChip key={`f-${seg.id}-${i}`} {...seg} />
+                        : seg.type === "text"
+                          ? <MarkdownPart key={`t-${i}`} content={seg.value} />
+                          : null,
+                    )}
+                  </div>
+                );
+              }
+              return null;
+            })}
           </div>
         );
       })}

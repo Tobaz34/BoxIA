@@ -13,6 +13,7 @@ import {
   Settings,
   HelpCircle,
   ShieldCheck,
+  ShieldAlert,
   Plug,
   Sparkles,
   Zap,
@@ -21,6 +22,7 @@ import {
   Database,
   X,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
 import { useUI, setUI } from "@/lib/ui-store";
 import { useT } from "@/lib/i18n";
@@ -43,10 +45,44 @@ const adminItems = [
   { href: "/workflows/marketplace", labelKey: "sidebar.admin.marketplaceN8n", icon: Zap },
   { href: "/integrations/mcp",      labelKey: "sidebar.admin.mcp",            icon: Network },
   { href: "/audit",                 labelKey: "sidebar.admin.audit",          icon: ScrollText },
+  { href: "/approvals",             labelKey: "sidebar.admin.approvals",      icon: ShieldAlert, badge: "approvals" as const },
   { href: "/system",                labelKey: "sidebar.admin.system",         icon: Activity },
   { href: "/bench",                 labelKey: "sidebar.admin.bench",          icon: BarChart3 },
   { href: "/settings",              labelKey: "sidebar.admin.settings",       icon: Settings },
 ];
+
+/**
+ * Hook qui poll le count des approvals pending pour afficher un badge
+ * dynamique dans la sidebar. Polling 30s (assez pour pas spammer mais
+ * réactif au chargement). Le banner global ApprovalBanner poll plus
+ * vite (5s) pour la réactivité utilisateur.
+ *
+ * Sprint 1 P0 #2 part 3/3 finalisée.
+ */
+function useApprovalsCount(enabled: boolean): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const r = await fetch("/api/approvals", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = (await r.json()) as { count?: number };
+        if (!cancelled) setCount(j.count || 0);
+      } catch {
+        // silencieux
+      }
+    }
+    void poll();
+    const id = setInterval(() => void poll(), 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [enabled]);
+  return count;
+}
 
 interface SidebarProps {
   isAdmin?: boolean;
@@ -59,6 +95,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
   const { state } = useUI();
   const open = state.mobileMenuOpen;
   const { t } = useT();
+  const approvalsCount = useApprovalsCount(isAdmin);
 
   return (
     <>
@@ -113,10 +150,13 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
               {adminItems.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.href);
+                const showBadge =
+                  ("badge" in item && item.badge === "approvals" && approvalsCount > 0);
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
+                    onClick={() => setUI({ mobileMenuOpen: false })}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-default ${
                       active
                         ? "bg-primary/15 text-primary font-medium"
@@ -124,7 +164,16 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
                     }`}
                   >
                     <Icon size={18} />
-                    <span>{t(item.labelKey)}</span>
+                    <span className="flex-1">{t(item.labelKey)}</span>
+                    {showBadge && (
+                      <span
+                        className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold bg-amber-500 text-white"
+                        aria-label={`${approvalsCount} approbations en attente`}
+                        title={`${approvalsCount} approbations en attente`}
+                      >
+                        {approvalsCount > 99 ? "99+" : approvalsCount}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
