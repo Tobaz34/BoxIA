@@ -113,6 +113,10 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
       "outlook-graph": [
         "openid", "email", "profile", "offline_access", "User.Read",
         "Mail.Read",
+        // Mail.Send permet aux workflows n8n d'envoyer des emails via le
+        // node microsoftOutlook (digest matin, briefing agenda, etc.) sans
+        // dépendre d'un SMTP séparé.
+        "Mail.Send",
       ],
       "outlook-calendar": [
         "openid", "email", "profile", "offline_access", "User.Read",
