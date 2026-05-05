@@ -242,12 +242,25 @@ main() {
   log "Pour rollback manuel : tools/deploy-to-xefia.sh --rollback (ou git reset --hard $backup_tag)"
 
   reset_to_branch "$branch"
+  recreate_top_level_if_changed
   rebuild_app
   run_pending_migrations
   smoke_test
 
   log_deploy "deploy" "$branch" "OK"
   ok "Déploiement terminé. Backup tag : $backup_tag"
+}
+
+# Si le docker-compose.yml top-level (Qdrant + autres services partagés) a
+# changé dans le pull qu'on vient de faire, on re-up les services concernés
+# pour appliquer les nouvelles options (ex: ulimits sur Qdrant).
+# Idempotent : si rien n'a changé, `docker compose up -d` ne fait rien.
+recreate_top_level_if_changed() {
+  log "Vérification des services top-level (Qdrant…) après git reset"
+  ssh_cmd "cd $SERVER_REPO && \
+    [ -f $ENV_FILE ] && set -a && . $ENV_FILE && set +a; \
+    docker compose --env-file $ENV_FILE up -d 2>&1 | tail -5" >&2
+  ok "Services top-level synchronisés"
 }
 
 main "$@"
