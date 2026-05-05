@@ -489,6 +489,13 @@ PG_DIFY_PASSWORD=$(gen_secret 32)
 PG_AUTHENTIK_PASSWORD=$(gen_secret 32)
 AUTHENTIK_SECRET_KEY=$(gen_secret 60)
 DIFY_SECRET_KEY=$(gen_secret 50)
+# Plugin Daemon (Dify ≥1.x) : 2 secrets distincts requis. Sans eux le
+# container aibox-dify-plugin-daemon plante au boot avec :
+#   invalid configuration: Field validation for 'ServerKey' failed on 'required'
+#   invalid configuration: Field validation for 'DifyInnerApiKey' failed on 'required'
+# Cf services/dify/docker-compose.yml — vars SERVER_KEY et INNER_API_KEY_FOR_PLUGIN.
+DIFY_PLUGIN_DAEMON_KEY=$(gen_secret 48)
+DIFY_INNER_API_KEY=$(gen_secret 48)
 QDRANT_API_KEY=$(gen_secret 32)
 # ---- Sidecars & connecteurs : auto-génération obligatoire ----
 # Principe produit : aucun secret ne doit être saisi à la main par l'admin
@@ -583,6 +590,8 @@ PG_DIFY_PASSWORD=${PG_DIFY_PASSWORD}
 PG_AUTHENTIK_PASSWORD=${PG_AUTHENTIK_PASSWORD}
 AUTHENTIK_SECRET_KEY=${AUTHENTIK_SECRET_KEY}
 DIFY_SECRET_KEY=${DIFY_SECRET_KEY}
+DIFY_PLUGIN_DAEMON_KEY=${DIFY_PLUGIN_DAEMON_KEY}
+DIFY_INNER_API_KEY=${DIFY_INNER_API_KEY}
 QDRANT_API_KEY=${QDRANT_API_KEY}
 
 # ----- SIDECARS & CONNECTEURS (auto-générés, ne PAS modifier) -----
@@ -704,6 +713,20 @@ if ! ask_yn "Lancer le déploiement maintenant ?" "y"; then
 fi
 
 deploy_stack
+
+# En mode BOOTSTRAP : démarre AUSSI le wizard (services/setup) sur ${SETUP_PORT:-80}.
+# Sans ça, le client n'a pas d'UI pour renseigner ses vraies infos après le
+# bootstrap → la box reste avec les valeurs placeholder ("Acme SARL", etc.).
+# Variable SETUP_PORT permet d'overrider le port (utile si :80 est déjà pris,
+# ex: par Nextcloud sur xefia → SETUP_PORT=8080).
+if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+  hr
+  c_blue "  → Démarrage du wizard de setup (services/setup)..."
+  ( cd services/setup && \
+    SETUP_PORT="${SETUP_PORT:-80}" docker compose --env-file ../../.env up -d ) || \
+    c_yellow "  ⚠ Le démarrage du wizard a échoué (port ${SETUP_PORT:-80} occupé ?). Vérifie : docker logs aibox-setup-caddy"
+  c_green "    ✓ Wizard accessible sur http://<box>:${SETUP_PORT:-80}"
+fi
 
 hr
 c_green "╔══════════════════════════════════════════════════════════════════╗"

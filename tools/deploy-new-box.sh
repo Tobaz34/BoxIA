@@ -244,7 +244,10 @@ hr
 # L'absence de TTY permet de lancer ce script depuis n'importe quel contexte
 # non-interactif (CI, agent, etc.) sans erreur "TTY required".
 # stdout/stderr sont transmis en streaming via SSH → on voit les logs en live.
-ssh "$SSH_TARGET" "cd $REMOTE_PATH && AIBOX_BOOTSTRAP=1 bash install.sh" || {
+# SETUP_PORT propagé pour les cas où :80 est déjà pris sur la box hôte
+# (ex: xefia a un Nextcloud Apache externe sur :80 → SETUP_PORT=8080 fait
+# servir le wizard sur :8080 sans conflit).
+ssh "$SSH_TARGET" "cd $REMOTE_PATH && AIBOX_BOOTSTRAP=1 SETUP_PORT=${SETUP_PORT:-80} bash install.sh" || {
   c_red "✗ install.sh a échoué (exit $?)"
   c_red "  Inspecte les logs sur la box : ssh $SSH_TARGET 'tail -100 $REMOTE_PATH/deploy.log'"
   exit 1
