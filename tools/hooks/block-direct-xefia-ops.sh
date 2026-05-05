@@ -33,8 +33,12 @@ if ! echo "$COMMAND" | grep -qE '(ssh|scp).*(xefia|192\.168\.15\.210)'; then
   exit 0
 fi
 
-# 2. Whitelist : passe par le script officiel
-if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|start-connector)\.sh'; then
+# 2. Whitelist : passe par un script officiel de la pipeline
+# - deploy-to-xefia       : redéploie aibox-app (rebuild ciblé + migrations)
+# - deploy-new-box        : déploie sur une box neuve (rsync + creds + install BOOTSTRAP)
+# - provision-master-creds : pousse /etc/aibox-master/cloudflare.env via scp+sudo
+# - start-connector       : lance un container connecteur ad-hoc
+if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|deploy-new-box|provision-master-creds|start-connector)\.sh'; then
   exit 0
 fi
 
