@@ -74,6 +74,21 @@ const SOURCE_LABEL: Record<string, { label: string; icon: string }> = {
   unknown: { label: "Inconnu", icon: "❓" },
 };
 
+interface DiskUsage {
+  total_bytes: number;
+  collections: { name: string; bytes: number }[];
+  server_total_bytes: number | null;
+  server_free_bytes: number | null;
+  error?: string | null;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} Mo`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} Go`;
+}
+
 export function RagPanel() {
   const { data: session } = useSession();
   const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
@@ -82,18 +97,25 @@ export function RagPanel() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch("/api/rag/collections", { cache: "no-store" });
-      const j = await r.json();
-      if (!r.ok) {
+      const [colRes, diskRes] = await Promise.all([
+        fetch("/api/rag/collections", { cache: "no-store" }),
+        fetch("/api/rag/disk-usage", { cache: "no-store" }).catch(() => null),
+      ]);
+      const j = await colRes.json();
+      if (!colRes.ok) {
         setError(j.error || "fetch_failed");
         setCollections([]);
       } else {
         setCollections(j.collections);
+      }
+      if (diskRes && diskRes.ok) {
+        setDiskUsage(await diskRes.json());
       }
     } catch (e) {
       setError((e as Error).message);
@@ -101,6 +123,13 @@ export function RagPanel() {
       setLoading(false);
     }
   }, []);
+
+  // Helper : taille disque pour une collection donnée
+  const diskBytesFor = (name: string): number | null => {
+    if (!diskUsage) return null;
+    const m = diskUsage.collections.find((c) => c.name === name);
+    return m ? m.bytes : null;
+  };
 
   useEffect(() => {
     if (isAdmin) refresh();
@@ -134,8 +163,25 @@ export function RagPanel() {
                 ? "Chargement…"
                 : collections.length === 0
                 ? "Aucune collection indexée pour l'instant — branchez un connecteur (Google Drive, OneDrive…) puis lancez une synchronisation."
-                : `${collections.length} collection${collections.length > 1 ? "s" : ""} · ` +
-                  `${collections.reduce((acc, c) => acc + c.points_count, 0).toLocaleString("fr-FR")} chunks indexés`}
+                : (
+                  <>
+                    {collections.length} collection{collections.length > 1 ? "s" : ""}{" · "}
+                    {collections.reduce((acc, c) => acc + c.points_count, 0).toLocaleString("fr-FR")} chunks indexés
+                    {diskUsage && diskUsage.total_bytes > 0 && (
+                      <>
+                        {" · "}
+                        <span title="Espace disque consommé par toutes les collections RAG">
+                          {formatBytes(diskUsage.total_bytes)} sur disque
+                        </span>
+                        {diskUsage.server_total_bytes && diskUsage.server_free_bytes && (
+                          <span className="text-muted/70 text-xs ml-1">
+                            (volume Qdrant : {formatBytes(diskUsage.server_free_bytes)} libre / {formatBytes(diskUsage.server_total_bytes)})
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
             </p>
           </div>
         </div>
@@ -185,6 +231,11 @@ export function RagPanel() {
                     <StatusBadge status={c.status} />
                     <span className="text-muted">
                       {c.points_count.toLocaleString("fr-FR")} chunks · {c.vector_size}-d {c.vector_distance}
+                      {diskBytesFor(c.name) !== null && (
+                        <span className="ml-1.5 text-muted/80">
+                          · {formatBytes(diskBytesFor(c.name)!)}
+                        </span>
+                      )}
                     </span>
                   </div>
                   {isOpen ? <ChevronDown size={16} className="text-muted" /> : <ChevronRight size={16} className="text-muted" />}
