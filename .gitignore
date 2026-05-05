@@ -84,3 +84,6 @@ tools/migrations/_state.json
 
 # Corpus de test multimodal (récupérable depuis le serveur xefia, pas du repo)
 tests/benchmark-multimodal/corpus/
+
+# Cache local des clones OSS analysés (recherche comparative)
+.research-cache/
