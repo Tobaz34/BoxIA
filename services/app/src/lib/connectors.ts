@@ -65,6 +65,19 @@ export interface ConnectorSpec {
   fields: ConnectorField[];
   /** Lien doc / aide en ligne (optionnel). */
   docUrl?: string;
+  /**
+   * Provider OAuth attendu pour ce connecteur. Si défini, et qu'une connexion
+   * OAuth pour ce provider+slug existe (cf lib/oauth-storage.ts), alors les
+   * champs `required: true` du form sont SKIPPÉS pendant l'activation : le
+   * worker récupérera son access_token via /api/oauth/internal/token.
+   *
+   * Exemples :
+   *   - google-drive  → "google"
+   *   - onedrive      → "microsoft"
+   *   - sharepoint*   → "microsoft"
+   *   - gmail-*       → "google"
+   */
+  oauthProvider?: "google" | "microsoft";
 }
 
 export const CATEGORIES: Record<ConnectorCategory, { label: string; icon: string }> = {
@@ -188,13 +201,16 @@ export const CONNECTORS: ConnectorSpec[] = [
     category: "storage",
     implStatus: "beta",
     authMethod: "azure_ad",
+    oauthProvider: "microsoft",
     fields: [
-      { key: "tenant_id", label: "Tenant Azure AD", type: "text", required: true,
-        placeholder: "12345678-...-...-..." },
-      { key: "client_id", label: "App ID (Azure registration)", type: "text", required: true },
-      { key: "client_secret", label: "App secret", type: "password", required: true, secret: true },
-      { key: "site_url", label: "URL du site", type: "url", required: true,
-        placeholder: "https://contoso.sharepoint.com/sites/intranet" },
+      { key: "site_url", label: "URL du site (optionnel)", type: "url",
+        placeholder: "https://contoso.sharepoint.com/sites/intranet",
+        helpText: "Si vide, on indexe la racine OneDrive du compte connecté." },
+      { key: "tenant_id", label: "Tenant Azure AD (legacy app-only)", type: "text",
+        placeholder: "12345678-...-...-...",
+        helpText: "Inutile en mode OAuth — laisser vide." },
+      { key: "client_id", label: "App ID (legacy app-only)", type: "text" },
+      { key: "client_secret", label: "App secret (legacy app-only)", type: "password", secret: true },
     ],
     docUrl: "https://learn.microsoft.com/en-us/graph/auth-v2-service",
   },
@@ -204,12 +220,14 @@ export const CONNECTORS: ConnectorSpec[] = [
     icon: "☁️",
     description: "Indexer le OneDrive personnel ou business des utilisateurs.",
     category: "storage",
-    implStatus: "coming_soon",
+    implStatus: "beta",
     authMethod: "azure_ad",
+    oauthProvider: "microsoft",
     fields: [
-      { key: "tenant_id", label: "Tenant Azure AD", type: "text", required: true },
-      { key: "client_id", label: "App ID", type: "text", required: true },
-      { key: "client_secret", label: "App secret", type: "password", required: true, secret: true },
+      { key: "tenant_id", label: "Tenant Azure AD (legacy app-only)", type: "text",
+        helpText: "Inutile en mode OAuth — laisser vide." },
+      { key: "client_id", label: "App ID (legacy app-only)", type: "text" },
+      { key: "client_secret", label: "App secret (legacy app-only)", type: "password", secret: true },
     ],
   },
   {
@@ -220,10 +238,11 @@ export const CONNECTORS: ConnectorSpec[] = [
     category: "storage",
     implStatus: "beta",
     authMethod: "google_oauth",
+    oauthProvider: "google",
     fields: [
-      { key: "service_account_json", label: "Clé service account (JSON)", type: "text",
-        required: true, secret: true,
-        helpText: "Compte de service Google Cloud avec accès au Drive." },
+      { key: "service_account_json", label: "Clé service account (JSON, legacy)", type: "text",
+        secret: true,
+        helpText: "Inutile en mode OAuth (compte personnel) — laisser vide." },
       { key: "shared_drive_id", label: "Drive partagé ID (optionnel)", type: "text",
         placeholder: "0ANxxx..." },
     ],

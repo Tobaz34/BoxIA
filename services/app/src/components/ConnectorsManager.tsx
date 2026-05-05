@@ -46,6 +46,9 @@ interface ConnectorItem {
   category: Category;
   implStatus: ImplStatus;
   authMethod?: string;
+  /** Si défini, les champs `required` peuvent être skippés pendant
+   *  l'activation dès qu'une connexion OAuth est établie pour ce provider. */
+  oauthProvider?: "google" | "microsoft";
   fields: Field[];
   docUrl?: string;
   status: Status;
@@ -493,39 +496,57 @@ export function ConnectorsManager() {
               </div>
             )}
 
-            <div className="space-y-3">
-              {editing.fields.map((f) => (
-                <div key={f.key}>
-                  <label className="text-xs font-medium block mb-1">
-                    {f.label}
-                    {f.required && <span className="text-red-400 ml-0.5">*</span>}
-                  </label>
-                  {f.type === "select" ? (
-                    <select
-                      value={editConfig[f.key] || ""}
-                      onChange={(e) => setEditConfig({ ...editConfig, [f.key]: e.target.value })}
-                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-primary"
-                    >
-                      <option value="">— sélectionner —</option>
-                      {f.options?.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type={f.type === "password" ? "password" : f.type === "url" ? "url" : "text"}
-                      value={editConfig[f.key] || ""}
-                      onChange={(e) => setEditConfig({ ...editConfig, [f.key]: e.target.value })}
-                      placeholder={f.placeholder}
-                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary"
-                    />
-                  )}
-                  {f.helpText && (
-                    <p className="text-[11px] text-muted mt-0.5">{f.helpText}</p>
-                  )}
+            {(() => {
+              const fieldsBlock = (
+                <div className="space-y-3">
+                  {editing.fields.map((f) => (
+                    <div key={f.key}>
+                      <label className="text-xs font-medium block mb-1">
+                        {f.label}
+                        {f.required && <span className="text-red-400 ml-0.5">*</span>}
+                      </label>
+                      {f.type === "select" ? (
+                        <select
+                          value={editConfig[f.key] || ""}
+                          onChange={(e) => setEditConfig({ ...editConfig, [f.key]: e.target.value })}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                        >
+                          <option value="">— sélectionner —</option>
+                          {f.options?.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={f.type === "password" ? "password" : f.type === "url" ? "url" : "text"}
+                          value={editConfig[f.key] || ""}
+                          onChange={(e) => setEditConfig({ ...editConfig, [f.key]: e.target.value })}
+                          placeholder={f.placeholder}
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary"
+                        />
+                      )}
+                      {f.helpText && (
+                        <p className="text-[11px] text-muted mt-0.5">{f.helpText}</p>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              );
+              // Si le connecteur supporte OAuth, on cache le form legacy
+              // derrière un <details> car en pratique l'admin n'a rien à
+              // remplir : la connexion OAuth ci-dessus suffit.
+              if (editing.oauthProvider) {
+                return (
+                  <details className="rounded-md border border-border bg-background/40 p-3">
+                    <summary className="text-xs text-muted cursor-pointer select-none">
+                      Configuration avancée (mode legacy app-only — pas nécessaire en OAuth)
+                    </summary>
+                    <div className="mt-3">{fieldsBlock}</div>
+                  </details>
+                );
+              }
+              return fieldsBlock;
+            })()}
 
             {error && (
               <div className="mt-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-3 py-2">

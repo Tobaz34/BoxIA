@@ -45,12 +45,52 @@ export async function POST(
       config_keys: Object.keys(body.config || {}),
       impl_status: spec.implStatus,
     }, ipFromHeaders(req));
+
+    // Best-effort : pour les 3 slugs RAG OAuth, déclenche un restart du
+    // container worker (= sync initial). Si le container n'existe pas
+    // (pas encore démarré côté admin avec start-connector.sh), on
+    // n'échoue pas — l'admin verra le chip "non démarré" et lancera le
+    // worker manuellement.
+    let initial_sync_triggered = false;
+    if (["google-drive", "onedrive", "sharepoint-online"].includes(slug)) {
+      try {
+        const http = await import("node:http");
+        const container = slug === "google-drive"
+          ? "aibox-conn-rag-gdrive"
+          : "aibox-conn-rag-msgraph";
+        const sock = process.env.DOCKER_SOCKET_PATH || "/var/run/docker.sock";
+        await new Promise<void>((resolve) => {
+          const r = http.request(
+            {
+              socketPath: sock,
+              path: `/containers/${container}/restart?t=2`,
+              method: "POST",
+              headers: { Host: "docker" },
+            },
+            (res) => {
+              if (res.statusCode === 204 || res.statusCode === 200) {
+                initial_sync_triggered = true;
+              }
+              res.resume();
+              resolve();
+            },
+          );
+          r.on("error", () => resolve()); // best-effort, on ne bloque pas
+          r.setTimeout(5000, () => { r.destroy(); resolve(); });
+          r.end();
+        });
+      } catch {
+        // best-effort, on ignore
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       slug: next.slug,
       status: next.status,
       activated_at: next.activated_at,
       impl_status: spec.implStatus,
+      initial_sync_triggered,
       note: spec.implStatus !== "implemented"
         ? "Connecteur enregistré mais le worker n'est pas encore implémenté côté backend. " +
           "La configuration sera utilisée dès que le connecteur sera disponible."
