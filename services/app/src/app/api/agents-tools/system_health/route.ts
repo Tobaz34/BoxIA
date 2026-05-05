@@ -7,6 +7,7 @@
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
+import { toolUpstreamError } from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -20,17 +21,19 @@ export async function GET(req: Request) {
       cache: "no-store",
     });
     if (!r.ok) {
-      return NextResponse.json(
-        { error: "health_check_failed", status: r.status },
-        { status: 502 },
-      );
+      return toolUpstreamError({
+        error: "health_check_failed",
+        hint: "Le service /api/system/health a retourné une erreur. Réessayable.",
+        upstreamStatus: r.status,
+      });
     }
     const data = await r.json();
     return NextResponse.json(data);
   } catch (e) {
-    return NextResponse.json(
-      { error: "health_check_failed", detail: String(e).slice(0, 200) },
-      { status: 502 },
-    );
+    return toolUpstreamError({
+      error: "health_check_failed",
+      hint: "Échec réseau lors du health check interne. Réessayable.",
+      detail: String(e).slice(0, 200),
+    });
   }
 }

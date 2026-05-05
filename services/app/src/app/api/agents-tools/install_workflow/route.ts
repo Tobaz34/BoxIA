@@ -21,6 +21,11 @@ import {
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { logAction } from "@/lib/audit-helper";
 import { requireApproval } from "@/lib/approval-gate";
+import {
+  toolError,
+  toolValidationError,
+  toolUpstreamError,
+} from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -31,11 +36,11 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as { file?: unknown; approval_token?: unknown };
   } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
+    return toolValidationError("bad_json", "Body JSON invalide");
   }
   const file = typeof body.file === "string" ? body.file : "";
   if (!file) {
-    return NextResponse.json({ error: "missing_file" }, { status: 400 });
+    return toolValidationError("missing_file", "Champ 'file' requis");
   }
 
   // Vérifie le whitelist catalogue AVANT de créer le pending : pas la
@@ -43,7 +48,13 @@ export async function POST(req: Request) {
   const catalog = await readCatalog().catch(() => null);
   const entry = catalog?.workflows.find((w) => w.file === file);
   if (!entry) {
-    return NextResponse.json({ error: "not_in_catalog", file }, { status: 404 });
+    return toolError({
+      error: "not_in_catalog",
+      hint: `Le workflow '${file}' n'existe pas dans le catalogue marketplace.`,
+      status: 404,
+      retryable: false,
+      detail: `file=${file}`,
+    });
   }
 
   // Approval gate : 1ère passe → enregistre pending + 202.
@@ -92,9 +103,10 @@ export async function POST(req: Request) {
       next_action_url: "/workflows",
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: "install_failed", detail: String(e).slice(0, 300) },
-      { status: 502 },
-    );
+    return toolUpstreamError({
+      error: "install_failed",
+      hint: "L'installation du workflow a échoué (n8n upstream). Réessayable.",
+      detail: String(e).slice(0, 300),
+    });
   }
 }

@@ -15,6 +15,11 @@
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { logAction } from "@/lib/audit-helper";
+import {
+  toolValidationError,
+  toolUpstreamError,
+  toolConfigError,
+} from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -42,13 +47,9 @@ export async function POST(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
 
   if (!SEARXNG_URL) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "search_disabled",
-        hint: "SEARXNG_URL not configured (déploie services/search/docker-compose.yml puis ajoute SEARXNG_URL=http://127.0.0.1:8888 dans .env)",
-      },
-      { status: 503 },
+    return toolConfigError(
+      "search_disabled",
+      "SEARXNG_URL not configured (déploie services/search/docker-compose.yml puis ajoute SEARXNG_URL=http://127.0.0.1:8888 dans .env)",
     );
   }
 
@@ -56,13 +57,13 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as PostBody;
   } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
+    return toolValidationError("bad_json", "Body JSON invalide");
   }
   const query = typeof body.query === "string" ? body.query.trim() : "";
   if (!query || query.length < 2) {
-    return NextResponse.json(
-      { error: "missing_or_short_query", hint: "min 2 chars" },
-      { status: 400 },
+    return toolValidationError(
+      "missing_or_short_query",
+      "Champ 'query' requis (min 2 caractères)",
     );
   }
   const maxResults = Math.min(
@@ -97,15 +98,12 @@ export async function POST(req: Request) {
     clearTimeout(timer);
     if (!r.ok) {
       const text = await r.text().catch(() => "");
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "searxng_upstream_error",
-          status: r.status,
-          body: text.slice(0, 200),
-        },
-        { status: 502 },
-      );
+      return toolUpstreamError({
+        error: "searxng_upstream_error",
+        hint: "SearXNG a retourné une erreur. Réessaye dans quelques secondes.",
+        upstreamStatus: r.status,
+        detail: text.slice(0, 200),
+      });
     }
     const data = (await r.json()) as { results?: SearxngResult[] };
     const results = (data.results || [])
@@ -142,9 +140,10 @@ export async function POST(req: Request) {
         : `Top ${results.length} résultats. Cite les URLs dans ta réponse.`,
     });
   } catch (e: unknown) {
-    return NextResponse.json(
-      { ok: false, error: "search_failed", detail: String(e).slice(0, 200) },
-      { status: 502 },
-    );
+    return toolUpstreamError({
+      error: "search_failed",
+      hint: "Échec réseau lors de l'appel à SearXNG (timeout/abort/DNS). Réessayable.",
+      detail: String(e).slice(0, 200),
+    });
   }
 }

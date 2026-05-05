@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { readCatalog } from "@/lib/n8n-marketplace";
 import { listWorkflows } from "@/lib/n8n";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
+import { toolError } from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -47,9 +48,13 @@ export async function GET(req: Request) {
       deep_link: "/workflows/marketplace",
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: "marketplace_unreadable", detail: String(e).slice(0, 200) },
-      { status: 500 },
-    );
+    // Catalogue marketplace I/O failure — peut être transitoire.
+    return toolError({
+      error: "marketplace_unreadable",
+      hint: "Impossible de lire le catalogue marketplace n8n. Vérifier le fichier sur disque.",
+      status: 500,
+      retryable: true,
+      detail: String(e).slice(0, 200),
+    });
   }
 }

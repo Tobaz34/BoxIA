@@ -15,7 +15,8 @@
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
-import { getToolToken, apiError } from "@/lib/connector-tool-helpers";
+import { getToolToken } from "@/lib/connector-tool-helpers";
+import { toolError, toolValidationError } from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -91,18 +92,35 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const threadId = (url.searchParams.get("id") || "").trim();
   if (!threadId) {
-    return NextResponse.json({ error: "missing_id", hint: "?id=<thread_id>" }, { status: 400 });
+    return toolValidationError("missing_id", "Paramètre `id=<thread_id>` requis");
   }
 
   const tok = await getToolToken("google", "gmail");
-  if (!tok.ok) return NextResponse.json(tok.body, { status: tok.status });
+  if (!tok.ok) {
+    return toolError({
+      error: tok.body.error,
+      hint: tok.body.hint || "Connecteur Google non disponible.",
+      status: tok.status,
+      retryable: false,
+    });
+  }
 
   const r = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`,
     { headers: { Authorization: `Bearer ${tok.token}` } },
   );
   if (!r.ok) {
-    return apiError(r.status, `gmail_thread_${r.status}`, await r.text().catch(() => ""));
+    const detail = (await r.text().catch(() => "")).slice(0, 200);
+    const retryable = r.status === 429 || r.status === 408 || r.status >= 500;
+    return toolError({
+      error: `gmail_thread_${r.status}`,
+      hint: retryable
+        ? "Gmail a renvoyé une erreur transitoire. Réessayable."
+        : "Gmail a refusé la requête (thread inexistant/permission). Pas de retry.",
+      status: retryable ? 502 : r.status,
+      retryable,
+      detail,
+    });
   }
   const t = await r.json();
   const messages = (t.messages || []) as Array<{ id: string; payload: GmailPart; internalDate: string }>;

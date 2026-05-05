@@ -10,7 +10,8 @@
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
-import { getToolToken, apiError } from "@/lib/connector-tool-helpers";
+import { getToolToken } from "@/lib/connector-tool-helpers";
+import { toolError } from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -132,8 +133,13 @@ export async function GET(req: Request) {
   }
 
   if (results.length === 0) {
-    return apiError(404, "no_calendar_connected",
-      `Connectez Google Calendar ou Outlook Calendar via /connectors. Erreurs : ${JSON.stringify(errors)}`);
+    return toolError({
+      error: "no_calendar_connected",
+      hint: "Connectez Google Calendar ou Outlook Calendar via /connectors.",
+      status: 404,
+      retryable: false,
+      detail: `errors=${JSON.stringify(errors).slice(0, 300)}`,
+    });
   }
 
   // Concat tous les events de tous les providers, triés par start

@@ -22,6 +22,7 @@
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { embedText, searchPoints } from "@/lib/qdrant-client";
+import { toolValidationError, toolUpstreamError } from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -44,9 +45,9 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const query = (url.searchParams.get("q") || "").trim();
   if (!query) {
-    return NextResponse.json(
-      { error: "missing_query", hint: "Paramètre `q` requis (la question/requête)." },
-      { status: 400 },
+    return toolValidationError(
+      "missing_query",
+      "Paramètre `q` requis (la question/requête).",
     );
   }
   const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "5", 10), 1), 15);
@@ -58,10 +59,11 @@ export async function GET(req: Request) {
   try {
     vector = await embedText(query);
   } catch (e) {
-    return NextResponse.json(
-      { error: "embed_failed", hint: (e as Error).message },
-      { status: 502 },
-    );
+    return toolUpstreamError({
+      error: "embed_failed",
+      hint: "Le service d'embedding (Ollama) est indisponible ou a échoué. Réessayable.",
+      detail: (e as Error).message,
+    });
   }
 
   // 2. Search en parallèle sur toutes les collections, merge + sort par score desc

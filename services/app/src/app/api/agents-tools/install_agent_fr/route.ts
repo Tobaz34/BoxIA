@@ -17,6 +17,11 @@ import { addInstalledAgent } from "@/lib/installed-agents";
 import { logAction } from "@/lib/audit-helper";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { requireApproval } from "@/lib/approval-gate";
+import {
+  toolError,
+  toolValidationError,
+  toolUpstreamError,
+} from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -27,17 +32,23 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as { slug?: unknown; approval_token?: unknown };
   } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
+    return toolValidationError("bad_json", "Body JSON invalide");
   }
   const slug = typeof body.slug === "string" ? body.slug : "";
   if (!slug) {
-    return NextResponse.json({ error: "missing_slug" }, { status: 400 });
+    return toolValidationError("missing_slug", "Champ 'slug' requis");
   }
 
   const catalog = await readBoxiaFrCatalog().catch(() => null);
   const tpl = catalog?.templates.find((t) => t.slug === slug);
   if (!tpl) {
-    return NextResponse.json({ error: "not_in_catalog", slug }, { status: 404 });
+    return toolError({
+      error: "not_in_catalog",
+      hint: `Le template '${slug}' n'existe pas dans le catalogue BoxIA-FR.`,
+      status: 404,
+      retryable: false,
+      detail: `slug=${slug}`,
+    });
   }
 
   // Approval gate
@@ -85,9 +96,10 @@ export async function POST(req: Request) {
       next_action_url: `/?agent=${persisted.slug}`,
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: "install_failed", detail: String(e).slice(0, 300) },
-      { status: 502 },
-    );
+    return toolUpstreamError({
+      error: "install_failed",
+      hint: "L'installation du template a échoué (Dify upstream). Réessayable.",
+      detail: String(e).slice(0, 300),
+    });
   }
 }

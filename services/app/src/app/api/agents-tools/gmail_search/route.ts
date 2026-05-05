@@ -11,7 +11,8 @@
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
-import { getToolToken, apiError } from "@/lib/connector-tool-helpers";
+import { getToolToken } from "@/lib/connector-tool-helpers";
+import { toolError, toolValidationError } from "@/lib/tool-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -21,19 +22,36 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") || "").trim();
   if (!q) {
-    return NextResponse.json({ error: "missing_q", hint: "?q=... requis" }, { status: 400 });
+    return toolValidationError("missing_q", "Paramètre `q` requis");
   }
   const max = Math.min(50, Math.max(1, Number(url.searchParams.get("max") ?? 20)));
 
   const tok = await getToolToken("google", "gmail");
-  if (!tok.ok) return NextResponse.json(tok.body, { status: tok.status });
+  if (!tok.ok) {
+    return toolError({
+      error: tok.body.error,
+      hint: tok.body.hint || "Connecteur Google non disponible.",
+      status: tok.status,
+      retryable: false,
+    });
+  }
 
   const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}&q=${encodeURIComponent(q)}`;
   const listR = await fetch(listUrl, {
     headers: { Authorization: `Bearer ${tok.token}` },
   });
   if (!listR.ok) {
-    return apiError(listR.status, `gmail_search_${listR.status}`, await listR.text().catch(() => ""));
+    const detail = (await listR.text().catch(() => "")).slice(0, 200);
+    const retryable = listR.status === 429 || listR.status === 408 || listR.status >= 500;
+    return toolError({
+      error: `gmail_search_${listR.status}`,
+      hint: retryable
+        ? "Gmail a renvoyé une erreur transitoire. Réessayable."
+        : "Gmail a refusé la requête (auth/permissions/syntaxe). Vérifie le connecteur.",
+      status: retryable ? 502 : listR.status,
+      retryable,
+      detail,
+    });
   }
   const listJ = await listR.json();
   const messages = (listJ.messages || []) as { id: string; threadId: string }[];
