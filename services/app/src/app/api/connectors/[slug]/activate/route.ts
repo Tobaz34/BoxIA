@@ -46,6 +46,35 @@ export async function POST(
       impl_status: spec.implStatus,
     }, ipFromHeaders(req));
 
+    // SharePoint : si l'admin a coché des bibliothèques via le picker,
+    // on écrit /data/sharepoint-config.json que le worker rag-msgraph
+    // (volume mounté) va lire pour savoir quels drive_ids indexer.
+    if (slug === "sharepoint") {
+      try {
+        const driveIdsRaw = (body.config || {}).drive_ids;
+        if (driveIdsRaw) {
+          const parsed = JSON.parse(driveIdsRaw);
+          const fs = await import("node:fs/promises");
+          const path = "/data/sharepoint-config.json";
+          await fs.writeFile(
+            path,
+            JSON.stringify(
+              {
+                drive_ids: parsed,
+                updated_at: new Date().toISOString(),
+                updated_by: session.user.email,
+              },
+              null,
+              2,
+            ) + "\n",
+            "utf-8",
+          );
+        }
+      } catch (e) {
+        console.error("[connectors/sharepoint] failed to write config:", e);
+      }
+    }
+
     // Best-effort : pour les 3 slugs RAG OAuth, déclenche un restart du
     // container worker (= sync initial). Si le container n'existe pas
     // (pas encore démarré côté admin avec start-connector.sh), on

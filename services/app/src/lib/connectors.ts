@@ -197,15 +197,17 @@ export const CONNECTORS: ConnectorSpec[] = [
     slug: "sharepoint",
     name: "SharePoint Online",
     icon: "🔵",
-    description: "Indexer une bibliothèque SharePoint Microsoft 365.",
+    description: "Indexer une ou plusieurs bibliothèques SharePoint Microsoft 365.",
     category: "storage",
     implStatus: "beta",
     authMethod: "azure_ad",
     oauthProvider: "microsoft",
     fields: [
-      { key: "site_url", label: "URL du site (optionnel)", type: "url",
-        placeholder: "https://contoso.sharepoint.com/sites/intranet",
-        helpText: "Si vide, on indexe la racine OneDrive du compte connecté." },
+      // drive_ids est un JSON sérialisé de SelectedDrive[] — alimenté par
+      // le composant SharePointPicker dans ConnectorsManager. Pas de UI
+      // legacy nécessaire (le picker s'occupe de tout).
+      { key: "drive_ids", label: "Bibliothèques sélectionnées (JSON)", type: "text",
+        helpText: "Géré automatiquement par le sélecteur visuel." },
       { key: "tenant_id", label: "Tenant Azure AD (legacy app-only)", type: "text",
         placeholder: "12345678-...-...-...",
         helpText: "Inutile en mode OAuth — laisser vide." },

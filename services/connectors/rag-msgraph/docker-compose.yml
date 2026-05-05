@@ -28,9 +28,17 @@ services:
       QDRANT_URL: http://aibox-qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
+      # /state = delta tokens (persistant entre runs)
+      # /shared = config générée par aibox-app (sharepoint-config.json)
+      DELTA_DIR: /state
     volumes:
-      - rag_msgraph_state:/data
+      - rag_msgraph_state:/state
       - ${AIBOX_CONNECTORS_LIB_PATH:-../_lib}:/lib_shared:ro
+      # Bind mount du /data host (lecture seule) — partagé avec aibox-app.
+      # Le worker lit /shared/sharepoint-config.json (drive_ids[]) écrit
+      # par /api/connectors/sharepoint/activate quand l'admin coche les
+      # bibliothèques dans le picker visuel.
+      - /srv/ai-stack/data:/shared:ro
     networks:
       - aibox_net
       - ollama_net

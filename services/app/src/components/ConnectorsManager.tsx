@@ -22,6 +22,7 @@ import { useSession } from "next-auth/react";
 import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connectors";
 import { OAuthConnectButton } from "@/components/OAuthConnectButton";
 import { ConnectorSyncStatus } from "@/components/ConnectorSyncStatus";
+import { SharePointPicker, type SelectedDrive } from "@/components/SharePointPicker";
 
 interface Field {
   key: string;
@@ -87,6 +88,22 @@ const IMPL_BADGE: Record<ImplStatus, { label: string; cls: string }> = {
   beta:         { label: "Bêta",       cls: "bg-yellow-500/15 text-yellow-400" },
   coming_soon:  { label: "À venir",    cls: "bg-muted/20 text-muted" },
 };
+
+/**
+ * Parse la valeur stockée dans config.drive_ids (JSON sérialisé) →
+ * SelectedDrive[] consommable par <SharePointPicker>. Renvoie [] si vide
+ * ou JSON invalide (compat avec l'ancien stockage `site_url` string).
+ */
+function parseSelectedDrives(raw: string | undefined): SelectedDrive[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return v as SelectedDrive[];
+    return [];
+  } catch {
+    return [];
+  }
+}
 
 function relTime(ms: number | null): string {
   if (!ms) return "jamais";
@@ -493,6 +510,27 @@ export function ConnectorsManager() {
                   provider={editing.authMethod === "google_oauth" ? "google" : "microsoft"}
                   connectorSlug={editing.slug}
                 />
+              </div>
+            )}
+
+            {/* SharePoint : picker visuel des bibliothèques. La sélection
+             *  est sérialisée dans config.drive_ids (JSON) que le worker
+             *  rag-msgraph lira pour indexer les bons drives. */}
+            {editing.slug === "sharepoint" && (
+              <div className="mb-4">
+                <label className="text-xs font-medium block mb-2">
+                  Bibliothèques à indexer
+                </label>
+                <SharePointPicker
+                  selected={parseSelectedDrives(editConfig.drive_ids)}
+                  onChange={(sel) =>
+                    setEditConfig({ ...editConfig, drive_ids: JSON.stringify(sel) })
+                  }
+                />
+                <p className="text-[11px] text-muted mt-2">
+                  Cherche un site puis coche les bibliothèques à indexer.
+                  Vous pouvez en sélectionner plusieurs (de différents sites).
+                </p>
               </div>
             )}
 

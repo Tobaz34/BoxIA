@@ -40,8 +40,10 @@ Variables mode oauth :
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import pathlib
 import sys
 import time
 import traceback
@@ -92,8 +94,16 @@ CHUNK_TOKENS = int(os.environ.get("CHUNK_TOKENS", "800"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "100"))
 
 # Persiste le delta token entre les runs (pour ne pas tout retraiter)
-DELTA_FILE = Path(os.environ.get("DELTA_FILE", "/data/delta.token"))
-DELTA_FILE.parent.mkdir(parents=True, exist_ok=True)
+DELTA_DIR = Path(os.environ.get("DELTA_DIR", "/state"))
+DELTA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _delta_file_for(drive_id: str) -> Path:
+    """Delta token par drive_id (multi-drive support).
+    On hash le drive_id pour générer un nom court, file-system safe.
+    """
+    h = hashlib.sha1(drive_id.encode("utf-8")).hexdigest()[:12]
+    return DELTA_DIR / f"delta.{h}.token"
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
@@ -174,25 +184,71 @@ def download_file(item_id: str, drive_id: str) -> bytes:
 
 
 # ---------------------------------------------------------------- Drive resolution
-def resolve_drive_id() -> str:
+# Fichier généré par /api/connectors/sharepoint/activate quand l'admin
+# coche des bibliothèques dans le picker visuel. Format :
+#   { "drive_ids": ["b!aaa...", "b!bbb..."], "updated_at": "2026-..." }
+# Mounté en RO via /data dans docker-compose.yml.
+# Bind mount RO du /data host (cf docker-compose.yml). aibox-app écrit
+# /srv/ai-stack/data/sharepoint-config.json depuis /api/connectors/[slug]/
+# activate quand l'admin coche des bibliothèques dans le picker visuel.
+SHAREPOINT_CONFIG_FILE = pathlib.Path(
+    os.environ.get("SHAREPOINT_CONFIG_FILE", "/shared/sharepoint-config.json")
+)
+
+
+def resolve_drive_ids() -> list[str]:
+    """Liste de drive_ids à indexer.
+    Priorité :
+      1. /data/sharepoint-config.json (saisie via l'UI picker)
+      2. MS_DRIVE_ID (legacy, env var)
+      3. MS_SITE_ID → Graph /sites/{id}/drive (legacy)
+    """
+    # 1. Config UI (multi-drive)
+    if SHAREPOINT_CONFIG_FILE.exists():
+        try:
+            data = json.loads(SHAREPOINT_CONFIG_FILE.read_text())
+            ids = data.get("drive_ids") or []
+            # Format attendu : list[str] OU list[{drive_id: str, ...}]
+            normalized = []
+            for entry in ids:
+                if isinstance(entry, str):
+                    normalized.append(entry)
+                elif isinstance(entry, dict) and entry.get("drive_id"):
+                    normalized.append(entry["drive_id"])
+            if normalized:
+                return normalized
+        except Exception as e:
+            log.warning("sharepoint-config.json invalide : %s", e)
+
+    # 2. Legacy single-drive
     if MS_DRIVE_ID:
-        return MS_DRIVE_ID
+        return [MS_DRIVE_ID]
     if MS_SITE_ID:
-        # Drive par défaut du site SharePoint
         d = graph_get(f"/sites/{MS_SITE_ID}/drive")
-        return d["id"]
-    raise RuntimeError("Configure MS_DRIVE_ID ou MS_SITE_ID")
+        return [d["id"]]
+
+    raise RuntimeError(
+        "Aucun drive à indexer. Active SharePoint dans /connectors et coche "
+        "au moins une bibliothèque, ou configure MS_DRIVE_ID / MS_SITE_ID en env."
+    )
+
+
+def resolve_drive_id() -> str:
+    """Compat : legacy code path qui appelait resolve_drive_id() (1 drive).
+    On renvoie le premier de la liste."""
+    return resolve_drive_ids()[0]
 
 
 # ---------------------------------------------------------------- Delta walk
 def iter_delta_changes(drive_id: str) -> Iterator[dict]:
     """Itère les changements depuis le dernier delta token (ou full scan si premier run)."""
-    if DELTA_FILE.exists():
-        url = DELTA_FILE.read_text().strip()
+    delta_file = _delta_file_for(drive_id)
+    if delta_file.exists():
+        url = delta_file.read_text().strip()
         log.info("Reprise delta depuis %s", url[:80])
     else:
         url = f"{GRAPH_BASE}/drives/{drive_id}/root/delta"
-        log.info("Premier run — full scan via delta")
+        log.info("Premier run pour %s — full scan via delta", drive_id[:20])
 
     while True:
         data = graph_get_url(url)
@@ -202,8 +258,8 @@ def iter_delta_changes(drive_id: str) -> Iterator[dict]:
         if "@odata.nextLink" in data:
             url = data["@odata.nextLink"]
         elif "@odata.deltaLink" in data:
-            DELTA_FILE.write_text(data["@odata.deltaLink"])
-            log.info("Delta token sauvegardé pour la prochaine sync")
+            delta_file.write_text(data["@odata.deltaLink"])
+            log.info("Delta token sauvegardé pour %s", drive_id[:20])
             return
         else:
             return
@@ -352,19 +408,26 @@ def index_item(qd: QdrantClient, drive_id: str, item: dict) -> int:
 def sync_once() -> dict:
     log.info("=== Sync MS Graph start ===")
     qd = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-    drive_id = resolve_drive_id()
-    log.info("Drive: %s", drive_id)
+    drive_ids = resolve_drive_ids()
+    log.info("Drives: %s (%d)", drive_ids, len(drive_ids))
 
     total_items, added, errors = 0, 0, 0
-    for item in iter_delta_changes(drive_id):
-        total_items += 1
-        try:
-            added += index_item(qd, drive_id, item)
-        except Exception as e:
-            errors += 1
-            log.error("erreur item %s : %s", item.get("name", item.get("id")), e)
-            log.debug(traceback.format_exc())
-    return {"items": total_items, "chunks_added": added, "errors": errors}
+    for drive_id in drive_ids:
+        log.info("--- Drive %s ---", drive_id)
+        for item in iter_delta_changes(drive_id):
+            total_items += 1
+            try:
+                added += index_item(qd, drive_id, item)
+            except Exception as e:
+                errors += 1
+                log.error("erreur item %s : %s", item.get("name", item.get("id")), e)
+                log.debug(traceback.format_exc())
+    return {
+        "drives": len(drive_ids),
+        "items": total_items,
+        "chunks_added": added,
+        "errors": errors,
+    }
 
 
 def main() -> None:
