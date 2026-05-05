@@ -139,14 +139,24 @@ def _provider_credentials():
 
 
 def _find_provider(s):
+    """Dify renvoie HTTP 400 avec body `{"code":"invalid_param","message":
+    "you have not added provider X"}` quand le provider n'existe pas (au
+    lieu d'un 404 RFC-compliant). On treat 400 + ce code comme "not found"."""
     try:
         encoded = urllib.parse.quote(PROVIDER_NAME)
         r = s.get(f"/workspaces/current/tool-provider/api/get?provider={encoded}")
         if r:
             return r
     except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
+        if e.code in (400, 404):
+            try:
+                body = json.loads(e.read())
+                if "you have not added" in (body.get("message") or "").lower():
+                    return None
+            except Exception:
+                pass
+            if e.code == 404:
+                return None
         raise
     return None
 
