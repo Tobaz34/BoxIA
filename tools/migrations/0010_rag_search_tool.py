@@ -40,7 +40,7 @@ DIFY_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 DIFY_ADMIN_PASSWORD = os.environ.get("DIFY_ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "")
 AGENTS_API_KEY = os.environ.get("AGENTS_API_KEY", "")
 
-PROVIDER_NAME = "BoxIA RAG Search"
+PROVIDER_NAME = "boxia-rag-search"
 TARGET_AGENT_NAMES = [
     "Assistant général",
     "Concierge BoxIA",
