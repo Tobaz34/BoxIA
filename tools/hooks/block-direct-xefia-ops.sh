@@ -37,8 +37,9 @@ fi
 # - deploy-to-xefia       : redéploie aibox-app (rebuild ciblé + migrations)
 # - deploy-new-box        : déploie sur une box neuve (rsync + creds + install BOOTSTRAP)
 # - provision-master-creds : pousse /etc/aibox-master/cloudflare.env via scp+sudo
+# - wipe-box              : reset destructif d'une box (containers + volumes)
 # - start-connector       : lance un container connecteur ad-hoc
-if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|deploy-new-box|provision-master-creds|start-connector)\.sh'; then
+if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|deploy-new-box|provision-master-creds|wipe-box|start-connector)\.sh'; then
   exit 0
 fi
 
