@@ -186,6 +186,34 @@ export function WorkflowsManager() {
           >
             <RefreshCw size={16} />
           </button>
+          {isAdmin && (
+            <button
+              onClick={async () => {
+                try {
+                  const r = await fetch("/api/workflows/credentials", {
+                    method: "POST",
+                  });
+                  const j = await r.json().catch(() => ({}));
+                  if (r.ok) {
+                    setError(null);
+                    alert(
+                      j.pushed?.length
+                        ? `Credentials n8n synchronisées : ${j.pushed.join(", ")}`
+                        : "Aucune credential à pousser (aucun connecteur bridgé actif).",
+                    );
+                  } else {
+                    setError(j.detail || j.error || "Resync failed");
+                  }
+                } catch (e) {
+                  setError(String(e).slice(0, 200));
+                }
+              }}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-muted/15 transition-default"
+              title="Re-pousse les credentials des connecteurs BoxIA actifs vers n8n (utile après une mise à jour)"
+            >
+              🔑 Sync credentials
+            </button>
+          )}
           {isAdmin ? (
             <a
               href="/api/sso/n8n"
