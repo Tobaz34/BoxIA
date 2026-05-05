@@ -1,0 +1,151 @@
+openapi: 3.0.3
+info:
+  title: BoxIA Delegate To Specialist Tool
+  description: |
+    Permet au Concierge BoxIA de déléguer une question à un agent
+    spécialisé (Assistant général, Vision, Comptable, RH, Support) et
+    d'intégrer la réponse dans son raisonnement avant de répondre à
+    l'utilisateur.
+
+    Cas d'usage : questions hybrides où le Concierge a besoin d'une
+    expertise pointue qu'il n'a pas. Exemple : « analyse cette facture
+    jointe et confirme le taux TVA pour 2026 » → délègue à `vision`
+    puis à `accountant`, synthétise.
+
+    Garde-fous techniques (auto-appliqués) :
+    - Profondeur max = 2 (un specialist ne peut pas re-déléguer)
+    - Refus self-delegation (slug==="concierge")
+    - Timeout 60s
+    - Conversation isolée par appel (pas de partage cross-app Dify)
+  version: 1.0.0
+
+servers:
+  - url: http://host.docker.internal:3100/api/agents-tools
+
+paths:
+  /delegate_to_specialist:
+    post:
+      operationId: delegate_to_specialist
+      summary: Délègue une question à un agent spécialisé et récupère sa réponse
+      description: |
+        Appelle l'agent spécialisé en mode "blocking" (synchrone) et
+        retourne sa réponse complète. Le specialist n'a PAS le contexte
+        conversationnel du Concierge — le `prompt` doit être SELF-CONTAINED
+        et inclure le rôle du specialist + la question + le contexte
+        nécessaire.
+
+        Synthétise la réponse `answer` dans ta propre réponse à
+        l'utilisateur ; ne copie pas littéralement. Mentionne brièvement
+        la délégation (« j'ai consulté l'Assistant comptable : […] »).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, prompt]
+              properties:
+                slug:
+                  type: string
+                  description: |
+                    Slug de l'agent spécialisé à appeler. Valeurs autorisées :
+                    `general` (questions générales), `vision` (analyse images),
+                    `accountant` (compta/TVA française), `hr` (RH/droit du
+                    travail FR), `support` (réponses commerciales).
+                    INTERDIT : `concierge` (anti-récursion).
+                  enum: [general, vision, accountant, hr, support]
+                  example: "accountant"
+                prompt:
+                  type: string
+                  description: |
+                    Instruction enrichie pour le specialist. Doit être
+                    SELF-CONTAINED car le specialist n'a pas le contexte
+                    conversation. Inclus 1) le rôle ("Tu es l'agent X"),
+                    2) la question reformulée, 3) les contraintes/contexte.
+                    Min 5 caractères.
+                  example: |
+                    Tu es l'agent comptable. Question utilisateur : quel taux
+                    de TVA pour la livraison de repas à domicile en France
+                    en 2026 ? Réponds en privilégiant les normes officielles
+                    (BOFIP).
+                conversation_id:
+                  type: string
+                  description: |
+                    Optionnel : continue une conversation existante avec ce
+                    specialist (rare). Vide → nouvelle conversation isolée.
+                caller:
+                  type: string
+                  description: |
+                    Optionnel : slug de l'agent qui délègue (défaut "concierge").
+                    Sert à détecter les self-delegations multi-step.
+                user:
+                  type: string
+                  description: |
+                    Optionnel : email de l'utilisateur courant (pour audit
+                    + propagation au specialist). Best-effort si Dify
+                    forwarde.
+      responses:
+        "200":
+          description: Réponse du specialist (succès).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  agent:
+                    type: object
+                    properties:
+                      slug:
+                        type: string
+                      name:
+                        type: string
+                      icon:
+                        type: string
+                  answer:
+                    type: string
+                    description: Réponse texte du specialist (à synthétiser, pas copier).
+                  conversation_id:
+                    type: string
+                  depth:
+                    type: integer
+                  hint:
+                    type: string
+                    description: Conseil pour le LLM appelant sur comment exploiter answer.
+        "400":
+          description: |
+            Requête invalide (slug manquant/inconnu, prompt vide,
+            self-delegation, ou profondeur max atteinte).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: false }
+                  error: { type: string }
+                  hint: { type: string }
+                  retryable: { type: boolean, example: false }
+        "502":
+          description: |
+            Le specialist n'a pas répondu (timeout, Dify upstream error).
+            Le LLM appelant peut re-tenter (retryable=true) ou abandonner.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: false }
+                  error: { type: string }
+                  hint: { type: string }
+                  retryable: { type: boolean, example: true }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: AGENTS_API_KEY
+
+security:
+  - BearerAuth: []
