@@ -17,9 +17,21 @@ c_yellow() { printf "\033[1;33m%s\033[0m\n" "$*"; }
 c_red()    { printf "\033[1;31m%s\033[0m\n" "$*"; }
 hr()       { printf "%.0s─" {1..70}; printf "\n"; }
 
+# En mode AIBOX_BOOTSTRAP=1 (utilisé par tools/deploy-new-box.sh), `ask` et
+# `ask_yn` court-circuitent le prompt et renvoient directement le default.
+# Le but : préparer une box neuve sans interaction humaine — toutes les vraies
+# valeurs (nom client, secteur, technos, sous-domaine CF, branding) seront
+# collectées par le wizard web ensuite et écraseront ces defaults.
 ask() {
   local prompt="$1" default="${2:-}"
   local answer
+  if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+    # Trace côté stderr pour qu'on voit ce qui est choisi (et que ça ne pollue
+    # pas le stdout que le caller capture avec $(...)).
+    printf "  %s → %s (bootstrap)\n" "$prompt" "${default:-<vide>}" >&2
+    echo "$default"
+    return 0
+  fi
   if [[ -n "$default" ]]; then
     read -rp "$(c_blue "  $prompt") [$default] : " answer
     echo "${answer:-$default}"
@@ -31,6 +43,11 @@ ask() {
 
 ask_yn() {
   local prompt="$1" default="${2:-n}" answer
+  if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+    printf "  %s → %s (bootstrap)\n" "$prompt" "$default" >&2
+    [[ "${default,,}" == "y" || "${default,,}" == "yes" || "${default,,}" == "o" ]]
+    return $?
+  fi
   read -rp "$(c_blue "  $prompt") [y/N] : " answer
   answer="${answer:-$default}"
   [[ "${answer,,}" == "y" || "${answer,,}" == "yes" || "${answer,,}" == "o" ]]
@@ -324,13 +341,28 @@ if [[ "${AIBOX_NONINTERACTIVE:-0}" == "1" ]]; then
 fi
 
 # ---- Header -----------------------------------------------------------------
-clear
+# En mode BOOTSTRAP (deploy-new-box.sh), pas de `clear` : on veut conserver les
+# logs SSH précédents (Docker install, code push, etc.) pour que l'opérateur
+# voie tout l'historique en cas de pépin.
+if [[ "${AIBOX_BOOTSTRAP:-0}" != "1" ]]; then
+  clear
+fi
 c_green "╔══════════════════════════════════════════════════════════════════╗"
+if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+c_green "║          AI BOX — Bootstrap automatique (zero-question)           ║"
+else
 c_green "║              AI BOX — Installation interactive                    ║"
+fi
 c_green "╚══════════════════════════════════════════════════════════════════╝"
 echo
-c_yellow "Cet assistant va configurer votre serveur IA local."
-c_yellow "Toutes les valeurs sont modifiables après installation dans .env"
+if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+  c_yellow "Mode bootstrap : toutes les questions seront auto-répondues avec"
+  c_yellow "les valeurs par défaut. Le wizard web (port 80) collectera les"
+  c_yellow "vraies valeurs auprès du client et écrasera ce .env initial."
+else
+  c_yellow "Cet assistant va configurer votre serveur IA local."
+  c_yellow "Toutes les valeurs sont modifiables après installation dans .env"
+fi
 echo
 hr
 
