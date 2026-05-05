@@ -17,7 +17,8 @@ import {
   CheckCircle2, X, Settings as SettingsIcon, Search, Clock,
   Shield, Lock, ArrowLeft, ChevronRight,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connectors";
 import { OAuthConnectButton } from "@/components/OAuthConnectButton";
@@ -120,6 +121,8 @@ function relTime(ms: number | null): string {
 export function ConnectorsManager() {
   const { data: session } = useSession();
   const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -155,6 +158,39 @@ export function ConnectorsManager() {
       setLoading(false);
     }
   }, []);
+
+  // Deep-link `/connectors?open=<slug>` : ouvre directement la modale du
+  // connecteur ciblé (utilisé par la sidebar « CONNECTEURS »). On scrolle
+  // aussi dans la bonne catégorie pour que l'admin voie le contexte si
+  // ferme la modale. Effect ne s'exécute qu'une fois data chargé et seulement
+  // au premier render avec le param présent (deepLinkOpenedRef évite de
+  // rouvrir si l'admin ferme et navigue dans l'app).
+  const deepLinkOpenedRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkOpenedRef.current) return;
+    if (!data) return;
+    const slugToOpen = searchParams.get("open");
+    if (!slugToOpen) return;
+    const target = data.connectors.find((c) => c.slug === slugToOpen);
+    if (!target) return;
+    deepLinkOpenedRef.current = true;
+    // Scroll dans la bonne catégorie pour le contexte derrière la modale
+    for (const [hub, def] of Object.entries(HUBS)) {
+      if (def.categories.includes(target.category)) {
+        setCurrentHub(hub as ConnectorHub);
+        break;
+      }
+    }
+    // Pré-remplit + ouvre la modale (équivalent à openActivate sans
+    // dépendance circulaire avec le state)
+    setEditing(target);
+    const initial: Record<string, string> = {};
+    for (const f of target.fields) initial[f.key] = "";
+    setEditConfig(initial);
+    setError(null);
+    // Nettoie le query param pour ne pas rouvrir au refresh
+    router.replace("/connectors", { scroll: false });
+  }, [data, searchParams, router]);
 
   function openPermissions(c: ConnectorItem) {
     setPermsTarget(c);

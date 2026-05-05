@@ -288,6 +288,7 @@ export async function handleOIDCCallback(
   //   - On n'écrase PAS une entrée sibling existante avec un account
   //     DIFFÉRENT (l'admin a peut-être un compte perso pour Drive et un
   //     compte pro pour Gmail — on respecte ça).
+  const broadcastedSlugs: string[] = [pending.connector_slug];
   try {
     const { siblingSlugs } = await import("./oauth-providers");
     const grantedScopes = String(data.scope || "").split(/\s+/).filter(Boolean);
@@ -323,11 +324,40 @@ export async function handleOIDCCallback(
         connected_by: pending.initiated_by,
         last_refreshed_at: Date.now(),
       };
+      broadcastedSlugs.push(sib);
     }
   } catch {
     // best-effort, on ne bloque pas la connexion principale
   }
 
   await _writeStore(s);
+
+  // ---- Auto-activate des slugs touchés dans connectors-state ----
+  // Sans ça, l'OAuth donne le token mais le connector reste "inactive"
+  // → invisible dans la sidebar « Connecteurs (N) ». Pour le user
+  // c'est confusing : il connecte Microsoft mais ne voit que SharePoint
+  // dans la sidebar (pas Outlook ni Calendar) parce qu'il n'a pas
+  // re-cliqué « Activer » sur chaque connecteur. On automatise.
+  //
+  // Les `required` fields sont skippés grâce au check `oauthProvider`
+  // dans activateConnector — donc une activation sans saisie marche.
+  // Best-effort : on ne bloque pas la connexion OAuth si l'activation
+  // échoue (ex: connector spec absent).
+  try {
+    const { activateConnector } = await import("./connectors-state");
+    const { getConnector } = await import("./connectors");
+    for (const slug of broadcastedSlugs) {
+      try {
+        const spec = getConnector(slug);
+        if (!spec) continue; // slug pas dans le catalog (ex: marketplace MCP)
+        await activateConnector(slug, {});
+      } catch (e) {
+        console.warn(`[oauth-oidc] auto-activate failed for ${slug}:`, e);
+      }
+    }
+  } catch (e) {
+    console.error("[oauth-oidc] auto-activate broadcast failed:", e);
+  }
+
   return { ok: true, connection: conn };
 }
