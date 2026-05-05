@@ -96,17 +96,35 @@ prepare_app_data_dirs() {
   # Sans chown, tout `fs.writeFile("/data/...")` rate avec EACCES dès qu'on
   # essaie d'enregistrer un agent custom, audit log, état connecteurs, etc.
   #
-  # Idempotent : à relancer à chaque deploy_stack ne pose pas de problème
-  # (chown -R sur ~10 KB de JSON, négligeable).
+  # Logique idempotente :
+  #   1. Si /srv/ai-stack/data existe déjà avec uid=1001 → rien à faire (skip)
+  #   2. Si root (UID 0) → mkdir + chown direct, pas de sudo
+  #   3. Si non-root + sudo dispo → sudo (peut prompter mdp en TTY)
+  #   4. Sinon → best-effort (peut fail silencieusement si pas owner)
+  #
+  # Ce séquencement évite l'appel sudo systématique qui plantait dans les
+  # contextes non-TTY (deploy-new-box.sh) où /data était déjà OK depuis
+  # un deploy précédent (préservé par wipe-box.sh par défaut).
   c_blue "  → Préparation des dossiers persistants /data..."
-  if command -v sudo >/dev/null 2>&1; then
+
+  if [ -d /srv/ai-stack/data ] && [ "$(stat -c '%u' /srv/ai-stack/data 2>/dev/null)" = "1001" ]; then
+    c_green "    ✓ /srv/ai-stack/data existe déjà (uid=1001) — skip"
+    return 0
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    mkdir -p /srv/ai-stack/data
+    chown -R 1001:1001 /srv/ai-stack/data
+    chmod 755 /srv/ai-stack/data
+    c_green "    ✓ /srv/ai-stack/data préparé (root direct)"
+  elif command -v sudo >/dev/null 2>&1; then
     sudo mkdir -p /srv/ai-stack/data
     sudo chown -R 1001:1001 /srv/ai-stack/data
     sudo chmod 755 /srv/ai-stack/data
+    c_green "    ✓ /srv/ai-stack/data préparé (via sudo)"
   else
-    # Mode root direct (wizard web tourne déjà en root)
-    mkdir -p /srv/ai-stack/data
-    chown -R 1001:1001 /srv/ai-stack/data 2>/dev/null || true
+    mkdir -p /srv/ai-stack/data 2>/dev/null || true
+    chown -R 1001:1001 /srv/ai-stack/data 2>/dev/null || c_yellow "    ⚠ chown 1001 a échoué (pas root, pas sudo)"
     chmod 755 /srv/ai-stack/data 2>/dev/null || true
   fi
 }
