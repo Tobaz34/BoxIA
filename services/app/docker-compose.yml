@@ -213,6 +213,16 @@ services:
       PENNYLANE_TOOL_URL:              ${PENNYLANE_TOOL_URL:-http://127.0.0.1:8090}
       FEC_TOOL_URL:                    ${FEC_TOOL_URL:-http://127.0.0.1:8091}
 
+      # ---- Versions des services tiers (lues par /api/system/services-versions
+      # pour comparer avec les latest GitHub Releases). Si vide, "current"
+      # affiche "?" dans l'UI mais le check latest fonctionne quand même.
+      DIFY_VERSION:                    ${DIFY_VERSION:-}
+      QDRANT_VERSION:                  ${QDRANT_VERSION:-}
+      AUTHENTIK_VERSION:               ${AUTHENTIK_VERSION:-}
+      N8N_VERSION:                     ${N8N_VERSION:-}
+      OLLAMA_VERSION:                  ${OLLAMA_VERSION:-}
+      LANGFUSE_VERSION:                ${LANGFUSE_VERSION:-}
+
       # ---- Branding ----
       BRAND_NAME: ${BRAND_NAME:-AI Box}
       BRAND_LOGO_URL: ${BRAND_LOGO_URL:-}
