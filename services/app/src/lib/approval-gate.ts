@@ -55,6 +55,26 @@ export interface PendingApproval {
   status: "pending" | "approved" | "rejected";
   /** Identifie qui a déclenché (pour audit). */
   caller_actor?: string;
+  /**
+   * Sprint 1 P0 #2 — Identifiant utilisateur logique (NextAuth email).
+   * Permet le scoping multi-user : `listActive()` filtre par userId.
+   */
+  user_id?: string;
+  /**
+   * Sprint 1 P0 #2 — Clé d'auto-approbation pour limiter la fatigue UI.
+   * Forme typique : `<conversation_id>:<action>` ou `<exec_id>:<action>`.
+   * Si l'utilisateur coche « ne plus me redemander pour cette tâche »,
+   * la clé est mémorisée et toute future demande avec la même clé +
+   * action est auto-approuvée (jusqu'à expiration TTL).
+   */
+  auto_approve_key?: string;
+  /** True si l'utilisateur a coché « auto-approuver pour cette tâche » lors
+   *  de la décision. */
+  auto_approve_persistent?: boolean;
+  /**
+   * ID de conversation Dify pour grouper les approvals dans l'UI.
+   */
+  conversation_id?: string;
 }
 
 async function ensureDir() {
@@ -89,6 +109,9 @@ export async function createPending(opts: {
   description: string;
   params: Record<string, unknown>;
   caller_actor?: string;
+  user_id?: string;
+  auto_approve_key?: string;
+  conversation_id?: string;
 }): Promise<PendingApproval> {
   const id = crypto.randomBytes(16).toString("hex");
   const now = Date.now();
@@ -101,15 +124,62 @@ export async function createPending(opts: {
     expires_at: now + TTL_MS,
     status: "pending",
     caller_actor: opts.caller_actor,
+    user_id: opts.user_id,
+    auto_approve_key: opts.auto_approve_key,
+    conversation_id: opts.conversation_id,
   };
   await write(a);
   return a;
 }
 
+/**
+ * Cherche un précédent record approuvé avec auto_approve_persistent=true
+ * pour la même clé+action, encore dans la fenêtre TTL. Si trouvé, retourne
+ * ses params (utilisable comme "auto-approuver tacite") sans consommer le
+ * record (il reste actif jusqu'à expiration).
+ *
+ * Renvoie `null` si pas de match.
+ */
+export async function findAutoApproved(
+  action: string,
+  auto_approve_key: string,
+): Promise<PendingApproval | null> {
+  if (!auto_approve_key) return null;
+  await ensureDir();
+  let files: string[];
+  try {
+    files = await fs.readdir(APPROVALS_DIR);
+  } catch {
+    return null;
+  }
+  const now = Date.now();
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    const id = f.replace(/\.json$/, "");
+    const a = await read(id);
+    if (!a) continue;
+    if (a.status !== "approved") continue;
+    if (!a.auto_approve_persistent) continue;
+    if (a.action !== action) continue;
+    if (a.auto_approve_key !== auto_approve_key) continue;
+    if (now > a.expires_at) {
+      await remove(id);
+      continue;
+    }
+    return a;
+  }
+  return null;
+}
+
 /** Liste les approvals encore actives (pending OU récemment décidées
  *  pour que le frontend voit le résultat avant cleanup). Auto-purge
- *  les expirées au passage. */
-export async function listActive(): Promise<PendingApproval[]> {
+ *  les expirées au passage.
+ *
+ *  Si `userId` est fourni → filtre les pending qui appartiennent à
+ *  ce user (scoping multi-user). Les pending sans `user_id` sont
+ *  considérées comme legacy/Concierge et restent visibles à tous
+ *  (rétrocompat). */
+export async function listActive(userId?: string): Promise<PendingApproval[]> {
   await ensureDir();
   let files: string[];
   try {
@@ -128,15 +198,23 @@ export async function listActive(): Promise<PendingApproval[]> {
       await remove(id);
       continue;
     }
-    if (a.status === "pending") out.push(a);
+    if (a.status !== "pending") continue;
+    if (userId && a.user_id && a.user_id !== userId) continue;
+    out.push(a);
   }
   return out.sort((x, y) => y.created_at - x.created_at);
 }
 
-/** L'utilisateur décide (approve ou reject). */
+/** L'utilisateur décide (approve ou reject).
+ *
+ *  Si `auto_approve_persistent` est `true` ET `decision === "approved"`
+ *  ET la pending a un `auto_approve_key`, l'auto-approbation est
+ *  mémorisée : toute future demande avec la même clé+action sera
+ *  auto-approuvée par `findAutoApproved` jusqu'à expiration TTL. */
 export async function decide(
   id: string,
   decision: "approved" | "rejected",
+  opts?: { auto_approve_persistent?: boolean },
 ): Promise<PendingApproval | null> {
   const a = await read(id);
   if (!a) return null;
@@ -146,6 +224,9 @@ export async function decide(
   }
   if (a.status !== "pending") return a; // déjà décidé
   a.status = decision;
+  if (decision === "approved" && opts?.auto_approve_persistent && a.auto_approve_key) {
+    a.auto_approve_persistent = true;
+  }
   await write(a);
   return a;
 }
@@ -200,49 +281,76 @@ export async function requireApproval<T extends Record<string, unknown>>(opts: {
   description: string;
   params: T;
   caller_actor?: string;
+  /** Sprint 1 P0 #2 — owner Authentik (NextAuth email). */
+  user_id?: string;
+  /** Sprint 1 P0 #2 — clé d'auto-approbation. Si une approbation
+   *  persistante existe pour cette (action, key) → auto-approuve. */
+  auto_approve_key?: string;
+  /** Sprint 1 P0 #2 — pour grouper dans l'UI. */
+  conversation_id?: string;
 }): Promise<
-  | { go: true; params: T; via: "approval" }
+  | { go: true; params: T; via: "approval" | "auto_approve" }
   | { go: false; response: Response }
 > {
   const token =
     typeof opts.body.approval_token === "string" ? opts.body.approval_token : "";
 
-  if (!token) {
-    // 1ère passe : enregistre pending et indique au LLM d'attendre
-    const pending = await createPending({
-      action: opts.action,
-      description: opts.description,
-      params: opts.params,
-      caller_actor: opts.caller_actor,
-    });
-    return {
-      go: false,
-      response: NextResponse.json(
-        {
-          ok: false,
-          requires_approval: true,
-          action_id: pending.id,
-          description: pending.description,
-          message:
-            "Cette action attend l'approbation de l'utilisateur. Une bannière " +
-            "« action en attente » s'affiche en haut de l'application BoxIA. " +
-            "Une fois cliqué sur « Approuver », l'action s'exécutera. " +
-            "Indique-le clairement à l'utilisateur dans ta réponse.",
-        },
-        { status: 202 },
-      ),
-    };
+  // Cas 1 — token explicite : on consume l'approbation existante
+  if (token) {
+    const check = await consumeApproved(token, opts.action);
+    if (!check.ok) {
+      return {
+        go: false,
+        response: NextResponse.json(
+          { ok: false, error: "approval_invalid", reason: check.reason },
+          { status: 403 },
+        ),
+      };
+    }
+    return { go: true, params: check.params as T, via: "approval" };
   }
 
-  const check = await consumeApproved(token, opts.action);
-  if (!check.ok) {
-    return {
-      go: false,
-      response: NextResponse.json(
-        { ok: false, error: "approval_invalid", reason: check.reason },
-        { status: 403 },
-      ),
-    };
+  // Cas 2 — pas de token mais une auto-approbation persistante existe
+  // pour cette (action, auto_approve_key) → on bypasse silencieusement
+  // (l'utilisateur a coché "ne plus me redemander pour cette tâche").
+  if (opts.auto_approve_key) {
+    const auto = await findAutoApproved(opts.action, opts.auto_approve_key);
+    if (auto) {
+      // Important : on ne consume PAS l'auto-approval (il reste actif
+      // jusqu'à TTL pour les futurs appels avec la même clé). On
+      // utilise les params COURANTS plutôt que ceux mémorisés, parce
+      // qu'on est dans un mode "feu vert pour toute la tâche" — les
+      // params varient à chaque step.
+      return { go: true, params: opts.params, via: "auto_approve" };
+    }
   }
-  return { go: true, params: check.params as T, via: "approval" };
+
+  // Cas 3 — pas de token, pas d'auto-approval : créer un pending
+  const pending = await createPending({
+    action: opts.action,
+    description: opts.description,
+    params: opts.params,
+    caller_actor: opts.caller_actor,
+    user_id: opts.user_id,
+    auto_approve_key: opts.auto_approve_key,
+    conversation_id: opts.conversation_id,
+  });
+  return {
+    go: false,
+    response: NextResponse.json(
+      {
+        ok: false,
+        requires_approval: true,
+        action_id: pending.id,
+        description: pending.description,
+        auto_approve_offer: Boolean(opts.auto_approve_key),
+        message:
+          "Cette action attend l'approbation de l'utilisateur. Une bannière " +
+          "« action en attente » s'affiche en haut de l'application BoxIA. " +
+          "Une fois cliqué sur « Approuver », l'action s'exécutera. " +
+          "Indique-le clairement à l'utilisateur dans ta réponse.",
+      },
+      { status: 202 },
+    ),
+  };
 }
