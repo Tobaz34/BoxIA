@@ -60,7 +60,7 @@ export function ConnectorsStatus() {
         </Link>
       </div>
 
-      <div className="space-y-0.5">
+      <div className="space-y-0.5 max-h-56 overflow-y-auto">
         {active.length === 0 && (
           <Link
             href="/connectors"
