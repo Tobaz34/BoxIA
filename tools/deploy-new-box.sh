@@ -234,8 +234,12 @@ c_yellow "  ⏱ Durée estimée : 10-15 min (pull des images Docker, ~25 GB)"
 c_yellow "     Tu peux laisser tourner — toutes les questions sont auto-répondues."
 hr
 
-# On capture l'exit code mais on laisse le stdout/stderr passer en live
-ssh -t "$SSH_TARGET" "cd $REMOTE_PATH && AIBOX_BOOTSTRAP=1 bash install.sh" || {
+# Pas de `-t` : install.sh en mode AIBOX_BOOTSTRAP=1 n'est PAS interactif
+# (toutes les questions sont auto-répondues, voir install.sh ask/ask_yn).
+# L'absence de TTY permet de lancer ce script depuis n'importe quel contexte
+# non-interactif (CI, agent, etc.) sans erreur "TTY required".
+# stdout/stderr sont transmis en streaming via SSH → on voit les logs en live.
+ssh "$SSH_TARGET" "cd $REMOTE_PATH && AIBOX_BOOTSTRAP=1 bash install.sh" || {
   c_red "✗ install.sh a échoué (exit $?)"
   c_red "  Inspecte les logs sur la box : ssh $SSH_TARGET 'tail -100 $REMOTE_PATH/deploy.log'"
   exit 1
