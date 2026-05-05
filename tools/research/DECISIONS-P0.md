@@ -3,6 +3,21 @@
 > Validé par l'utilisateur le **2026-05-05** suite aux audits des 5 actions P0.
 > Ces décisions sont **load-bearing** pour Sprint 0 → Sprint 4. Toute déviation doit être
 > discutée et journalisée ici.
+>
+> **⚙️ Statut d'exécution** (mise à jour 2026-05-05 après session autonome) :
+> voir [DONE.md](DONE.md) pour le détail commit-par-commit.
+>
+> | Sprint | Statut | Notes |
+> |---|---|---|
+> | Sprint 0 S0.1 (helper Dify) | ✅ livré (commit `a41ae10`) | difyChatStream + difyChatBlocking |
+> | Sprint 0 S0.2 (contrat erreurs) | ✅ livré (commits `e015a7d` + `e413ee4`) | Helper + 15/18 routes migrées |
+> | Sprint 0 S0.3 (Langfuse spans) | 🟡 helpers livrés (commit `e015a7d`), instrumentation routes pending | logToolCall + startToolTrace dispo |
+> | Sprint 0 S0.4 (POC gVisor) | 🔴 bloqué — exige xefia + sudo | À tester avant P0 #1 |
+> | Sprint 1 P0 #2 HITL | 🟡 partie 1/3 livrée (commit `288a5a7`) | extension approval-gate + tool-meta ; UI + routes génériques + migration 18 routes pending |
+> | Sprint 2a P0 #3 auditor | ⏸️ pas démarré | dépend P0 #2 |
+> | Sprint 2b P0 #4 delegate | 🟡 partie 2/4 livrée (commit `7233d41`) | route + migration 0013 prompt ; OpenAPI YAML 0014 + UI Card pending |
+> | Sprint 3 P0 #1 sandbox | ⏸️ pas démarré | dépend S0.4 + P0 #2 |
+> | Sprint 4 P0 #5 replan | ⏸️ pas démarré | dépend P0 #4 + Langfuse spans wired |
 
 ---
 
