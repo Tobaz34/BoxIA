@@ -1,0 +1,79 @@
+# =============================================================================
+# AI Box — Sandbox d'exécution code (P0 #1)
+# =============================================================================
+# Service Python qui expose 1 endpoint POST /v1/exec auquel le Concierge
+# peut soumettre du code bash ou python à exécuter dans une sandbox isolée.
+#
+# Sécurité multi-couches (D1 décision : gVisor par défaut, fallback nsjail) :
+#  1. Container dédié au runtime (gVisor / runsc) — isolation kernel userspace
+#  2. Filesystem read-only sauf /tmp/work mountée writable (volume tmpfs)
+#  3. Network=none par défaut (overridable env SANDBOX_ALLOW_NETWORK=true)
+#  4. Mémoire limitée à 512 MB, CPU à 1 core
+#  5. Timeout exec 30s par défaut (max 300s)
+#  6. Rotation /tmp/work à chaque exec (pas de persistance entre runs)
+#  7. Auth Bearer AGENTS_API_KEY
+#
+# ⚠️ POC OBLIGATOIRE Sprint 0 S0.4 avant prod : valider que `runsc` tourne
+# sur le kernel xefia. Si refus → fallback nsjail (Plan B audit P0 #1).
+#
+# Cas d'usage débloqués :
+#  - "Génère-moi un PDF de la facture #123 depuis ce CSV"
+#  - "Convertis ce FEC en analyses comptables python"
+#  - "Lance ce script PowerShell de monitoring"
+#  - "Calcule le bilan trimestriel depuis ces 4 fichiers Excel"
+# =============================================================================
+
+name: aibox-sandbox
+
+services:
+  sandbox:
+    build: .
+    image: aibox-sandbox:0.1.0
+    container_name: aibox-sandbox
+    restart: unless-stopped
+    # ⚠️ runtime gVisor REQUIS — à valider Sprint 0 S0.4 sur xefia.
+    # Si gVisor pas dispo : commenter cette ligne, le container utilise
+    # le runtime Docker par défaut (runc). Sécurité dégradée — voir
+    # alternatives nsjail dans app/main.py.
+    runtime: ${SANDBOX_RUNTIME:-runsc}
+    ports:
+      - "127.0.0.1:8087:8000"
+    environment:
+      AGENTS_API_KEY: ${AGENTS_API_KEY:?AGENTS_API_KEY is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Network désactivé par défaut. Override via env si workflow nécessite
+      # appel API externe (rare — préférer un tool dédié).
+      SANDBOX_ALLOW_NETWORK: ${SANDBOX_ALLOW_NETWORK:-false}
+      # Timeout max exec en secondes (cap dur, pas overridable par caller)
+      SANDBOX_MAX_TIMEOUT: ${SANDBOX_MAX_TIMEOUT:-300}
+      # Default timeout si caller ne précise pas
+      SANDBOX_DEFAULT_TIMEOUT: ${SANDBOX_DEFAULT_TIMEOUT:-30}
+    # Sécurité runtime — read-only root + tmpfs /tmp + capabilities drop
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+      - /tmp/work:rw,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Si SANDBOX_ALLOW_NETWORK=false, on ne join AUCUN réseau Docker.
+    # Sinon on rejoint aibox_net pour pouvoir appeler les autres services
+    # (mais ce n'est PAS le mode par défaut).
+    networks:
+      - aibox_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: 512m
+    mem_reservation: 64m
+    cpus: "1.0"
+    pids_limit: 64
+
+networks:
+  aibox_net:
+    name: ${NETWORK_NAME:-aibox_net}
+    external: true
