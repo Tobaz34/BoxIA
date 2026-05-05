@@ -167,11 +167,22 @@ if [[ -n "$BRANCH" ]]; then
   (cd "$REPO_ROOT" && git checkout "$BRANCH")
 fi
 
-# Crée le dossier distant si nécessaire (mkdir + chown)
+# Crée le dossier distant si nécessaire. On évite sudo quand l'user courant
+# possède déjà le dossier (cas typique sur une box BoxIA déjà montée), sinon
+# sudo est requis et demandera le mdp interactivement → l'opérateur doit
+# lancer ce script depuis un vrai terminal pour ce cas (cf. CLAUDE Code Bash
+# tool n'a pas de TTY).
 ssh "$SSH_TARGET" "
-  if [[ \"\$(id -u)\" -eq 0 ]]; then SUDO=''; else SUDO='sudo'; fi
-  \$SUDO mkdir -p $REMOTE_PATH
-  \$SUDO chown -R \$(id -u):\$(id -g) $REMOTE_PATH
+  if [ -w '$REMOTE_PATH' ] || [ ! -e '$REMOTE_PATH' -a -w \"\$(dirname '$REMOTE_PATH')\" ]; then
+    # L'user peut écrire (ou créer le dossier). Pas besoin de sudo.
+    mkdir -p '$REMOTE_PATH'
+  elif [ \"\$(id -u)\" -eq 0 ]; then
+    mkdir -p '$REMOTE_PATH'
+  else
+    # Cas dernier recours : sudo (peut prompter mdp si pas NOPASSWD)
+    sudo mkdir -p '$REMOTE_PATH'
+    sudo chown -R \$(id -u):\$(id -g) '$REMOTE_PATH'
+  fi
 "
 
 # Rsync avec exclusions des trucs lourds/sensibles + état applicatif persistant.
