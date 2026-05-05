@@ -148,39 +148,45 @@ CF_DEFAULT_ROOT_DOMAIN=$CF_MASTER_ROOT_DOMAIN
 EOF
 )
 
-# ---- Push via SSH -----------------------------------------------------------
-# On envoie un script bash via stdin qui :
-#   1. crée /etc/aibox-master/ (700 root:root)
-#   2. écrit le fichier en mode 600 root:root via tee (sudo)
-#   3. affiche un récap
-# Le contenu du fichier est passé via une variable d'env exportée avant exécution.
+# ---- Push via scp (transfert) + ssh -t (sudo install) ----------------------
+# Pourquoi 2 étapes plutôt qu'un ssh unique avec heredoc :
+#   - scp ne nécessite pas de sudo (le fichier va dans /tmp/ accessible à tous)
+#   - ssh -t ouvre un TTY → permet à sudo de prompter le mot de passe
+#     interactivement (cas par défaut quand sudo NOPASSWD n'est pas configuré
+#     pour `install` / `chown` sur /etc/aibox-master/)
+#   - Si on faisait `ssh + bash -s` avec stdin pour le contenu, sudo n'aurait
+#     plus de stdin disponible pour lire le mdp → "sudo: a password is required"
 c_blue "→ Push sur $SSH_TARGET ..."
 
-# shellcheck disable=SC2087
-ssh "$SSH_TARGET" "AIBOX_CREDS_CONTENT=$(printf '%q' "$CREDS_CONTENT") bash -s" <<'REMOTE_SCRIPT'
+# Local : écrit le contenu dans un temp file
+LOCAL_TMP=$(mktemp)
+trap 'rm -f "$LOCAL_TMP"' EXIT
+echo "$CREDS_CONTENT" > "$LOCAL_TMP"
+
+# Nom unique sur la box distante (PID local pour éviter collision si plusieurs
+# provisions simultanées de la part d'opérateurs différents, peu probable mais bon)
+REMOTE_TMP="/tmp/aibox-cloudflare.env.$$"
+
+# Transfert (rapide, ~1KB)
+scp -q "$LOCAL_TMP" "$SSH_TARGET:$REMOTE_TMP"
+
+# Déplacement avec sudo via ssh -t (TTY pour permettre le prompt sudo).
+# Note : éviter les single quotes imbriquées dans la commande SSH — chaque
+# `'...'` interrompt la chaîne ssh externe. On laisse le script remote
+# afficher lui-même un récap via `ls -la` + `sha256sum` (pas de subshell
+# nested dans des quotes).
+ssh -t "$SSH_TARGET" bash <<REMOTE_EOF
 set -euo pipefail
-
-# Détection sudo : si UID 0, pas besoin
-if [[ "$(id -u)" -eq 0 ]]; then
-  SUDO=""
-elif command -v sudo >/dev/null 2>&1; then
-  SUDO="sudo"
-else
-  echo "✗ Ni root, ni sudo disponible sur la box distante. Abandon." >&2
-  exit 1
-fi
-
-$SUDO install -d -m 700 -o root -g root /etc/aibox-master
-
-# Écriture atomique via tee (sudo) — temp file pour pouvoir mode/owner avant rename
-TMP=$(mktemp)
-echo "$AIBOX_CREDS_CONTENT" > "$TMP"
-$SUDO install -m 600 -o root -g root "$TMP" /etc/aibox-master/cloudflare.env
-rm -f "$TMP"
-
-echo "✓ /etc/aibox-master/cloudflare.env écrit ($(stat -c '%a %U:%G' /etc/aibox-master/cloudflare.env))"
-echo "  Hash SHA256 : $(sha256sum /etc/aibox-master/cloudflare.env | awk '{print $1}')"
-REMOTE_SCRIPT
+if [[ \$(id -u) -eq 0 ]]; then SUDO=""; else SUDO="sudo"; fi
+\$SUDO install -d -m 700 -o root -g root /etc/aibox-master
+\$SUDO install -m 600 -o root -g root '$REMOTE_TMP' /etc/aibox-master/cloudflare.env
+rm -f '$REMOTE_TMP'
+echo
+echo "  ✓ Récap fichier :"
+\$SUDO ls -la /etc/aibox-master/cloudflare.env
+echo "  ✓ Hash SHA256   :"
+\$SUDO sha256sum /etc/aibox-master/cloudflare.env
+REMOTE_EOF
 
 c_green "✓ Provisioning terminé"
 c_green ""
