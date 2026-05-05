@@ -24,6 +24,19 @@ import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
 import { embedText, searchPoints } from "@/lib/qdrant-client";
 import { toolValidationError, toolUpstreamError } from "@/lib/tool-errors";
 import { startToolTrace } from "@/lib/langfuse";
+import { bm25Rerank, qdrantPointsToCandidates } from "@/lib/bm25-reranker";
+
+// P2 #12 — Hybrid search overfetch.
+// On demande N=overFetch chunks à Qdrant (typique 3x le limit user)
+// puis on rerank en BM25 et on garde top-K = limit. Améliore la
+// pertinence sur termes métier rares (SIRET, codes APE, références
+// client) où la pure similarité vectorielle peut manquer une
+// correspondance exacte.
+const HYBRID_OVERFETCH = Number(process.env.RAG_HYBRID_OVERFETCH || 3);
+// alpha=0.5 : équilibre vector / BM25 (cf lib/bm25-reranker.ts).
+// alpha=1.0 désactive BM25 (fallback pur vector). Configurable via env.
+const HYBRID_ALPHA = Math.min(1, Math.max(0, Number(process.env.RAG_HYBRID_ALPHA || 0.5)));
+const HYBRID_ENABLED = process.env.RAG_HYBRID_ENABLED !== "false";
 
 export const dynamic = "force-dynamic";
 
@@ -76,8 +89,13 @@ export async function GET(req: Request) {
     });
   }
 
-  // 2. Search en parallèle sur toutes les collections, merge + sort par score desc
-  const allHits: Array<{
+  // 2. Search en parallèle sur toutes les collections.
+  //    Si hybrid activé → over-fetch (limit * HYBRID_OVERFETCH) candidats
+  //    pour laisser de la matière à BM25 rerank.
+  const fetchLimit = HYBRID_ENABLED ? limit * HYBRID_OVERFETCH : limit;
+
+  interface RagHit {
+    id: string | number;
     score: number;
     name: string | null;
     source: string | null;
@@ -86,14 +104,16 @@ export async function GET(req: Request) {
     file_id: string | null;
     chunk_idx: number | null;
     collection: string;
-  }> = [];
+  }
+  const allHits: RagHit[] = [];
 
   await Promise.all(collections.map(async (col) => {
     try {
-      const hits = await searchPoints(col, vector, limit);
+      const hits = await searchPoints(col, vector, fetchLimit);
       for (const h of hits) {
         const pl = (h.payload || {}) as Record<string, unknown>;
         allHits.push({
+          id: h.id,
           score: h.score,
           name: (pl.name as string) || (pl.title as string) || null,
           source: (pl.source as string) || null,
@@ -111,18 +131,59 @@ export async function GET(req: Request) {
     }
   }));
 
-  // Sort + cap
-  allHits.sort((a, b) => b.score - a.score);
-  const top = allHits.slice(0, limit);
+  // 3. Hybrid reranking (P2 #12).
+  // Si HYBRID_ENABLED, on rerank les candidats par BM25 + vector pour
+  // privilégier les correspondances exactes sur termes métier rares.
+  // Sinon, fallback simple : sort par score vectoriel desc.
+  let top: Array<RagHit & { hybrid_score?: number }>;
+  if (HYBRID_ENABLED && allHits.length > 0) {
+    // Map id → hit pour le restore après rerank (le BM25 reranker ne
+    // sait que voir id/text/vector_score, on récupère le hit original
+    // après le tri).
+    const byId = new Map<string | number, RagHit>(
+      allHits.filter((h) => h.text).map((h) => [h.id, h]),
+    );
+    const candidates = allHits
+      .filter((h) => h.text && h.text.length > 0)
+      .map((h) => ({
+        id: h.id,
+        text: h.text || "",
+        vector_score: h.score,
+      }));
+    const reranked = bm25Rerank(query, candidates, limit, HYBRID_ALPHA);
+    top = reranked
+      .map((r) => {
+        const orig = byId.get(r.id);
+        if (!orig) return null;
+        return {
+          ...orig,
+          score: r.hybrid_score,
+          hybrid_score: r.hybrid_score,
+        };
+      })
+      .filter((x): x is RagHit & { hybrid_score: number } => x !== null);
+  } else {
+    allHits.sort((a, b) => b.score - a.score);
+    top = allHits.slice(0, limit);
+  }
 
   tracer.success(
     { count: top.length },
-    { source: sourceParam, collections, limit },
+    {
+      source: sourceParam,
+      collections,
+      limit,
+      hybrid: HYBRID_ENABLED,
+      overfetch: HYBRID_ENABLED ? fetchLimit : undefined,
+      alpha: HYBRID_ENABLED ? HYBRID_ALPHA : undefined,
+    },
   );
   return NextResponse.json({
     query,
     source: sourceParam,
     count: top.length,
     hits: top,
+    // Expose le mode hybrid dans la réponse pour debug et observability
+    hybrid: HYBRID_ENABLED ? { enabled: true, alpha: HYBRID_ALPHA, overfetch: HYBRID_OVERFETCH } : { enabled: false },
   });
 }
