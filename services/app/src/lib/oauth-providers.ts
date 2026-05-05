@@ -122,7 +122,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
         "openid", "email", "profile", "offline_access", "User.Read",
         "Sites.Read.All",
       ],
-      "microsoft-teams": [
+      "teams": [
         "openid", "email", "profile", "offline_access", "User.Read",
         "Channel.ReadBasic.All", "ChannelMessage.Read.All",
       ],
