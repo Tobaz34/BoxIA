@@ -19,7 +19,8 @@
       "difficulty": "facile",
       "credentials_required": [],
       "boxia_services": ["pennylane"],
-      "default_active": false
+      "default_active": false,
+      "required_connectors": ["pennylane"]
     },
     {
       "file": "invoice_alert_threshold.json",
@@ -30,7 +31,8 @@
       "difficulty": "facile",
       "credentials_required": [],
       "boxia_services": ["pennylane"],
-      "default_active": false
+      "default_active": false,
+      "required_connectors": ["pennylane"]
     },
     {
       "file": "imap_daily_triage.json",
@@ -39,9 +41,17 @@
       "category": "email",
       "description": "Toutes les heures, lit les nouveaux emails IMAP, les classe via l'agent IA triage (commercial/support/admin/spam), génère un brouillon de réponse pour les \"à répondre\" et stocke le digest dans /data.",
       "difficulty": "facile",
-      "credentials_required": ["IMAP (host, port, user, mdp)"],
+      "credentials_required": [],
       "boxia_services": ["agents"],
-      "default_active": false
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Lire IMAP (à configurer)",
+          "connector_slug": "imap-generic",
+          "n8n_credential_key": "imap"
+        }
+      ],
+      "required_connectors": ["imap-generic"]
     },
     {
       "file": "smtp_invoice_reminder.json",
@@ -50,9 +60,17 @@
       "category": "finance",
       "description": "Tous les lundis, prend les factures impayées (Pennylane) > 30j et envoie automatiquement un email de relance courtois au client. Brouillon généré par agent IA \"support clients\".",
       "difficulty": "moyen",
-      "credentials_required": ["SMTP (envoi email)"],
+      "credentials_required": [],
       "boxia_services": ["pennylane", "agents"],
-      "default_active": false
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Envoie brouillon admin",
+          "connector_slug": "smtp",
+          "n8n_credential_key": "smtp"
+        }
+      ],
+      "required_connectors": ["pennylane", "smtp"]
     },
     {
       "file": "rag_smb_resync.json",
@@ -74,7 +92,8 @@
       "difficulty": "facile",
       "credentials_required": [],
       "boxia_services": ["glpi"],
-      "default_active": false
+      "default_active": false,
+      "required_connectors": ["glpi"]
     },
     {
       "file": "qdrant_snapshot_weekly.json",
@@ -105,9 +124,17 @@
       "category": "monitoring",
       "description": "Tous les vendredis à 17h, génère un rapport d'activité (conversations, agents les plus utilisés, workflows déclenchés) et l'envoie à l'admin par email.",
       "difficulty": "moyen",
-      "credentials_required": ["SMTP"],
+      "credentials_required": [],
       "boxia_services": [],
-      "default_active": false
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Email rapport",
+          "connector_slug": "smtp",
+          "n8n_credential_key": "smtp"
+        }
+      ],
+      "required_connectors": ["smtp"]
     }
   ]
 }
