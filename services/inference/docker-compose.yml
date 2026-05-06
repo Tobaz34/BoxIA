@@ -59,6 +59,22 @@ services:
       # ou de cohabiter avec qwen2.5vl (vision) + bge-m3 (embed) +
       # llama-guard3 (safety) sur le même GPU 12 GB.
       OLLAMA_KV_CACHE_TYPE: "q8_0"
+      # Force CUDA visible — sans ça le container démarre mais Ollama
+      # ne voit pas le GPU (library=cpu dans les logs au boot).
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+    # `runtime: nvidia` est nécessaire en mode `docker compose up` standalone
+    # car le block `deploy.resources.devices` n'est appliqué QUE par
+    # `docker stack deploy` (Swarm). Sans `runtime: nvidia` :
+    #   docker inspect ollama → DeviceRequests=null
+    #   Ollama logs : library=cpu, total_vram="0 B"
+    # Avec runtime nvidia, les GPUs sont passés au container.
+    # Pré-requis : nvidia-container-toolkit installé + le runtime nvidia
+    # déclaré dans /etc/docker/daemon.json (fait par install-update-watcher
+    # ou par bootstrap-new-box.sh).
+    runtime: nvidia
+    # On garde le block deploy: pour compat Swarm si un jour, mais c'est
+    # `runtime: nvidia` qui fait le boulot en compose standalone.
     deploy:
       resources:
         reservations:
