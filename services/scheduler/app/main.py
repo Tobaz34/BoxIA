@@ -38,7 +38,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field, field_validator
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -493,12 +493,18 @@ async def get_schedule(
     return _to_response(row, schedule_id)
 
 
-@app.delete("/v1/schedules/{schedule_id}", status_code=204)
+@app.delete("/v1/schedules/{schedule_id}", status_code=204, response_class=Response)
 async def delete_schedule(
     schedule_id: str = Path(...),
     user_id: Optional[str] = Query(default=None),
     _auth: None = Depends(require_auth),
-) -> None:
+) -> Response:
+    """Supprime un job du scheduler (204 No Content si succès).
+
+    FastAPI ≥0.115 valide strictement que status=204 implique no body —
+    on doit donc retourner explicitement Response(status_code=204) plutôt
+    qu'une fonction `-> None` qui produirait un null JSON.
+    """
     row = _get_schedule(schedule_id)
     if not row:
         raise HTTPException(status_code=404, detail="schedule_not_found")
@@ -511,6 +517,7 @@ async def delete_schedule(
         pass  # déjà retiré côté APScheduler
     _delete_schedule(schedule_id)
     log.info("delete schedule %s", schedule_id)
+    return Response(status_code=204)
 
 
 def _to_response(row: dict, job_id: str) -> ScheduleResponse:
