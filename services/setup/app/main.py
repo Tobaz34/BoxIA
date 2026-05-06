@@ -387,42 +387,83 @@ async def configure(payload: WizardSubmit):
     if not payload.admin_password:
         payload.admin_password = DEFAULT_ADMIN_PASSWORD
 
-    # Secrets internes (générés, jamais exposés au user final)
-    pg_dify = gen_secret(32)
-    pg_ak = gen_secret(32)
-    ak_secret = gen_secret(60)
-    dify_secret = gen_secret(50)
-    qdrant_key = gen_secret(32)
+    # ---- PRESERVATION DES SECRETS EXISTANTS ----
+    # En mode bootstrap (deploy-new-box.sh + AIBOX_BOOTSTRAP=1), install.sh
+    # a DÉJÀ créé un .env avec des secrets PG/encryption/etc. Et ces secrets
+    # sont DÉJÀ persistés dans les volumes Docker (Postgres user/pwd, n8n
+    # encryption key dans /home/node/.n8n/config, etc.).
+    # Si on régénère les secrets ici sans préserver les existants → le
+    # nouveau .env aura des secrets différents → mismatch avec les volumes
+    # → restart loop infini sur n8n, langfuse-web, agents, dify-plugin.
+    # Solution : lire le .env existant et préserver ses secrets, ne
+    # générer que ceux qui ne sont pas déjà là (1ère install vraie).
+    def _read_env_file(path: Path) -> dict[str, str]:
+        if not path.exists():
+            return {}
+        out: dict[str, str] = {}
+        try:
+            for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                v = v.strip()
+                # Strip outer quotes (shell-escaped values)
+                if (len(v) >= 2 and ((v[0] == "'" and v[-1] == "'") or (v[0] == '"' and v[-1] == '"'))):
+                    v = v[1:-1].replace("'\"'\"'", "'")
+                out[k.strip()] = v
+        except Exception as exc:
+            print(f"[setup-api] /api/configure: failed to read existing .env: {exc}")
+        return out
+    _existing = _read_env_file(AIBOX_ROOT / ".env")
+    def _keep(key: str, generator):
+        """Préserve la valeur existante du .env si présente, sinon génère."""
+        return _existing.get(key) or generator()
+
+    # Secrets internes (générés au 1er install, préservés ensuite)
+    pg_dify = _keep("PG_DIFY_PASSWORD", lambda: gen_secret(32))
+    pg_ak = _keep("PG_AUTHENTIK_PASSWORD", lambda: gen_secret(32))
+    ak_secret = _keep("AUTHENTIK_SECRET_KEY", lambda: gen_secret(60))
+    dify_secret = _keep("DIFY_SECRET_KEY", lambda: gen_secret(50))
+    qdrant_key = _keep("QDRANT_API_KEY", lambda: gen_secret(32))
     # Dify 1.x : plugin daemon a besoin de 2 secrets partagés avec dify-api
-    dify_plugin_key = gen_secret(50)
-    dify_inner_key = gen_secret(50)
+    dify_plugin_key = _keep("DIFY_PLUGIN_DAEMON_KEY", lambda: gen_secret(50))
+    dify_inner_key = _keep("DIFY_INNER_API_KEY", lambda: gen_secret(50))
     # Sidecars & connecteurs : auto-générées (jamais saisies par le client).
     # Cf. memory/product_appliance_principle.md — zéro intervention humaine.
     # Si on les omet, aibox-agents/mem0/connecteurs ne démarrent pas (les
     # composes les exigent comme variables required, donc compose lève une
     # erreur à `up`).
-    agents_api_key = gen_secret(48)
-    mem0_api_key = gen_secret(48)
-    fec_tool_api_key = gen_secret(48)
-    pennylane_tool_api_key = gen_secret(48)
-    glpi_tool_api_key = gen_secret(48)
-    odoo_tool_api_key = gen_secret(48)
-    text2sql_tool_api_key = gen_secret(48)
+    agents_api_key = _keep("AGENTS_API_KEY", lambda: gen_secret(48))
+    mem0_api_key = _keep("MEM0_API_KEY", lambda: gen_secret(48))
+    fec_tool_api_key = _keep("FEC_TOOL_API_KEY", lambda: gen_secret(48))
+    pennylane_tool_api_key = _keep("PENNYLANE_TOOL_API_KEY", lambda: gen_secret(48))
+    glpi_tool_api_key = _keep("GLPI_TOOL_API_KEY", lambda: gen_secret(48))
+    odoo_tool_api_key = _keep("ODOO_TOOL_API_KEY", lambda: gen_secret(48))
+    text2sql_tool_api_key = _keep("TEXT2SQL_TOOL_API_KEY", lambda: gen_secret(48))
     # n8n exige un mdp fort (8+ chars + 1 maj + 1 chiffre). gen_secret n'a
     # pas cette garantie, on génère donc un mdp dédié. setup_n8n_owner sait
     # le re-générer si besoin (rétry sur 400 password too weak).
-    n8n_password = gen_strong_password(24)
+    n8n_password = _keep("N8N_PASSWORD", lambda: gen_strong_password(24))
 
     # ----- Services optionnels post-sprint 2026-05 -----
     # Langfuse (observability), TTS Piper (voice), SearXNG (web search).
     # Vars auto-générées : si l'admin ne déploie pas le compose, elles
     # restent dans .env mais sans effet (no-op côté aibox-app).
-    langfuse_db_password = gen_secret(32)
-    langfuse_salt = gen_secret(32)
-    langfuse_nextauth_secret = gen_secret(64)
-    langfuse_public_key = "pk-lf-aibox-" + gen_secret(24)
-    langfuse_secret_key = "sk-lf-aibox-" + gen_secret(32)
-    searxng_secret = gen_secret(64)
+    langfuse_db_password = _keep("LANGFUSE_DB_PASSWORD", lambda: gen_secret(32))
+    langfuse_salt = _keep("LANGFUSE_SALT", lambda: gen_secret(32))
+    langfuse_nextauth_secret = _keep("LANGFUSE_NEXTAUTH_SECRET", lambda: gen_secret(64))
+    langfuse_public_key = _keep("LANGFUSE_PUBLIC_KEY", lambda: "pk-lf-aibox-" + gen_secret(24))
+    langfuse_secret_key = _keep("LANGFUSE_SECRET_KEY", lambda: "sk-lf-aibox-" + gen_secret(32))
+    searxng_secret = _keep("SEARXNG_SECRET", lambda: gen_secret(64))
+    if _existing:
+        kept = sum(1 for k in [
+            "PG_DIFY_PASSWORD", "PG_AUTHENTIK_PASSWORD", "AUTHENTIK_SECRET_KEY",
+            "DIFY_SECRET_KEY", "QDRANT_API_KEY", "DIFY_PLUGIN_DAEMON_KEY",
+            "DIFY_INNER_API_KEY", "AGENTS_API_KEY", "MEM0_API_KEY",
+            "N8N_PASSWORD", "LANGFUSE_DB_PASSWORD",
+        ] if k in _existing)
+        print(f"[setup-api] /api/configure: preserved {kept} secrets from existing .env")
 
     # Échappe les caractères spéciaux pour bash (.env est sourcé par scripts shell)
     def shell_escape(s: str) -> str:
