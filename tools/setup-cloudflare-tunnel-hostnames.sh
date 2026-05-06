@@ -178,10 +178,20 @@ TUNNEL_CNAME_TARGET="${CF_TUNNEL_ID}.cfargotunnel.com"
 # Stratégie : on retire toutes les règles actuelles qui matchent un de NOS
 # hostnames (`<sub>.<AIBOX_PUBLIC_DOMAIN>` ou `<AIBOX_PUBLIC_DOMAIN>` lui-même),
 # on ajoute les nouvelles, on préserve les autres + la règle catch-all 404.
+#
+# Note jq : on utilise un if/elif explicit plutôt qu'un combo `// ""` + `|`
+# car la règle catch-all peut avoir .hostname null OU absent, et le pipe
+# avec endswith plantait dans certains cas avec :
+#   "endswith() requires string inputs"
+# Ce if/elif est plus défensif (preserve toute règle dont .hostname n'est
+# pas une string).
 NEW_INGRESS=$(echo "$CURRENT_INGRESS" | jq --arg domain "$AIBOX_PUBLIC_DOMAIN" '
     map(select(
-        (.hostname // "") != $domain
-        and (.hostname // "") | endswith("." + $domain) | not
+        if (.hostname | type) != "string" then true
+        elif .hostname == $domain then false
+        elif (.hostname | endswith("." + $domain)) then false
+        else true
+        end
     ))
 ')
 
