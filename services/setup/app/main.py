@@ -56,7 +56,7 @@ class WizardSubmit(BaseModel):
     client_name: str
     client_sector: str
     users_count: int = 10
-    domain: str
+    domain: str = "boxia.local"
     admin_fullname: str
     admin_username: str = "admin"
     admin_email: str
@@ -66,6 +66,16 @@ class WizardSubmit(BaseModel):
     admin_password: str = ""
     hw_profile: str = "tpe"
     technologies: dict[str, Any] = {}
+    # ----- Cloudflare Tunnel (optionnel — vide = LAN-only) -----
+    # Si AIBOX_PUBLIC_DOMAIN est renseigné, les 4 CF_* doivent l'être aussi
+    # (validé côté wizard.js avant submit). Le wizard backend peut aussi
+    # valider — mais on les accepte comme strings vides en silence pour
+    # ne pas casser des intégrations CI minimales.
+    aibox_public_domain: str = ""
+    cf_api_token: str = ""
+    cf_account_id: str = ""
+    cf_zone_id: str = ""
+    cf_tunnel_id: str = ""
 
 
 # ---- Helpers --------------------------------------------------------------
@@ -344,6 +354,23 @@ async def configure(payload: WizardSubmit):
         # Tool /api/agents-tools/web_search consommable par le Concierge.
         f"SEARXNG_SECRET={searxng_secret}",
         "SEARXNG_URL=http://127.0.0.1:8888",
+
+        # ----- Accès distant — Cloudflare Tunnel (optionnel) -----
+        # Si AIBOX_PUBLIC_DOMAIN est défini ici, les sous-domaines de services
+        # sont auto-dérivés (cf SERVICE_SUBDOMAIN dans sso_provisioning.py et
+        # tools/setup-cloudflare-tunnel-hostnames.sh) :
+        #   <AIBOX_PUBLIC_DOMAIN>             → aibox-app
+        #   flows.<AIBOX_PUBLIC_DOMAIN>       → n8n
+        #   agents.<AIBOX_PUBLIC_DOMAIN>      → Dify console
+        #   auth.<AIBOX_PUBLIC_DOMAIN>        → Authentik
+        #   admin.<AIBOX_PUBLIC_DOMAIN>       → Portainer
+        #   metrics.<AIBOX_PUBLIC_DOMAIN>     → Grafana
+        # Vide → mode LAN-only (boxia.local).
+        f"AIBOX_PUBLIC_DOMAIN={payload.aibox_public_domain}",
+        f"CF_API_TOKEN={shell_escape(payload.cf_api_token)}",
+        f"CF_ACCOUNT_ID={payload.cf_account_id}",
+        f"CF_ZONE_ID={payload.cf_zone_id}",
+        f"CF_TUNNEL_ID={payload.cf_tunnel_id}",
     ]
     for key, val in payload.technologies.items():
         if isinstance(val, bool):

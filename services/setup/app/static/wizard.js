@@ -11,12 +11,18 @@ const state = {
     client_name: '',
     client_sector: 'services',
     users_count: 10,
-    domain: '',
+    domain: 'boxia.local',
     admin_fullname: '',
     admin_username: 'admin',
     admin_email: '',
     admin_password: DEFAULT_ADMIN_PASSWORD,
     hw_profile: 'tpe',
+    // Cloudflare Tunnel (optionnel — vide = LAN-only)
+    aibox_public_domain: '',
+    cf_api_token: '',
+    cf_account_id: '',
+    cf_zone_id: '',
+    cf_tunnel_id: '',
     technologies: {},
   },
   questionnaire: null,
@@ -60,6 +66,28 @@ function gather(step) {
     if (!state.data.admin_email) { alert('Email requis'); return false; }
   }
   if (step === 3) {
+    // Step Cloudflare — tous les champs sont optionnels.
+    // Si AIBOX_PUBLIC_DOMAIN est vide → mode LAN-only (boxia.local).
+    state.data.aibox_public_domain = document.getElementById('aibox_public_domain').value.trim().toLowerCase();
+    state.data.cf_api_token = document.getElementById('cf_api_token').value.trim();
+    state.data.cf_account_id = document.getElementById('cf_account_id').value.trim();
+    state.data.cf_zone_id = document.getElementById('cf_zone_id').value.trim();
+    state.data.cf_tunnel_id = document.getElementById('cf_tunnel_id').value.trim();
+    // Validation cohérence : si l'admin a saisi un domaine public, il doit
+    // avoir TOUS les CF_* requis (sinon le tunnel ne se provisionnera pas).
+    if (state.data.aibox_public_domain) {
+      const missing = [];
+      if (!state.data.cf_api_token) missing.push('API Token');
+      if (!state.data.cf_account_id) missing.push('Account ID');
+      if (!state.data.cf_zone_id) missing.push('Zone ID');
+      if (!state.data.cf_tunnel_id) missing.push('Tunnel ID');
+      if (missing.length > 0) {
+        alert('Domaine public renseigné mais champs Cloudflare manquants : ' + missing.join(', ') + '\n\nLaissez le domaine public vide si vous voulez juste un accès LAN.');
+        return false;
+      }
+    }
+  }
+  if (step === 4) {
     state.data.technologies = {};
     state.data.activates = [];
     document.querySelectorAll('#questionnaire select.item-input').forEach(sel => {
@@ -77,8 +105,11 @@ function gather(step) {
 
 function next(from) {
   if (!gather(from)) return;
-  if (from === 2 && !state.questionnaire) loadQuestionnaire();
-  if (from === 3) renderRecap();
+  // Le questionnaire IT est en step 4 désormais. On le pré-charge dès la
+  // sortie du step Cloudflare (step 3) pour avoir les options prêtes.
+  if (from === 3 && !state.questionnaire) loadQuestionnaire();
+  // Récap est en step 5 → on le construit en sortant du step 4 (IT).
+  if (from === 4) renderRecap();
   show(from + 1);
 }
 
@@ -135,13 +166,23 @@ function renderRecap() {
   const actsStr = acts.length
     ? `\nConnecteurs/templates qui seront activés :\n${acts.map(a => '  ✓ ' + a).join('\n')}`
     : '\n(aucune activation spécifique — IA générique uniquement)';
+  // Section accès distant — uniquement si AIBOX_PUBLIC_DOMAIN renseigné
+  const cfStr = d.aibox_public_domain
+    ? `\nAccès distant (Cloudflare Tunnel) :\n` +
+      `  Domaine public : ${d.aibox_public_domain}\n` +
+      `  CF API Token   : ${'*'.repeat(Math.min(8, d.cf_api_token.length))} (chiffré dans .env)\n` +
+      `  CF Account ID  : ${d.cf_account_id}\n` +
+      `  CF Zone ID     : ${d.cf_zone_id}\n` +
+      `  CF Tunnel ID   : ${d.cf_tunnel_id}\n`
+    : `\nAccès distant : LAN-only (aucun domaine public configuré)\n`;
   document.getElementById('recap').textContent =
     `Entreprise   : ${d.client_name}\n` +
     `Secteur      : ${d.client_sector}\n` +
     `Utilisateurs : ${d.users_count}\n` +
     `Profil HW    : ${d.hw_profile}\n` +
-    `Domaine      : ${d.domain}\n\n` +
-    `Compte administrateur (premier utilisateur) :\n` +
+    `Domaine local: ${d.domain}\n` +
+    cfStr +
+    `\nCompte administrateur (premier utilisateur) :\n` +
     `  Nom    : ${d.admin_fullname}\n` +
     `  Login  : ${d.admin_username}\n` +
     `  Email  : ${d.admin_email}\n` +
@@ -151,7 +192,9 @@ function renderRecap() {
 }
 
 async function deploy() {
-  show(5);
+  // Step 6 = écran "Déploiement en cours" (était step 5 avant l'ajout
+  // du step Cloudflare en position 3).
+  show(6);
   const out = document.getElementById('log-output');
   out.textContent = 'Génération de la configuration...\n';
 

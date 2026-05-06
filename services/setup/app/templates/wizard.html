@@ -15,9 +15,10 @@
       <div class="progress">
         <div class="step" data-step="1">1. Entreprise</div>
         <div class="step" data-step="2">2. Domaine</div>
-        <div class="step" data-step="3">3. Environnement IT</div>
-        <div class="step" data-step="4">4. Récap</div>
-        <div class="step" data-step="5">5. Déploiement</div>
+        <div class="step" data-step="3">3. Accès distant</div>
+        <div class="step" data-step="4">4. Environnement IT</div>
+        <div class="step" data-step="5">5. Récap</div>
+        <div class="step" data-step="6">6. Déploiement</div>
       </div>
     </header>
 
@@ -67,8 +68,8 @@
         <h1>🌐 Domaine et compte administrateur</h1>
 
         <label>Domaine d'accès interne
-          <input type="text" id="domain" placeholder="ai.monentreprise.local">
-          <small>Sous-domaines auto : auth./agents./chat. (TLS Let's Encrypt si domaine public).</small>
+          <input type="text" id="domain" placeholder="boxia.local" value="boxia.local">
+          <small>Domaine par défaut pour l'accès LAN/VPN. Sous-domaines auto : auth./agents./chat./flows./admin./status. Personnalisable mais <code>boxia.local</code> est le défaut produit BoxIA.</small>
         </label>
 
         <h2 style="margin-top:24px;font-size:16px;font-weight:600;">👤 Compte administrateur</h2>
@@ -104,8 +105,51 @@
         </div>
       </section>
 
-      <!-- STEP 3 -->
+      <!-- STEP 3 — Accès distant Cloudflare (optionnel) -->
       <section class="step-content" data-step="3" hidden>
+        <h1>☁️ Accès distant — Cloudflare Tunnel (optionnel)</h1>
+        <p>Si vous voulez exposer la box sur Internet via un domaine public sécurisé (HTTPS automatique, sans ouvrir de port sur votre routeur), renseignez votre Cloudflare Tunnel ici. Sinon, laissez vide — la box restera accessible uniquement en LAN/VPN sur <code>boxia.local</code>.</p>
+
+        <div style="margin-top:16px;padding:14px 16px;background:var(--panel-2);border:1px solid var(--muted);border-radius:8px;">
+          <div style="font-weight:600;margin-bottom:6px;">📖 Pré-requis</div>
+          <ol style="margin:4px 0 0 0;padding-left:24px;font-size:13px;color:var(--muted);line-height:1.6;">
+            <li>Un nom de domaine que vous possédez (ex: <code>boxia.example.fr</code>)</li>
+            <li>Le domaine est géré sur Cloudflare (Zone Cloudflare existante)</li>
+            <li>Un Cloudflare Tunnel créé (Zero Trust → Networks → Tunnels)</li>
+            <li>Un API Token Cloudflare avec scopes <code>Cloudflare Tunnel:Edit</code> + <code>Zone:DNS:Edit</code></li>
+          </ol>
+          <p style="margin:8px 0 0 0;font-size:12px;">Voir <code>tools/setup-cloudflare-tunnel-hostnames.sh</code> pour un setup en ligne de commande complet.</p>
+        </div>
+
+        <label>Domaine public (vide = LAN-only)
+          <input type="text" id="aibox_public_domain" placeholder="boxia.example.fr">
+          <small>Sera utilisé pour <code>&lt;domain&gt;</code>, <code>flows.&lt;domain&gt;</code>, <code>agents.&lt;domain&gt;</code>, <code>auth.&lt;domain&gt;</code>, etc.</small>
+        </label>
+
+        <label>Cloudflare API Token (Tunnel:Edit + DNS:Edit)
+          <input type="password" id="cf_api_token" placeholder="••••••••••••••••" autocomplete="off">
+        </label>
+
+        <label>Cloudflare Account ID
+          <input type="text" id="cf_account_id" placeholder="abcdef0123456789abcdef0123456789">
+        </label>
+
+        <label>Cloudflare Zone ID (de votre domaine)
+          <input type="text" id="cf_zone_id" placeholder="0123456789abcdef0123456789abcdef">
+        </label>
+
+        <label>Cloudflare Tunnel ID
+          <input type="text" id="cf_tunnel_id" placeholder="01234567-89ab-cdef-0123-456789abcdef">
+        </label>
+
+        <div class="actions">
+          <button onclick="prev(3)">← Précédent</button>
+          <button class="primary" onclick="next(3)">Suivant →</button>
+        </div>
+      </section>
+
+      <!-- STEP 4 — Environnement IT -->
+      <section class="step-content" data-step="4" hidden>
         <h1>🧰 Votre environnement IT</h1>
         <p>Indiquez ce que votre entreprise utilise. Nous activerons les connecteurs IA correspondants.</p>
 
@@ -114,25 +158,25 @@
         </div>
 
         <div class="actions">
-          <button onclick="prev(3)">← Précédent</button>
-          <button class="primary" onclick="next(3)">Suivant →</button>
+          <button onclick="prev(4)">← Précédent</button>
+          <button class="primary" onclick="next(4)">Suivant →</button>
         </div>
       </section>
 
-      <!-- STEP 4 -->
-      <section class="step-content" data-step="4" hidden>
+      <!-- STEP 5 — Récapitulatif -->
+      <section class="step-content" data-step="5" hidden>
         <h1>📋 Récapitulatif</h1>
         <p>Vérifiez vos informations avant de lancer le déploiement.</p>
         <pre id="recap"></pre>
 
         <div class="actions">
-          <button onclick="prev(4)">← Précédent</button>
+          <button onclick="prev(5)">← Précédent</button>
           <button class="primary" onclick="deploy()">🚀 Lancer le déploiement</button>
         </div>
       </section>
 
-      <!-- STEP 5 -->
-      <section class="step-content" data-step="5" hidden>
+      <!-- STEP 6 — Déploiement -->
+      <section class="step-content" data-step="6" hidden>
         <h1>⚙️ Déploiement en cours</h1>
         <div id="logs">
           <pre id="log-output">En attente du démarrage...</pre>
