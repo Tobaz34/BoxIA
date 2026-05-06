@@ -223,8 +223,31 @@ async def cloudflare_test(payload: CloudflareTestPayload):
             "message": "Sous-domaine invalide (lettres minuscules, chiffres, tiret, 2-30 chars)"
         })
 
+    # Si le frontend a envoyé le placeholder "__USE_MASTER_TOKEN__" (cas master
+    # creds pré-injectés, le wizard cache le champ token et envoie ce sentinel
+    # pour ne pas exposer le vrai token côté JS), on substitue par les valeurs
+    # depuis l'env (chargées depuis /etc/aibox-master/cloudflare.env au boot).
+    # Idem pour les autres IDs : si placeholder ou vide, fallback sur env.
+    cf_token = payload.cf_api_token
+    cf_account = payload.cf_account_id
+    cf_tunnel = payload.cf_tunnel_id
+    cf_zone = payload.cf_zone_id
+    if cf_token in ("__USE_MASTER_TOKEN__", "", None):
+        cf_token = os.environ.get("CF_DEFAULT_API_TOKEN", "")
+    if cf_account in ("__USE_MASTER_TOKEN__", "", None):
+        cf_account = os.environ.get("CF_DEFAULT_ACCOUNT_ID", "")
+    if cf_tunnel in ("__USE_MASTER_TOKEN__", "", None):
+        cf_tunnel = os.environ.get("CF_DEFAULT_TUNNEL_ID", "")
+    if cf_zone in ("__USE_MASTER_TOKEN__", "", None):
+        cf_zone = os.environ.get("CF_DEFAULT_ZONE_ID", "")
+    if not (cf_token and cf_account and cf_tunnel and cf_zone):
+        raise HTTPException(400, {
+            "error": "missing_credentials",
+            "message": "Credentials Cloudflare incomplets (ni dans le formulaire, ni dans /etc/aibox-master/cloudflare.env)",
+        })
+
     headers = {
-        "Authorization": f"Bearer {payload.cf_api_token}",
+        "Authorization": f"Bearer {cf_token}",
         "Content-Type": "application/json",
     }
     api_base = "https://api.cloudflare.com/client/v4"
@@ -240,7 +263,7 @@ async def cloudflare_test(payload: CloudflareTestPayload):
             return False, {"status": 0, "reason": str(e)}
 
     # 1. Tunnel
-    ok_tunnel, j_tunnel = cf_get(f"/accounts/{payload.cf_account_id}/cfd_tunnel/{payload.cf_tunnel_id}")
+    ok_tunnel, j_tunnel = cf_get(f"/accounts/{cf_account}/cfd_tunnel/{cf_tunnel}")
     if not ok_tunnel:
         raise HTTPException(400, {
             "error": "tunnel_not_found",
@@ -249,7 +272,7 @@ async def cloudflare_test(payload: CloudflareTestPayload):
         })
 
     # 2. Zone
-    ok_zone, j_zone = cf_get(f"/zones/{payload.cf_zone_id}")
+    ok_zone, j_zone = cf_get(f"/zones/{cf_zone}")
     if not ok_zone:
         raise HTTPException(400, {
             "error": "zone_not_found",
@@ -260,7 +283,7 @@ async def cloudflare_test(payload: CloudflareTestPayload):
 
     # 3. Check subdomain disponibilité (optionnel — info, pas blocant)
     subdomain_full = f"{payload.cloudflare_subdomain}.{zone_name}"
-    ok_dns, j_dns = cf_get(f"/zones/{payload.cf_zone_id}/dns_records?name={subdomain_full}")
+    ok_dns, j_dns = cf_get(f"/zones/{cf_zone}/dns_records?name={subdomain_full}")
     existing_records = (j_dns.get("result") or []) if ok_dns else []
 
     return {
@@ -515,14 +538,26 @@ async def configure(payload: WizardSubmit):
     if payload.cloudflare_subdomain:
         cf_root = os.environ.get("CF_DEFAULT_ROOT_DOMAIN", "ialocal.pro")
         public_domain = f"{payload.cloudflare_subdomain}.{cf_root}"
+        # Substitution des placeholders "__USE_MASTER_TOKEN__" envoyés par le
+        # frontend quand l'admin BoxIA a pré-injecté les master creds. On lit
+        # alors les vraies valeurs depuis l'env (chargé depuis
+        # /etc/aibox-master/cloudflare.env au boot du container).
+        def _resolve(payload_val: str, env_key: str) -> str:
+            if payload_val in ("__USE_MASTER_TOKEN__", "", None):
+                return os.environ.get(env_key, "")
+            return payload_val
+        cf_account = _resolve(payload.cf_account_id, "CF_DEFAULT_ACCOUNT_ID")
+        cf_tunnel = _resolve(payload.cf_tunnel_id, "CF_DEFAULT_TUNNEL_ID")
+        cf_token = _resolve(payload.cf_api_token, "CF_DEFAULT_API_TOKEN")
+        cf_zone = _resolve(payload.cf_zone_id, "CF_DEFAULT_ZONE_ID")
         env_lines.extend([
             "",
             "# ----- Cloudflare Tunnel (set par wizard) -----",
             f"AIBOX_PUBLIC_DOMAIN={public_domain}",
-            f"CLOUDFLARE_ACCOUNT_ID={shell_escape(payload.cf_account_id)}",
-            f"CLOUDFLARE_TUNNEL_ID={shell_escape(payload.cf_tunnel_id)}",
-            f"CLOUDFLARE_API_TOKEN={shell_escape(payload.cf_api_token)}",
-            f"CLOUDFLARE_ZONE_ID={shell_escape(payload.cf_zone_id)}",
+            f"CLOUDFLARE_ACCOUNT_ID={shell_escape(cf_account)}",
+            f"CLOUDFLARE_TUNNEL_ID={shell_escape(cf_tunnel)}",
+            f"CLOUDFLARE_API_TOKEN={shell_escape(cf_token)}",
+            f"CLOUDFLARE_ZONE_ID={shell_escape(cf_zone)}",
         ])
 
     # ----- Branding (optionnel, défauts hexagone bleu/vert) -----

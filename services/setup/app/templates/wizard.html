@@ -14,7 +14,7 @@
       <div class="subtitle">Assistant de configuration initiale</div>
       <div class="progress">
         <div class="step" data-step="1">1. Entreprise</div>
-        <div class="step" data-step="2">2. Domaine</div>
+        <div class="step" data-step="2">2. Admin</div>
         <div class="step" data-step="3">3. Accès distant</div>
         <div class="step" data-step="4">4. Environnement IT</div>
         <div class="step" data-step="5">5. Branding</div>
@@ -66,15 +66,15 @@
 
       <!-- STEP 2 -->
       <section class="step-content" data-step="2" hidden>
-        <h1>🌐 Domaine et compte administrateur</h1>
+        <h1>👤 Compte administrateur</h1>
 
-        <label>Domaine d'accès interne
-          <input type="text" id="domain" placeholder="ai.monentreprise.local">
-          <small>Sous-domaines auto : auth./agents./chat. (TLS Let's Encrypt si domaine public).</small>
-        </label>
+        <!-- Domaine interne fixé en dur à "aibox.local" — pas demandé au client.
+             Le vrai accès se fait via le sous-domaine Cloudflare (étape 3) qui
+             est public/HTTPS. Le domaine interne sert uniquement au DNS LAN
+             optionnel (mDNS), il n'a pas besoin d'être personnalisé. -->
+        <input type="hidden" id="domain" value="aibox.local">
 
-        <h2 style="margin-top:24px;font-size:16px;font-weight:600;">👤 Compte administrateur</h2>
-        <p style="margin-top:4px;margin-bottom:16px;font-size:13px;">Ce compte est le premier utilisateur. Il aura tous les droits et pourra ensuite créer les comptes des autres collaborateurs.</p>
+        <p style="margin-top:0;margin-bottom:16px;font-size:13px;color:var(--muted);">Ce compte est le premier utilisateur. Il aura tous les droits et pourra ensuite créer les comptes des autres collaborateurs.</p>
 
         <label>Nom complet
           <input type="text" id="admin_fullname" placeholder="Jean Dupont">
