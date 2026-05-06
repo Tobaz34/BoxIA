@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -373,19 +373,23 @@ async def exec_code(
     )
 
 
-@app.delete("/v1/sessions/{session_id}", status_code=204)
+@app.delete("/v1/sessions/{session_id}", status_code=204, response_class=Response)
 async def cleanup_session(
     session_id: str,
     _auth: None = Depends(require_auth),
-) -> None:
+) -> Response:
     """Supprime un workdir de session persistante. Pas auto-purgé sinon
-    (les sessions vivent jusqu'au restart du container, tmpfs)."""
+    (les sessions vivent jusqu'au restart du container, tmpfs).
+
+    FastAPI ≥0.115 exige Response explicite quand status=204.
+    """
     if not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="invalid_session_id")
     wd = WORK_BASE / session_id
     if wd.exists():
         shutil.rmtree(wd, ignore_errors=True)
         log.info("cleanup session %s", session_id)
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":
