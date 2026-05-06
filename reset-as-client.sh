@@ -100,6 +100,18 @@ STOP_LIST=(
     aibox-langfuse-web aibox-langfuse-worker aibox-langfuse-db
     aibox-langfuse-clickhouse aibox-langfuse-redis aibox-langfuse-minio
     aibox-tts aibox-searxng
+    # Mémoire long-terme + agents autonomes (sidecars Python)
+    # Sans ça : mem0 garde la mémoire vectorielle du précédent client,
+    # aibox-agents garde son checkpointer LangGraph (cf services/agents-autonomous/).
+    aibox-mem0
+    aibox-agents
+    # Dify plugin daemon (compagnon de aibox-dify-api, créé Sprint 2026-05)
+    # Sans ça, version mismatch possible si Dify redémarré sans daemon.
+    aibox-dify-plugin-daemon
+    # Monitoring stack (services/monitoring/) — pas de data utilisateur mais
+    # leur recreate au prochain up assure les volumes propres.
+    aibox-prometheus aibox-grafana aibox-loki aibox-promtail
+    aibox-cadvisor aibox-node-exporter aibox-dcgm-exporter
     # Services v2 OSS-inspired (2026-05-05)
     aibox-scheduler          # P1 #6 — APScheduler tâches récurrentes
     aibox-sandbox            # P0 #1 — exécution code gVisor
@@ -183,6 +195,14 @@ DEL_VOLUMES=(
     aibox_scheduler_data
     # Sandbox : pas de volume (tmpfs uniquement, disparait au stop).
     # Les fichiers /tmp/work/<session_id> sont auto-purgés.
+
+    # ----- Monitoring stack (services/monitoring/) -----
+    # Métriques accumulées du précédent client (CPU/RAM/GPU + dashboards
+    # Grafana custom + logs Loki). Pas critique pour la sécurité mais
+    # incohérent visuellement (graphes parlent du précédent setup).
+    aibox_prometheus_data
+    aibox_grafana_data
+    aibox_loki_data
 )
 [[ "$KEEP_OWUI" == "true" ]] || DEL_VOLUMES+=(anythingllm_open-webui stack_xefia_open-webui)
 

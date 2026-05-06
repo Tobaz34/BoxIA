@@ -37,7 +37,12 @@ services:
     # alternatives nsjail dans app/main.py.
     runtime: ${SANDBOX_RUNTIME:-runsc}
     ports:
-      - "127.0.0.1:8087:8000"
+      # 8087 réservé par aibox-mem0 (cf services/memory/) — sandbox
+      # prend 8088. À synchroniser avec lib/bash_exec route si SANDBOX_URL
+      # est override sur localhost (en host network mode l'app cherche
+      # http://aibox-sandbox:8000 via le DNS Docker, donc pas de conflit
+      # côté résolveur).
+      - "127.0.0.1:8088:8000"
     environment:
       AGENTS_API_KEY: ${AGENTS_API_KEY:?AGENTS_API_KEY is required}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
