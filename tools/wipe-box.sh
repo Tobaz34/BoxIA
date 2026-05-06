@@ -140,7 +140,33 @@ ssh "$SSH_TARGET" "
   fi
 
   echo
-  echo '=== Prune des volumes orphelins ==='
+  echo '=== Suppression EXPLICITE des volumes BoxIA (au-delà du prune) ==='
+  # Le \`compose down -v\` ne supprime QUE les volumes nommés DÉCLARÉS dans le
+  # compose. Pas ceux \`external: true\` ni ceux d'un autre projet. Or BoxIA
+  # a plusieurs volumes external (authentik_postgres_data, n8n_data, etc.)
+  # qui contiennent des secrets persistés (passwords PG, encryption keys n8n).
+  #
+  # Sans wipe explicite, au redeploy avec un nouveau .env :
+  #   - PG container : utilise le password du volume (ancien)
+  #   - App container : utilise le password du .env (nouveau)
+  #   → "FATAL: password authentication failed"  (langfuse, agents, etc.)
+  # OU :
+  #   - n8n config dans /home/node/.n8n/config a une encryption key (ancienne)
+  #   - n8n env a N8N_ENCRYPTION_KEY (nouvelle ou non set)
+  #   → "Mismatching encryption keys" → restart loop
+  #
+  # On supprime tous les volumes commençant par les préfixes BoxIA connus :
+  #   aibox- aibox_ observability_
+  # Les volumes 'stack_xefia_*' (anythingllm, npm, dashy externes à BoxIA)
+  # sont préservés. Les volumes anonymes (hashes longs) seront pris par prune.
+  AIBOX_VOLUMES=\$(docker volume ls --format '{{.Name}}' | grep -E '^(aibox[-_]|observability_)' || true)
+  if [ -n \"\$AIBOX_VOLUMES\" ]; then
+    echo \"\$AIBOX_VOLUMES\" | xargs docker volume rm 2>&1 | tail -10
+  else
+    echo '  (aucun volume BoxIA à supprimer)'
+  fi
+  echo
+  echo '=== Prune des volumes orphelins (anonymes/hashes) ==='
   docker volume prune -af 2>&1 | tail -3
 
   echo
