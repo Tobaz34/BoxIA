@@ -106,6 +106,14 @@ if [[ -f "$ENV_FILE" ]]; then
     set -a; source "$ENV_FILE"; set +a
 fi
 
+# ---- Alias CLOUDFLARE_* → CF_* (le wizard écrit avec préfixe CLOUDFLARE_,
+# le script utilise CF_ historiquement). Si la var CF_X n'est pas set mais
+# CLOUDFLARE_X l'est, on la mappe.
+[[ -z "${CF_API_TOKEN:-}"  && -n "${CLOUDFLARE_API_TOKEN:-}"  ]] && CF_API_TOKEN="$CLOUDFLARE_API_TOKEN"
+[[ -z "${CF_ACCOUNT_ID:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] && CF_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID"
+[[ -z "${CF_TUNNEL_ID:-}"  && -n "${CLOUDFLARE_TUNNEL_ID:-}"  ]] && CF_TUNNEL_ID="$CLOUDFLARE_TUNNEL_ID"
+[[ -z "${CF_ZONE_ID:-}"    && -n "${CLOUDFLARE_ZONE_ID:-}"    ]] && CF_ZONE_ID="$CLOUDFLARE_ZONE_ID"
+
 # ---- Vérifie env vars ------------------------------------------------------
 missing=()
 for v in CF_API_TOKEN CF_ACCOUNT_ID CF_TUNNEL_ID CF_ZONE_ID AIBOX_PUBLIC_DOMAIN; do
@@ -114,6 +122,8 @@ done
 if [[ ${#missing[@]} -gt 0 ]]; then
     err "Variables d'env manquantes : ${missing[*]}"
     err "Voir l'en-tête de ce script pour leur signification."
+    err "(Note : le script accepte aussi CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,"
+    err " CLOUDFLARE_TUNNEL_ID, CLOUDFLARE_ZONE_ID en alias.)"
     exit 1
 fi
 ok "Env OK ($AIBOX_PUBLIC_DOMAIN, tunnel ${CF_TUNNEL_ID:0:8}…)"
