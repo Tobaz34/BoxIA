@@ -180,7 +180,16 @@ ssh "$SSH_TARGET" "
   if [ '$WIPE_DATA' = '1' ]; then
     echo
     echo '=== --wipe-data : suppression /srv/ai-stack/data/ ==='
-    rm -rf data/* data/.* 2>/dev/null || true
+    # Le dossier data/ appartient à uid=1001 (user nextjs du container
+    # aibox-app), donc clikinfo ne peut pas y écrire en direct.
+    # Solution : utiliser un container alpine ROOT qui mount data/ et wipe.
+    # Le container est éphémère (--rm).
+    if docker run --rm -v $REMOTE_PATH/data:/data alpine sh -c \
+       'rm -rf /data/* /data/.[!.]* 2>/dev/null; ls -la /data/ | head -5'; then
+      echo '  ✓ data/ wipé via container alpine'
+    else
+      echo '  ⚠ wipe data/ via container a échoué — vérifier manuellement'
+    fi
   else
     echo
     echo '=== /srv/ai-stack/data/ préservé (utilise --wipe-data pour wiper aussi) ==='
