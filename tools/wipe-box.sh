@@ -132,7 +132,11 @@ ssh "$SSH_TARGET" "
 
   echo
   echo '=== Stop containers résiduels (filet de sécu) ==='
-  CONTAINERS=\$(docker ps -aq --filter 'name=aibox-')
+  # On match par préfixe de nom car les composes peuvent avoir des labels
+  # d'un projet historique différent (ex: ollama créé par 'stack_xefia'
+  # au lieu de 'aibox-inference') → docker compose down ne les voit pas.
+  # Liste explicite des noms de containers BoxIA-managed connus :
+  CONTAINERS=\$(docker ps -aq --filter 'name=aibox-' --filter 'name=ollama' --filter 'name=n8n' --filter 'name=open-webui' | sort -u)
   if [ -n \"\$CONTAINERS\" ]; then
     echo \"\$CONTAINERS\" | xargs docker rm -f
   else
