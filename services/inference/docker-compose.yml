@@ -63,18 +63,22 @@ services:
       # ne voit pas le GPU (library=cpu dans les logs au boot).
       NVIDIA_VISIBLE_DEVICES: "all"
       NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-    # `runtime: nvidia` est nécessaire en mode `docker compose up` standalone
-    # car le block `deploy.resources.devices` n'est appliqué QUE par
-    # `docker stack deploy` (Swarm). Sans `runtime: nvidia` :
-    #   docker inspect ollama → DeviceRequests=null
-    #   Ollama logs : library=cpu, total_vram="0 B"
-    # Avec runtime nvidia, les GPUs sont passés au container.
-    # Pré-requis : nvidia-container-toolkit installé + le runtime nvidia
-    # déclaré dans /etc/docker/daemon.json (fait par install-update-watcher
-    # ou par bootstrap-new-box.sh).
+    # GPU passthrough — la combinaison `gpus + runtime + deploy:` couvre tous
+    # les cas (compose standalone récent, ancien, et Swarm) :
+    #
+    #   - `gpus: all`         : sémantique moderne, équivalent à --gpus all,
+    #                           supportée par docker compose v2.4+ et v5+
+    #   - `runtime: nvidia`   : fallback si gpus n'est pas honoré, demande
+    #                           le runtime nvidia déclaré dans daemon.json
+    #   - `deploy.resources.devices` : nécessaire pour docker stack deploy
+    #                                  (Swarm), ignoré en compose up standalone
+    #
+    # Sans aucun de ces 3, Ollama démarre en CPU only (logs: library=cpu,
+    # total_vram=0 B), même si nvidia-container-toolkit est installé.
+    # Pré-requis hôte : /etc/docker/daemon.json déclare runtimes.nvidia
+    # → nvidia-container-runtime (fait par bootstrap-new-box.sh).
+    gpus: all
     runtime: nvidia
-    # On garde le block deploy: pour compat Swarm si un jour, mais c'est
-    # `runtime: nvidia` qui fait le boulot en compose standalone.
     deploy:
       resources:
         reservations:

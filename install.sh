@@ -168,7 +168,11 @@ deploy_stack() {
   ( cd services/dify && docker compose --env-file "$env_file" up -d )
 
   c_blue "  → Démarrage Inference (Ollama + Open WebUI)..."
-  ( cd services/inference && docker compose --env-file "$env_file" up -d ) || \
+  # --force-recreate : Ollama a un container_name fixe ('ollama') qui peut
+  # exister depuis un précédent deploy AVEC un compose différent (ex: sans
+  # runtime: nvidia → GPU pas vu). Sans --force-recreate, compose réutilise
+  # le container existant et les modifs du compose sont ignorées.
+  ( cd services/inference && docker compose --env-file "$env_file" up -d --force-recreate ) || \
       c_yellow "    (déjà en cours d'exécution ou conflict avec stack héritée — non bloquant)"
 
   # NOTE — Edge Caddy n'est PAS démarré ici. Quand install.sh tourne en
