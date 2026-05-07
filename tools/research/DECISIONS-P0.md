@@ -9,15 +9,21 @@
 >
 > | Sprint | Statut | Notes |
 > |---|---|---|
-> | Sprint 0 S0.1 (helper Dify) | ✅ livré (commit `a41ae10`) | difyChatStream + difyChatBlocking |
-> | Sprint 0 S0.2 (contrat erreurs) | ✅ livré (commits `e015a7d` + `e413ee4`) | Helper + 15/18 routes migrées |
-> | Sprint 0 S0.3 (Langfuse spans) | 🟡 helpers livrés (commit `e015a7d`), instrumentation routes pending | logToolCall + startToolTrace dispo |
-> | Sprint 0 S0.4 (POC gVisor) | 🔴 bloqué — exige xefia + sudo | À tester avant P0 #1 |
-> | Sprint 1 P0 #2 HITL | 🟡 partie 1/3 livrée (commit `288a5a7`) | extension approval-gate + tool-meta ; UI + routes génériques + migration 18 routes pending |
-> | Sprint 2a P0 #3 auditor | ⏸️ pas démarré | dépend P0 #2 |
-> | Sprint 2b P0 #4 delegate | 🟡 partie 2/4 livrée (commit `7233d41`) | route + migration 0013 prompt ; OpenAPI YAML 0014 + UI Card pending |
-> | Sprint 3 P0 #1 sandbox | ⏸️ pas démarré | dépend S0.4 + P0 #2 |
-> | Sprint 4 P0 #5 replan | ⏸️ pas démarré | dépend P0 #4 + Langfuse spans wired |
+> | Sprint 0 S0.1 (helper Dify) | ✅ livré 100% | difyChatStream + difyChatBlocking |
+> | Sprint 0 S0.2 (contrat erreurs) | ✅ livré 100% | Helper + 15/18 routes migrées |
+> | Sprint 0 S0.3 (Langfuse spans) | ✅ livré 100% | helpers + 17/18 routes instrumentées |
+> | Sprint 0 S0.4 (POC gVisor) | 🔴 bloqué — exige xefia + sudo | À tester avant déploiement P0 #1 |
+> | Sprint 1 P0 #2 HITL | ✅ ~95% livré | approval-gate étendu, tool-meta, routes /api/approvals*, ApprovalBanner, page /approvals, sidebar badge, wiring install_* + bash_exec |
+> | Sprint 2a P0 #3 auditor | ✅ ~75% livré | safety-auditor.ts + wiring requireApproval — reste : ollama pull qwen3:1.7b + test set 20 cas (xefia) |
+> | Sprint 2b P0 #4 delegate | ✅ 100% livré | route + 2 migrations + OpenAPI YAML + DelegationCard wired dans MessageMarkdown |
+> | Sprint 3 P0 #1 sandbox | ✅ ~90% livré | service complet + bash_exec route — reste POC gVisor |
+> | Sprint 4 P0 #5 replan | ✅ 100% livré | complexity-estimator + migration 0015 [REPLAN-V1] |
+> | P1 #6 Scheduler | ✅ 90% livré (commit `f363c46`) | service complet — reste 3 routes Next.js + migration prompt |
+> | P1 #14 ConnectorBuilder | ✅ 100% livré (commit `c931068`) | builder + 7 connecteurs FR (cegid/sage-100/ebp/quadratus/my-unisoft/pennylane-pro/axonaut) |
+> | P2 #11 strip-think | ✅ 100% livré (commit `fade074`) | 7 variants + depth counter |
+> | P2 #12 BM25 RAG | ✅ 100% livré (commit `0618a22`) | bm25-reranker.ts + wire rag_search |
+> | P2 #13 SecretsFilter | ✅ 100% livré (commit `fade074`) | secrets-redact.ts + wire chat |
+> | Phase 4 Tests unitaires | ✅ livré (commit `0f422cc`) | vitest + ~150 cas sur 7 libs |
 
 ---
 

@@ -174,6 +174,35 @@ deploy_stack() {
         c_yellow "    (SearXNG non démarré — tool web_search inactif)"
   fi
 
+  # ---- Scheduler (P1 #6 — sidecar APScheduler pour tâches récurrentes) -----
+  # Permet au Concierge de programmer des résumés mail matinaux, alertes
+  # impayés hebdo, etc. Best-effort : si le service ne démarre pas (build
+  # error, port occupé), on continue — le Concierge rapportera "scheduler
+  # indisponible" lors d'un schedule_task.
+  if [[ -d services/scheduler ]]; then
+    c_blue "  → Démarrage Scheduler (P1 #6, APScheduler)..."
+    ( cd services/scheduler && docker compose --env-file "$env_file" up -d --build ) || \
+        c_yellow "    (Scheduler non démarré — tool schedule_task indisponible)"
+  fi
+
+  # ---- Sandbox (P0 #1 — exécution code bash/python isolée) ----------------
+  # ⚠️ Pré-requis runtime : gVisor (`runsc`) installé sur l'hôte ou fallback
+  # `runc` (sécurité dégradée). Sans gVisor, le compose pose runtime: runsc
+  # qui échoue → on log un yellow et on continue. L'admin peut activer plus
+  # tard via :
+  #   sudo apt install runsc && sudo runsc install && sudo systemctl restart docker
+  #   cd services/sandbox && docker compose up -d
+  if [[ -d services/sandbox ]]; then
+    c_blue "  → Démarrage Sandbox (P0 #1, exec gVisor isolated)..."
+    if ( cd services/sandbox && docker compose --env-file "$env_file" up -d --build ) 2>/dev/null; then
+      c_green "    ✓ Sandbox démarré (vérifier runtime via /healthz)"
+    else
+      c_yellow "    ⚠ Sandbox non démarré — runtime gVisor probablement absent"
+      c_yellow "      Pour activer : sudo apt install runsc && sudo runsc install && sudo systemctl restart docker"
+      c_yellow "      Tool bash_exec restera indisponible jusqu'à activation"
+    fi
+  fi
+
   # Démarre la stack héritée (n8n, Portainer, Uptime Kuma, NPM, Duplicati, Dashy)
   # si elle existe sur l'hôte. Important pour que le provisioning des comptes
   # n8n/Portainer fonctionne après reset.

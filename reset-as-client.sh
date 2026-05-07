@@ -100,6 +100,9 @@ STOP_LIST=(
     aibox-langfuse-web aibox-langfuse-worker aibox-langfuse-db
     aibox-langfuse-clickhouse aibox-langfuse-redis aibox-langfuse-minio
     aibox-tts aibox-searxng
+    # Services v2 OSS-inspired (2026-05-05)
+    aibox-scheduler          # P1 #6 — APScheduler tâches récurrentes
+    aibox-sandbox            # P0 #1 — exécution code gVisor
     # Wizard (sera redémarré ensuite)
     aibox-setup-api aibox-setup-caddy
 )
@@ -171,6 +174,15 @@ DEL_VOLUMES=(
     observability_langfuse_minio
     tts_tts_cache
     search_searxng_data
+
+    # ----- Services v2 OSS-inspired (2026-05-05) -----
+    # Scheduler : SQLite avec jobs APScheduler du précédent client. Sans
+    # purge, les tâches reproductibles et les dernières exécutions
+    # persistent → un "résumé Outlook chaque matin 8h" du client A
+    # tournerait sur le compte du client B.
+    aibox_scheduler_data
+    # Sandbox : pas de volume (tmpfs uniquement, disparait au stop).
+    # Les fichiers /tmp/work/<session_id> sont auto-purgés.
 )
 [[ "$KEEP_OWUI" == "true" ]] || DEL_VOLUMES+=(anythingllm_open-webui stack_xefia_open-webui)
 
@@ -178,6 +190,32 @@ for v in "${DEL_VOLUMES[@]}"; do
     if docker volume ls --format '{{.Name}}' | grep -qx "$v"; then
         echo "  🗑  $v"
         docker volume rm "$v" >/dev/null 2>&1 || c_yellow "    (ne peut pas être supprimé pour le moment)"
+    fi
+done
+
+# ----- Purge fichiers d'état éphémères dans /srv/ai-stack/data/ ---------------
+# Ces fichiers sont des bind-mounts (≠ volumes Docker), donc DEL_VOLUMES
+# ne les touche pas. On purge SEULEMENT les fichiers qui ne contiennent
+# pas de data utilisateur durable :
+#  - approvals pending (sécurité — pending d'un précédent client n'a aucun
+#    sens dans un nouveau contexte)
+#  - safety audits log (observability rotative)
+#  - pending-reviews.jsonl (HITL future)
+# On préserve les autres (oauth-connections, custom-agents, conversations,
+# branding, github-token) — chiffrés ou data utilisateur que l'admin peut
+# vouloir garder en cas de "reset léger".
+hr
+c_blue "[3.5/6] Purge fichiers d'état éphémères /srv/ai-stack/data/"
+DATA_DIR="/srv/ai-stack/data"
+EPHEMERAL_PATHS=(
+    "$DATA_DIR/concierge-approvals"
+    "$DATA_DIR/safety_audits.jsonl"
+    "$DATA_DIR/pending-reviews.jsonl"
+)
+for p in "${EPHEMERAL_PATHS[@]}"; do
+    if [[ -e "$p" ]]; then
+        echo "  🗑  $p"
+        $SUDO rm -rf "$p" 2>/dev/null || c_yellow "    (refus, peut nécessiter root)"
     fi
 done
 
