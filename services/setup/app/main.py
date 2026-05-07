@@ -14,10 +14,37 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
+import socket
 import string
 import subprocess
 from pathlib import Path
 from typing import Any
+
+
+def _detect_lan_ip() -> str:
+    """Détecte l'IP LAN du serveur (sans passer par hostname -I).
+
+    Pourquoi : `request.headers["host"]` peut valoir "localhost" si le user
+    accède au wizard via SSH tunnel ou 127.0.0.1, ce qui bloque ensuite le
+    login depuis une autre machine LAN (NEXTAUTH_URL=http://localhost:3100
+    → callback OIDC inaccessible depuis le browser de l'utilisateur).
+
+    Astuce : ouvrir une socket UDP vers une IP publique (sans envoyer) puis
+    lire la source IP locale. Aucune requête réseau réelle.
+    Bug fresh install xefia 2026-05-07 : le wizard a été lancé depuis SSH
+    tunnel localhost → .env écrit avec NEXTAUTH_URL=http://localhost:3100
+    → Authentik redirect_uri non joignable depuis le browser user.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        # Fallback : essayer hostname puis loopback
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
 
 import yaml
 from datetime import datetime, timezone
@@ -604,6 +631,11 @@ async def provision_sso(request: Request):
             env[k] = v.strip("'\"")
 
     host = (request.headers.get("host") or "localhost").split(":")[0]
+    # Si le user accède au wizard via localhost/127.0.0.1 (SSH tunnel par
+    # exemple), le NEXTAUTH_URL serait écrit avec localhost → cassé depuis
+    # un browser LAN. On force la détection auto de l'IP LAN dans ce cas.
+    if host in ("localhost", "127.0.0.1", "::1"):
+        host = _detect_lan_ip()
     report = sso_provisioning.provision_all(env, host)
 
     # Recrée les containers qui dépendent du .env mis à jour par provisioning.
@@ -656,6 +688,11 @@ def import_templates(request: Request):
             env[k] = v.strip("'\"")
 
     host = (request.headers.get("host") or "localhost").split(":")[0]
+    # Si le user accède au wizard via localhost/127.0.0.1 (SSH tunnel par
+    # exemple), le NEXTAUTH_URL serait écrit avec localhost → cassé depuis
+    # un browser LAN. On force la détection auto de l'IP LAN dans ce cas.
+    if host in ("localhost", "127.0.0.1", "::1"):
+        host = _detect_lan_ip()
     base_report = template_importer.import_all_templates(env, host)
     # Marketplace n8n : workflows `default_active: true` du catalogue local.
     # Indépendant de `client_config.yaml` (un healthcheck stack ou un snapshot
