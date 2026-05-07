@@ -158,6 +158,12 @@ services:
         condition: service_healthy
     networks:
       - aibox_net
+      # Indispensable : dify-api appelle Ollama via http://ollama:11434
+      # (cf OLLAMA_BASE_URL ci-dessus). Ollama est sur ollama_net (legacy
+      # stack xefia ou nouveau service inference). Sans ça : DNS resolution
+      # failure → CredentialsValidateFailedError au model-config + chat HS.
+      # Bug constaté 2026-05-07 post-reset (les networks sont recréés clean).
+      - ollama_net
 
   # ---- WORKER (jobs async : embeddings, indexation RAG, etc.) ------------
   dify-worker:
@@ -202,6 +208,9 @@ services:
         condition: service_healthy
     networks:
       - aibox_net
+      # Worker appelle Ollama pour les embeddings (bge-m3) et tâches async
+      # de RAG. Même pattern que dify-api : DNS Ollama doit résoudre.
+      - ollama_net
 
   # ---- PLUGIN DAEMON (Dify 1.x : runtime des plugins providers/tools) ----
   # Sans ce service, /console/api/workspaces/current/model-providers retourne
@@ -250,6 +259,11 @@ services:
         condition: service_healthy
     networks:
       - aibox_net
+      # Plugin daemon valide les credentials des providers (Ollama, OpenAI,
+      # etc.) en testant les endpoints au moment où l'admin configure un
+      # modèle dans la console. Pour Ollama → http://ollama:11434/api/chat.
+      # Sans ollama_net : `model.name must be in the specified model list`.
+      - ollama_net
 
   # ---- WEB (frontend) ----------------------------------------------------
   dify-web:
@@ -289,4 +303,11 @@ volumes:
 networks:
   aibox_net:
     name: ${NETWORK_NAME:-aibox_net}
+    external: true
+  # ollama_net : réseau du container `ollama` (stack héritée xefia OU
+  # nouveau services/inference compose). Externe → on s'attend à ce
+  # qu'il existe AVANT le up de Dify. Sinon erreur compose explicite
+  # (vs DNS resolution failure cryptique au runtime).
+  ollama_net:
+    name: ${OLLAMA_NETWORK:-ollama_net}
     external: true
