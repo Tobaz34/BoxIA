@@ -146,6 +146,99 @@ def is_applied() -> bool:
     return bool(ds_id and kb_key and kb_key.startswith("dataset-"))
 
 
+EMBED_MODEL = os.environ.get("DIFY_EMBED_MODEL", "bge-m3:latest")
+OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_INTERNAL_URL = "http://ollama:11434"  # depuis container Dify
+
+
+def _ollama_pull_if_missing(model: str) -> dict:
+    """Pull le modèle d'embedding via API Ollama. Idempotent.
+
+    Sans modèle d'embedding pulled, Dify renvoie HTTP 400 'Default model
+    not found for text-embedding' au moment de créer la dataset
+    (constaté fresh install xefia 2026-05-07).
+    """
+    # Check si déjà présent
+    try:
+        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=5) as r:
+            models = [m.get("name", "") for m in json.loads(r.read()).get("models", [])]
+        if model in models or any(m.startswith(model.split(":")[0] + ":") for m in models):
+            return {"ok": True, "already": True}
+    except Exception as e:
+        return {"ok": False, "step": "list", "error": str(e)[:200]}
+
+    # Pull (peut prendre 30-60s pour bge-m3 ~1.1 GB)
+    try:
+        payload = json.dumps({"name": model, "stream": False}).encode()
+        req = urllib.request.Request(
+            f"{OLLAMA_URL}/api/pull",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=600) as r:
+            r.read()  # consume body
+        return {"ok": True, "pulled": model}
+    except Exception as e:
+        return {"ok": False, "step": "pull", "error": str(e)[:200]}
+
+
+def _ensure_dify_embedding(s: _DifySession, model: str) -> dict:
+    """Ajoute le modèle embedding Ollama dans Dify (provider langgenius/ollama)."""
+    provider = "langgenius/ollama/ollama"
+    try:
+        # Check si déjà ajouté
+        try:
+            data = s.get(f"/console/api/workspaces/current/model-providers/{provider}/models")
+            for m in data.get("data", []):
+                if m.get("model") == model and m.get("model_type") in ("text-embedding", "embeddings"):
+                    return {"ok": True, "already": True}
+        except urllib.error.HTTPError:
+            pass  # Provider pas encore configuré, on continue
+
+        r = s.post(
+            f"/console/api/workspaces/current/model-providers/{provider}/models/credentials",
+            {
+                "model": model,
+                "model_type": "text-embedding",
+                "credentials": {
+                    "model": model,
+                    "context_size": "8192",
+                    "base_url": OLLAMA_INTERNAL_URL,
+                },
+            },
+        )
+        return {"ok": True, "added": True, "response": r}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "http_error": e.code, "body": e.read()[:200].decode("utf-8", "replace")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def _set_dify_default_embedding(s: _DifySession, model: str) -> dict:
+    """Marque le modèle comme default text-embedding du workspace.
+
+    Sans ça, /datasets refuse de créer une KB (HTTP 400 'Default model
+    not found for text-embedding').
+    """
+    try:
+        r = s.post(
+            "/console/api/workspaces/current/default-model",
+            {
+                "model_settings": [{
+                    "model_type": "text-embedding",
+                    "provider": "langgenius/ollama/ollama",
+                    "model": model,
+                }],
+            },
+        )
+        return {"ok": True, "response": r}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "http_error": e.code, "body": e.read()[:200].decode("utf-8", "replace")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 def _ensure_default_dataset(s: _DifySession, name: str = "Base de connaissances") -> dict:
     """Crée ou retrouve le dataset partagé."""
     try:
@@ -213,12 +306,28 @@ def run() -> dict:
     if is_applied():
         return {"skipped": True, "reason": "already provisioned"}
 
+    # 1. Pull le modèle embedding dans Ollama (sinon Dify refuse la KB)
+    pull_res = _ollama_pull_if_missing(EMBED_MODEL)
+    if not pull_res.get("ok"):
+        return {"ok": False, "step": "ollama_pull", "result": pull_res}
+
     s = _DifySession(DIFY_BASE)
     try:
         s.login(ADMIN_EMAIL, ADMIN_PASSWORD)
     except Exception as e:
         return {"ok": False, "step": "login", "error": str(e)[:200]}
 
+    # 2. Ajoute le modèle embedding dans Dify
+    embed_res = _ensure_dify_embedding(s, EMBED_MODEL)
+    if not embed_res.get("ok"):
+        return {"ok": False, "step": "ensure_dify_embedding", "result": embed_res}
+
+    # 3. Marque comme default
+    default_res = _set_dify_default_embedding(s, EMBED_MODEL)
+    if not default_res.get("ok"):
+        return {"ok": False, "step": "set_default_embedding", "result": default_res}
+
+    # 4. Crée la dataset (KB)
     ds_res = _ensure_default_dataset(s)
     if not ds_res.get("ok"):
         return {"ok": False, "step": "ensure_dataset", "result": ds_res}

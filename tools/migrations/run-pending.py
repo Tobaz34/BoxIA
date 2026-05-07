@@ -104,7 +104,17 @@ def cmd_run(state: dict, dry_run: bool = False) -> int:
             if dry_run:
                 print(f"  → dry-run, skip exécution")
                 continue
-            m.run()
+            result = m.run()
+            # Conventions : run() peut retourner None (legacy), {"ok": True/False, ...}
+            # ou {"skipped": True}. Si dict avec ok=False → ÉCHEC (ne pas marquer
+            # appliquée, sinon la prochaine itération skip et on garde le bug).
+            # Bug fresh install xefia 2026-05-07 : migration 0018 a return
+            # {"ok": False, "step": "ensure_dataset"} mais le runner l'a marquée
+            # appliquée → /documents reste bloqué après le deploy "réussi".
+            if isinstance(result, dict) and result.get("ok") is False:
+                print(f"  ✗ {f.name} ÉCHEC : {json.dumps(result, ensure_ascii=False)[:300]}", file=sys.stderr)
+                failures += 1
+                continue
             state.setdefault("applied", []).append(f.name)
             print(f"  ✓ {f.name} OK")
             ran += 1
