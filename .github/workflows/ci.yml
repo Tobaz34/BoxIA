@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    # On inclut les branches de feature (claude/*, feat/*, fix/*) pour
+    # détecter les régressions AVANT le merge sur main. Sans ça, les
+    # branches sandbox n'avaient aucun signal CI et un YAML cassé ou un
+    # compose invalide ne se voyait qu'au moment du PR.
+    branches: [main, develop, "claude/**", "feat/**", "fix/**"]
   pull_request:
     branches: [main]
 
