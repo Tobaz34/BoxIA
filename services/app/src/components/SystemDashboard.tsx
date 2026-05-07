@@ -193,6 +193,11 @@ export function SystemDashboard() {
         </div>
       </Section>
 
+      {/* Inférence locale (Ollama) — détaillé : modèles chargés + GPU vs CPU */}
+      <Section title="Inférence locale (Ollama)">
+        <InferenceCard />
+      </Section>
+
       {/* KPI cards */}
       <Section title="Activité">
         {loading ? <Loading /> : stats ? (
@@ -454,6 +459,182 @@ function ResourceCard({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// InferenceCard — détail Ollama : modèles chargés, processeur (GPU/CPU), VRAM
+// =============================================================================
+//
+// Affiche en clair :
+//   - Combien de modèles sont en mémoire
+//   - Pour chacun : nom, taille, taille en VRAM, processeur (100% GPU /
+//     hybride / 100% CPU avec ALERTE)
+//   - Une bannière rouge si AU MOINS UN modèle tourne en CPU pur ou hybride
+//     (= GPU absent ou saturé). Le user TPE voit immédiatement qu'il y a un
+//     problème de perf et doit agir (vérifier nvidia-container-toolkit, etc.)
+//
+// Source : /api/system/ollama-status (poll 10s).
+
+type InferenceProcessorMode = "gpu" | "cpu" | "hybrid" | "unknown";
+interface LoadedModel {
+  name: string;
+  size_mb: number;
+  size_vram_mb: number;
+  parameter_size?: string;
+  processor: string;
+  processor_mode: InferenceProcessorMode;
+  gpu_pct: number;
+  expires_at?: string;
+}
+interface OllamaStatus {
+  ok: boolean;
+  loaded: LoadedModel[];
+  global_mode: InferenceProcessorMode;
+  warning: string | null;
+  error?: string;
+}
+
+function InferenceCard() {
+  const [status, setStatus] = useState<OllamaStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch("/api/system/ollama-status", { cache: "no-store" });
+        if (!r.ok || cancelled) return;
+        const j = (await r.json()) as OllamaStatus;
+        setStatus(j);
+      } catch { /* silent */ }
+    }
+    load();
+    const t = setInterval(load, 10_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  if (!status) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-5">
+        <Loading />
+      </div>
+    );
+  }
+
+  if (!status.ok) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-start gap-2 text-sm text-muted">
+          <AlertCircle size={16} className="mt-0.5 text-amber-400 shrink-0" />
+          <div>
+            <div className="font-medium text-foreground">Ollama injoignable</div>
+            <div className="mt-1 text-xs">
+              {status.error || "Le service Ollama ne répond pas."} Vérifier que le container
+              `ollama` est démarré et que <code>OLLAMA_BASE_URL</code> pointe au bon endroit.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const noModel = status.loaded.length === 0;
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      {/* Bannière warning si CPU/hybride */}
+      {status.warning && (
+        <div
+          className={
+            "px-4 py-3 text-sm border-b " +
+            (status.global_mode === "cpu"
+              ? "bg-red-500/10 border-red-500/30 text-red-300"
+              : "bg-amber-500/10 border-amber-500/30 text-amber-300")
+          }
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <div className="font-semibold">
+                {status.global_mode === "cpu"
+                  ? "🔴 ALERTE : Inférence sur CPU uniquement"
+                  : "⚠ Offload partiel CPU"}
+              </div>
+              <div className="mt-1 text-xs whitespace-pre-line">{status.warning}</div>
+              {status.global_mode === "cpu" && (
+                <div className="mt-2 text-xs">
+                  <strong>Action :</strong> vérifier que le container Ollama a accès au GPU :
+                  <code className="ml-1 bg-black/30 px-1.5 py-0.5 rounded">
+                    docker inspect ollama | grep -i nvidia
+                  </code>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Liste des modèles loaded */}
+      {noModel ? (
+        <div className="p-5 text-sm text-muted">
+          Aucun modèle local chargé pour l&apos;instant. Le 1er chat va déclencher un
+          cold-start (~5-10 s). Les modèles sont déchargés automatiquement après 24 h
+          d&apos;inactivité (env <code>OLLAMA_KEEP_ALIVE</code>).
+        </div>
+      ) : (
+        <div className="divide-y divide-border">
+          {status.loaded.map((m) => {
+            const modeColor =
+              m.processor_mode === "gpu"
+                ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                : m.processor_mode === "hybrid"
+                  ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
+                  : m.processor_mode === "cpu"
+                    ? "text-red-400 bg-red-500/10 border-red-500/30"
+                    : "text-muted bg-muted/10 border-muted/30";
+            return (
+              <div key={m.name} className="px-5 py-4 flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-medium truncate">
+                      {m.name}
+                    </span>
+                    {m.parameter_size && (
+                      <span className="text-[10px] text-muted px-1.5 py-0.5 rounded bg-muted/20">
+                        {m.parameter_size}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-muted tabular-nums">
+                    Taille modèle : {(m.size_mb / 1024).toFixed(1)} GB ·
+                    En VRAM : {(m.size_vram_mb / 1024).toFixed(1)} GB
+                  </div>
+                </div>
+                <div
+                  className={`text-xs font-mono font-semibold px-2.5 py-1 rounded border ${modeColor}`}
+                >
+                  {m.processor}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Footer info */}
+      <div className="px-4 py-2 text-[11px] text-muted bg-muted/5 border-t border-border flex items-center justify-between">
+        <span>
+          {status.loaded.length} modèle{status.loaded.length > 1 ? "s" : ""} chargé
+          {status.loaded.length > 1 ? "s" : ""}
+        </span>
+        <span>
+          Refresh toutes les 10 s ·
+          <span className={status.global_mode === "gpu" ? "text-emerald-400 ml-1" : "text-muted ml-1"}>
+            mode global : <strong>{status.global_mode.toUpperCase()}</strong>
+          </span>
+        </span>
+      </div>
     </div>
   );
 }

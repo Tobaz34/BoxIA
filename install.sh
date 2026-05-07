@@ -240,6 +240,23 @@ deploy_stack() {
       python3 tools/migrations/run-pending.py ) || \
       c_yellow "    (Migrations partiellement échouées — relancer plus tard avec ./tools/migrations/run-pending.py)"
   fi
+
+  # ---- Recovery edge-caddy si resté en `Created` ----------------------------
+  # Bug constaté 2026-05-07 fresh install : si setup-caddy n'a pas relâché
+  # le port 80 à temps quand edge-caddy a tenté de bind, le container reste
+  # en status `Created` (pas Started). Le handoff côté setup-api/main.py
+  # devrait normalement le force-recreate, mais en cas de timing race ça
+  # peut échouer. On retente ici en best-effort.
+  edge_state=$(docker inspect aibox-edge-caddy --format '{{.State.Status}}' 2>/dev/null || echo "absent")
+  if [[ "$edge_state" == "created" ]]; then
+    c_yellow "  → aibox-edge-caddy resté en Created — recovery start..."
+    if docker start aibox-edge-caddy >/dev/null 2>&1; then
+      c_green "    ✓ aibox-edge-caddy démarré"
+    else
+      c_yellow "    ⚠ Recovery échoué — port 80 toujours occupé ?"
+      c_yellow "      Vérifier : sudo ss -tlnp | grep :80"
+    fi
+  fi
 }
 
 # ---- Mode non-interactif (utilisé par le wizard web ou CI) -----------------

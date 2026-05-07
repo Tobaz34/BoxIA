@@ -205,11 +205,24 @@ function MetricRow({ icon: Icon, label, values, current, hue }: MetricRowProps) 
  *  Demande user 2026-05-03 : "élément visuel dans la barre en haut avec
  *  les suivi des perf de l'IA LOCAL". Symétrique à CloudProvidersBadges.
  */
+type ProcessorMode = "gpu" | "cpu" | "hybrid" | "unknown";
+
+interface LocalAiInfo {
+  loaded: Array<{
+    name: string;
+    size_mb: number;
+    size_vram_mb: number;
+    processor: string;
+    processor_mode: ProcessorMode;
+    gpu_pct: number;
+  }>;
+  global_mode: ProcessorMode;
+  warning: string | null;
+  refreshed_at: number;
+}
+
 function LocalAiBadge() {
-  const [info, setInfo] = useState<{
-    loaded: Array<{ name: string; size_mb: number; processor: string }>;
-    refreshed_at: number;
-  } | null>(null);
+  const [info, setInfo] = useState<LocalAiInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,7 +231,12 @@ function LocalAiBadge() {
         const r = await fetch("/api/system/ollama-status", { cache: "no-store" });
         if (!r.ok || cancelled) return;
         const j = await r.json();
-        setInfo({ loaded: j.loaded || [], refreshed_at: Date.now() });
+        setInfo({
+          loaded: j.loaded || [],
+          global_mode: j.global_mode || "unknown",
+          warning: j.warning || null,
+          refreshed_at: Date.now(),
+        });
       } catch { /* silent */ }
     }
     load();
@@ -228,34 +246,64 @@ function LocalAiBadge() {
 
   if (!info) return null;
   const isReady = info.loaded.length > 0;
-  const totalVramMb = info.loaded.reduce((a, m) => a + (m.size_mb || 0), 0);
+  const totalVramMb = info.loaded.reduce((a, m) => a + (m.size_vram_mb || 0), 0);
 
   // Modèle texte principal = celui qui n'est pas embedding (bge-*)
   const mainModel = info.loaded.find(
     (m) => !m.name.startsWith("bge") && !m.name.startsWith("nomic"),
   ) || info.loaded[0];
 
+  // Couleur du dot selon le mode global :
+  //  - gpu : vert pulsant (idéal)
+  //  - hybrid : orange clignotant (warning)
+  //  - cpu : rouge clignotant (alerte critique)
+  //  - unknown / aucun modèle : gris
+  const dotClass = !isReady
+    ? "bg-muted"
+    : info.global_mode === "gpu"
+      ? "bg-emerald-500 ring-2 ring-emerald-500/30 animate-pulse"
+      : info.global_mode === "hybrid"
+        ? "bg-amber-500 ring-2 ring-amber-500/40 animate-pulse"
+        : info.global_mode === "cpu"
+          ? "bg-red-500 ring-2 ring-red-500/40 animate-pulse"
+          : "bg-muted";
+
+  // Label compact GPU/CPU en monospace pour scanner d'un coup d'œil
+  const procLabel = !isReady
+    ? null
+    : info.global_mode === "gpu"
+      ? "GPU"
+      : info.global_mode === "hybrid"
+        ? `${mainModel.gpu_pct}%GPU`
+        : info.global_mode === "cpu"
+          ? "CPU⚠"
+          : null;
+
+  const procLabelClass = !isReady
+    ? "text-muted"
+    : info.global_mode === "gpu"
+      ? "text-emerald-400"
+      : info.global_mode === "hybrid"
+        ? "text-amber-400"
+        : info.global_mode === "cpu"
+          ? "text-red-400 font-semibold"
+          : "text-muted";
+
+  const tooltip = isReady
+    ? `IA locale active — ${info.loaded.length} modèle(s) chargé(s) :\n` +
+      info.loaded.map((m) =>
+        `  • ${m.name} (${(m.size_mb / 1024).toFixed(1)} GB) → ${m.processor}`,
+      ).join("\n") +
+      (info.warning ? `\n\n${info.warning}` : "") +
+      `\n\nVoir détails : /system`
+    : "Aucun modèle local chargé. Le 1er chat va déclencher un cold-start ~5-10s.";
+
   return (
     <div
-      className="hidden lg:flex items-center gap-1.5 px-3 border-l border-border"
-      title={
-        isReady
-          ? `IA locale active — ${info.loaded.length} modèle(s) chargé(s) :\n` +
-            info.loaded.map((m) =>
-              `  • ${m.name} : ${(m.size_mb / 1024).toFixed(1)} GB (${m.processor})`,
-            ).join("\n")
-          : "Aucun modèle local chargé. Le 1er chat va déclencher un cold-start ~5-10s."
-      }
+      className="hidden lg:flex items-center gap-1.5 px-3 border-l border-border cursor-help"
+      title={tooltip}
     >
-      <span
-        className={
-          "inline-block w-2 h-2 rounded-full " +
-          (isReady
-            ? "bg-emerald-500 ring-2 ring-emerald-500/30 animate-pulse"
-            : "bg-muted")
-        }
-        aria-hidden
-      />
+      <span className={"inline-block w-2 h-2 rounded-full " + dotClass} aria-hidden />
       <span className="text-xs text-muted">Local</span>
       {mainModel && (
         <>
@@ -265,6 +313,11 @@ function LocalAiBadge() {
           <span className="text-[10px] text-muted tabular-nums">
             {(totalVramMb / 1024).toFixed(1)}G
           </span>
+          {procLabel && (
+            <span className={`text-[10px] font-mono ${procLabelClass}`}>
+              {procLabel}
+            </span>
+          )}
         </>
       )}
     </div>

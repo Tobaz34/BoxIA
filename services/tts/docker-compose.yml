@@ -35,7 +35,11 @@ services:
     command: ["--no-espeak", "--no-glow-speak", "--no-marytts",
               "--no-festival", "--no-flite", "--no-nanotts"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5500/api/voices"]
+      # L'image synesthesiam/opentts n'embarque pas curl. On utilise python
+      # (présent par défaut) pour pinger /api/voices. Bug constaté 2026-05-07
+      # fresh install xefia : container fonctionnel (uvicorn 5500 répond) mais
+      # healthcheck "unhealthy" car curl manquant → bruit dans monitoring.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5500/api/voices', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
