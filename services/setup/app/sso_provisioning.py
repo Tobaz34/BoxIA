@@ -1496,6 +1496,13 @@ def setup_dify_default_agent(env: dict[str, str]) -> dict[str, Any]:
         # ---- Embedding + dataset (Phase C : RAG) ----
         # Best-effort : si une étape échoue, on continue sans datasets pour
         # ne pas bloquer le provisioning des agents.
+        # IMPORTANT 2026-05-07 : pull le modèle d'embedding AVANT de le
+        # déclarer dans Dify. Sans ça, Dify ajoute la credential mais Ollama
+        # ne sait pas servir le modèle → POST /datasets renvoie HTTP 400
+        # 'Default model not found for text-embedding'. Bug constaté fresh
+        # install xefia : seul qwen3:14b et qwen2.5vl:7b étaient pulled,
+        # bge-m3 manquait → page /documents bloquée pour les clients.
+        report["ollama_embedding_pull"] = _ensure_ollama_model_pulled(embed_name)
         report["ollama_embedding"] = _add_ollama_embedding(c, base, embed_name)
         report["default_embedding"] = _set_default_embedding(c, base, embed_name)
 
