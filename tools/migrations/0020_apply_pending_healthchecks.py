@@ -99,28 +99,49 @@ def _ensure_ollama_volume_name() -> str | None:
         return None
 
 
-def _recreate_compose(compose_path: str, container_name: str) -> dict:
+def _compose_up(compose_path: str) -> tuple[bool, str]:
     """`docker compose --env-file ... up -d --force-recreate`."""
+    compose_dir = str(Path(compose_path).parent)
+    r = subprocess.run(
+        ["docker", "compose",
+         "--env-file", str(ENV_PATH),
+         "-f", compose_path,
+         "up", "-d", "--force-recreate"],
+        capture_output=True, text=True, timeout=180, cwd=compose_dir,
+    )
+    return r.returncode == 0, r.stderr or ""
+
+
+def _recreate_compose(compose_path: str, container_name: str) -> dict:
+    """Tente compose up -d --force-recreate.
+
+    Si échec 'name already in use' (le container existe sans le label
+    compose project — typique d'un container lancé manuellement avant
+    que compose ne reprenne la main), on `docker rm -f` puis on retry.
+    """
     if not Path(compose_path).exists():
         return {"ok": False, "reason": f"compose missing: {compose_path}"}
-    compose_dir = str(Path(compose_path).parent)
-    try:
-        r = subprocess.run(
-            ["docker", "compose",
-             "--env-file", str(ENV_PATH),
-             "-f", compose_path,
-             "up", "-d", "--force-recreate"],
-            capture_output=True, text=True, timeout=180, cwd=compose_dir,
-        )
-        ok = r.returncode == 0
-        return {
-            "ok": ok,
-            "rc": r.returncode,
-            "stderr_tail": (r.stderr or "")[-200:],
-            "container": container_name,
-        }
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:200], "container": container_name}
+
+    ok, stderr = _compose_up(compose_path)
+    fallback_used = False
+    if not ok and ("already in use" in stderr or "is already in use" in stderr):
+        # Container existe sans le bon label compose → kill et retry
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True, timeout=15,
+            )
+            fallback_used = True
+            ok, stderr = _compose_up(compose_path)
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "container": container_name}
+
+    return {
+        "ok": ok,
+        "stderr_tail": stderr[-200:],
+        "container": container_name,
+        "fallback_rm_used": fallback_used,
+    }
 
 
 def run() -> dict:
