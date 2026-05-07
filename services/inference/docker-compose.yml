@@ -66,6 +66,23 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # Healthcheck : vérifie que Ollama répond ET tente une détection GPU.
+    # `ollama list` interroge le daemon HTTP local (=> service up).
+    # `nvidia-smi` n'est pas embarqué dans l'image stock, donc on regarde
+    # /proc/driver/nvidia/version (présent uniquement quand --gpus all
+    # propage le runtime NVIDIA correctement). Si absent → log warning
+    # mais on RESTE healthy : sinon Ollama serait marqué down sur les
+    # boxes sans GPU et empêcherait le démarrage des dependants. La
+    # vraie alerte GPU vs CPU est portée par /api/system/ollama-status
+    # côté aibox-app (LocalAiBadge clignote rouge si CPU pur).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'ollama list >/dev/null 2>&1 || exit 1; if [ ! -e /proc/driver/nvidia/version ]; then echo "[WARN] No NVIDIA runtime detected in container — inference will run on CPU (10-50× slower). Check that the container was started with --gpus all and that nvidia-container-toolkit is installed on the host." >&2; fi'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - aibox_net
       - ollama_net
