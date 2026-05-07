@@ -102,8 +102,14 @@ services:
 # ----- Volumes nommés EXPLICITES (pas de prefix par project_name) ----------
 volumes:
   ollama_models:
-    name: anythingllm_ollama_data    # ← volume existant, modèles ~14 GB
-    external: true                    # external car le reset le préserve toujours
+    # OLLAMA_VOLUME_NAME : volume Docker contenant les modèles Ollama (~14 GB).
+    # Override .env si install client utilise un autre nom (cas xefia :
+    # `stack_xefia_ollama_data`, héritage rebrand AnythingLLM → BoxIA mai 2026).
+    # Default `anythingllm_ollama_data` pour compatibilité historique.
+    # Bug constaté 2026-05-07 fresh install : container ollama legacy lancé
+    # sans --gpus → qwen3:14b 100% CPU → 1m30s/prompt → Dify timeout.
+    name: ${OLLAMA_VOLUME_NAME:-anythingllm_ollama_data}
+    external: true
   open_webui_data:
     name: anythingllm_open-webui     # ← données utilisateurs OWUI (chats, RAG)
     # PAS external : si le reset a supprimé le volume, compose le recrée vide.
