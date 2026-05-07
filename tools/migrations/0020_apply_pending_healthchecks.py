@@ -142,10 +142,11 @@ def run() -> dict:
         # Pre-requis : OLLAMA_VOLUME_NAME doit pointer sur un volume existant
         # (sinon compose echoue 'external volume not found').
         vol = _ensure_ollama_volume_name()
-        results["ollama_volume_detected"] = vol or "FAILED"
-        results["ollama"] = _recreate_compose(
+        ollama_res = _recreate_compose(
             "/srv/ai-stack/services/inference/docker-compose.yml", "ollama",
         )
+        ollama_res["volume_detected"] = vol or "FAILED"
+        results["ollama"] = ollama_res
 
     all_ok = all(r.get("ok") for r in results.values()) if results else True
     return {"ok": all_ok, "results": results}
