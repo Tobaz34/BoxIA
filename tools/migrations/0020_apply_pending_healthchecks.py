@@ -59,6 +59,46 @@ def is_applied() -> bool:
     return _tts_healthcheck_modern(tts_hc) and _ollama_healthcheck_set(ollama_hc)
 
 
+def _ensure_ollama_volume_name() -> str | None:
+    """Detect le volume Ollama existant et patch .env si absent.
+
+    Bug 2026-05-07 : le .env xefia n'a pas `OLLAMA_VOLUME_NAME`, le compose
+    fallback sur `anythingllm_ollama_data` (default) qui n'existe pas →
+    'external volume not found'. Le volume reel est `stack_xefia_ollama_data`
+    (heritage rebrand AnythingLLM → BoxIA mai 2026). Detect et fix .env.
+    """
+    # Check si OLLAMA_VOLUME_NAME deja dans .env
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            if line.startswith("OLLAMA_VOLUME_NAME=") and not line.startswith("#"):
+                value = line.split("=", 1)[1].strip("'\"")
+                if value:
+                    return value
+
+    # Pas dans .env → liste les volumes Docker et match
+    try:
+        r = subprocess.run(
+            ["docker", "volume", "ls", "--format", "{{.Name}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return None
+        volumes = r.stdout.strip().splitlines()
+        candidates = [v for v in volumes if "ollama" in v.lower() and "data" in v.lower()]
+        if not candidates:
+            candidates = [v for v in volumes if "ollama" in v.lower()]
+        if not candidates:
+            return None
+        # Prend le premier (heuristique : un seul volume ollama_data attendu)
+        chosen = candidates[0]
+        # Append au .env
+        with ENV_PATH.open("a") as f:
+            f.write(f"\nOLLAMA_VOLUME_NAME={chosen}\n")
+        return chosen
+    except Exception:
+        return None
+
+
 def _recreate_compose(compose_path: str, container_name: str) -> dict:
     """`docker compose --env-file ... up -d --force-recreate`."""
     if not Path(compose_path).exists():
@@ -99,6 +139,10 @@ def run() -> dict:
     # 2. ollama si healthcheck absent
     ollama_hc = _container_healthcheck("ollama")
     if not _ollama_healthcheck_set(ollama_hc):
+        # Pre-requis : OLLAMA_VOLUME_NAME doit pointer sur un volume existant
+        # (sinon compose echoue 'external volume not found').
+        vol = _ensure_ollama_volume_name()
+        results["ollama_volume_detected"] = vol or "FAILED"
         results["ollama"] = _recreate_compose(
             "/srv/ai-stack/services/inference/docker-compose.yml", "ollama",
         )
