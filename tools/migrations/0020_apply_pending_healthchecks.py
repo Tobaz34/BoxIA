@@ -41,8 +41,13 @@ def _container_healthcheck(name: str) -> str:
 
 
 def _tts_healthcheck_modern(hc: str) -> bool:
-    """Mon healthcheck nouveau utilise python urllib, pas curl."""
-    return "python" in hc and "urllib" in hc
+    """Mon healthcheck nouveau utilise python3 urllib, pas curl.
+
+    Note : l'image opentts a python3 mais pas python (constaté 2026-05-07).
+    On veut python3 explicite ; un healthcheck `python` (sans 3) est faux
+    et doit être recréé.
+    """
+    return "python3" in hc and "urllib" in hc
 
 
 def _ollama_healthcheck_set(hc: str) -> bool:
