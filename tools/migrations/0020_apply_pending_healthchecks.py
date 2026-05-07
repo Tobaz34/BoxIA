@@ -1,0 +1,111 @@
+"""Migration 0020 — applique les healthchecks pending sur tts + ollama.
+
+Bug constaté 2026-05-07 fresh install : `tools/deploy-to-xefia.sh` ne
+recreate que `services/app/` (cf hook block-direct-xefia-ops.sh). Donc
+quand on patche les composes secondaires (tts, inference, sandbox), le
+container live garde son ancien healthcheck → faux positifs unhealthy
+(tts) ou aucune détection (ollama CPU pur silencieux).
+
+Cette migration :
+1. Detect si tts tourne avec un healthcheck `curl` (ancien) → recreate
+   pour appliquer mon healthcheck `python urllib` (commit 1796f11)
+2. Detect si ollama n'a pas de healthcheck → recreate pour appliquer
+   mon healthcheck `ollama list + /proc/driver/nvidia/version` (commit 863f670)
+
+Idempotent : `is_applied()` True si les 2 healthchecks live matchent
+les YAMLs du repo.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+DESCRIPTION = "Recreate tts + ollama pour appliquer healthchecks pending"
+
+ENV_PATH = Path(os.environ.get("AIBOX_ENV", "/srv/ai-stack/.env"))
+
+
+def _container_healthcheck(name: str) -> str:
+    """Retourne la commande healthcheck du container, ou '' si absente."""
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", name,
+             "--format", "{{if .Config.Healthcheck}}{{range .Config.Healthcheck.Test}}{{.}} {{end}}{{end}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _tts_healthcheck_modern(hc: str) -> bool:
+    """Mon healthcheck nouveau utilise python urllib, pas curl."""
+    return "python" in hc and "urllib" in hc
+
+
+def _ollama_healthcheck_set(hc: str) -> bool:
+    """Mon healthcheck nouveau utilise ollama list + /proc/driver/nvidia."""
+    return "ollama list" in hc and "/proc/driver/nvidia" in hc
+
+
+def is_applied() -> bool:
+    tts_hc = _container_healthcheck("aibox-tts")
+    ollama_hc = _container_healthcheck("ollama")
+    # Si les containers n'existent pas → considéré applied (rien à faire ici).
+    if not tts_hc and not ollama_hc:
+        return True
+    return _tts_healthcheck_modern(tts_hc) and _ollama_healthcheck_set(ollama_hc)
+
+
+def _recreate_compose(compose_path: str, container_name: str) -> dict:
+    """`docker compose --env-file ... up -d --force-recreate`."""
+    if not Path(compose_path).exists():
+        return {"ok": False, "reason": f"compose missing: {compose_path}"}
+    compose_dir = str(Path(compose_path).parent)
+    try:
+        r = subprocess.run(
+            ["docker", "compose",
+             "--env-file", str(ENV_PATH),
+             "-f", compose_path,
+             "up", "-d", "--force-recreate"],
+            capture_output=True, text=True, timeout=180, cwd=compose_dir,
+        )
+        ok = r.returncode == 0
+        return {
+            "ok": ok,
+            "rc": r.returncode,
+            "stderr_tail": (r.stderr or "")[-200:],
+            "container": container_name,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200], "container": container_name}
+
+
+def run() -> dict:
+    if is_applied():
+        return {"skipped": True, "reason": "healthchecks already in sync"}
+
+    results: dict = {}
+
+    # 1. tts si curl encore présent
+    tts_hc = _container_healthcheck("aibox-tts")
+    if tts_hc and not _tts_healthcheck_modern(tts_hc):
+        results["tts"] = _recreate_compose(
+            "/srv/ai-stack/services/tts/docker-compose.yml", "aibox-tts",
+        )
+
+    # 2. ollama si healthcheck absent
+    ollama_hc = _container_healthcheck("ollama")
+    if not _ollama_healthcheck_set(ollama_hc):
+        results["ollama"] = _recreate_compose(
+            "/srv/ai-stack/services/inference/docker-compose.yml", "ollama",
+        )
+
+    all_ok = all(r.get("ok") for r in results.values()) if results else True
+    return {"ok": all_ok, "results": results}
+
+
+if __name__ == "__main__":
+    print(json.dumps(run(), indent=2))

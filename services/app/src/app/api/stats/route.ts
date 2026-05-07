@@ -31,15 +31,26 @@ export async function GET(_req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
 
   // ---- Users (Authentik) ----
+  // IMPORTANT : on filtre les comptes système Authentik (akadmin bootstrap,
+  // ak-outpost-* service accounts, AnonymousUser guest) pour aligner avec
+  // /api/users (qui les filtre déjà). Sans ça, le KPI dashboard /system
+  // affichait 3/3 users alors que /users n'en montrait qu'1 (l'admin métier).
+  // Bug constaté 2026-05-07 fresh install xefia.
+  const SYSTEM_USER_PATTERNS = [
+    /^akadmin$/,
+    /^ak-outpost-/,
+    /^AnonymousUser$/,
+    /^authentik:system$/,
+  ];
   let usersTotal = 0, usersActive = 0;
   try {
     const r = await akFetch(`/core/users/?page_size=200`);
     if (r.ok) {
       const j = await r.json();
-      usersTotal = j.pagination?.count ?? (j.results || []).length;
-      usersActive = (j.results || []).filter(
-        (u: { is_active: boolean }) => u.is_active,
-      ).length;
+      const real = ((j.results || []) as { username: string; is_active: boolean }[])
+        .filter((u) => !SYSTEM_USER_PATTERNS.some((re) => re.test(u.username)));
+      usersTotal = real.length;
+      usersActive = real.filter((u) => u.is_active).length;
     }
   } catch { /* noop */ }
 

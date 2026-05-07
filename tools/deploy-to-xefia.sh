@@ -243,6 +243,7 @@ main() {
 
   reset_to_branch "$branch"
   recreate_top_level_if_changed
+  recreate_secondary_composes_if_changed
   rebuild_app
   run_pending_migrations
   smoke_test
@@ -272,6 +273,29 @@ recreate_top_level_if_changed() {
     [ -f $ENV_FILE ] && set -a && . $ENV_FILE && set +a; \
     docker compose --env-file $ENV_FILE up -d --no-deps --force-recreate dify-ssrf-proxy 2>&1 | tail -3" >&2
   ok "dify-ssrf-proxy synchronisé"
+}
+
+# Composes secondaires (tts, inference Ollama, sandbox, scheduler...) : si
+# leur YAML a été patché dans le repo (ex: nouveau healthcheck, nouvelle env
+# var, nouveau port), `docker compose up -d` détecte le diff et recreate le
+# container. Sans cette fonction, les modifs sur ces composes restaient dans
+# le repo mais n'étaient JAMAIS appliquées au runtime — il fallait soit un
+# install.sh complet, soit un client reset (bug 2026-05-07 : tts unhealthy
+# pendant 7h car son nouveau healthcheck `python urllib` n'avait jamais été
+# appliqué, le runtime gardait l'ancien `curl -f` cassé).
+#
+# Idempotent : si rien n'a changé, `up -d` est un no-op (Docker compare la
+# config et garde le container existant).
+recreate_secondary_composes_if_changed() {
+  log "Vérification des composes secondaires (tts, inference, sandbox)"
+  for svc in tts inference sandbox scheduler memory observability monitoring; do
+    if ssh_cmd "test -f $SERVER_REPO/services/$svc/docker-compose.yml"; then
+      ssh_cmd "cd $SERVER_REPO/services/$svc && \
+        docker compose --env-file $ENV_FILE up -d 2>&1 | tail -3" >&2 || \
+        warn "  ($svc non synchronisé — non-bloquant)"
+    fi
+  done
+  ok "Composes secondaires synchronisés"
 }
 
 main "$@"
