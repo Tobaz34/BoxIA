@@ -107,6 +107,22 @@ deploy_stack() {
   ( cd services/dify && docker compose --env-file "$env_file" up -d )
 
   c_blue "  → Démarrage Inference (Ollama + Open WebUI)..."
+  # Auto-détection du volume Ollama existant (héritage stack legacy ≠
+  # nouveau nom BoxIA). Sans ça : compose tente `anythingllm_ollama_data`
+  # (default) qui n'existe pas sur xefia → ollama démarre vide ou crash.
+  # Bug constaté 2026-05-07 fresh install. Le compose lit OLLAMA_VOLUME_NAME
+  # avec fallback default ; on le détecte ici si non défini dans .env.
+  if [[ -z "${OLLAMA_VOLUME_NAME:-}" ]]; then
+    if docker volume ls --format '{{.Name}}' | grep -qx "stack_xefia_ollama_data"; then
+      c_yellow "    ⚠ Volume Ollama legacy détecté : stack_xefia_ollama_data"
+      export OLLAMA_VOLUME_NAME="stack_xefia_ollama_data"
+      # Persist dans .env si pas déjà là, pour que les futurs deploys utilisent
+      if ! grep -q '^OLLAMA_VOLUME_NAME=' "$env_file"; then
+        echo "OLLAMA_VOLUME_NAME=stack_xefia_ollama_data" >> "$env_file"
+        c_yellow "    → ajouté OLLAMA_VOLUME_NAME=stack_xefia_ollama_data dans .env"
+      fi
+    fi
+  fi
   ( cd services/inference && docker compose --env-file "$env_file" up -d ) || \
       c_yellow "    (déjà en cours d'exécution ou conflict avec stack héritée — non bloquant)"
 
