@@ -147,13 +147,28 @@ def _patch_authentik_redirect_uri(env: dict[str, str], new_callback: str) -> dic
 
 
 def _restart_aibox_app() -> bool:
-    """docker restart aibox-app pour relire le nouveau .env."""
+    """Recrée aibox-app pour propager les nouvelles vars du .env.
+
+    IMPORTANT : `docker restart` ne relit PAS les vars du .env (elles
+    sont figées au container create). On doit faire `docker compose up -d`
+    avec --env-file pour forcer la recreate avec les nouvelles vars.
+    """
+    compose_dir = "/srv/ai-stack/services/app"
+    env_file = "/srv/ai-stack/.env"
+    if not Path(compose_dir).exists():
+        return False
     try:
         r = subprocess.run(
-            ["docker", "restart", "aibox-app"],
+            [
+                "docker", "compose",
+                "--env-file", env_file,
+                "-f", f"{compose_dir}/docker-compose.yml",
+                "up", "-d", "--force-recreate", "--no-build",
+            ],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=120,
+            cwd=compose_dir,
         )
         return r.returncode == 0
     except Exception:
