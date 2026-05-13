@@ -120,15 +120,21 @@ services:
       - ollama_net
 
 # ----- Volumes nommés EXPLICITES (pas de prefix par project_name) ----------
+# IMPORTANT : on garde les NAMES legacy `anythingllm_*` pour compat avec les
+# installs migrées depuis stack_xefia historique (xefia + premiers pilotes).
+# Sur fresh install (jamais eu stack_xefia), compose crée les volumes vides
+# automatiquement. SANS `external: true`, sinon le compose plante au up avec
+# "external volume not found" (bug observé fresh install xefia 2026-05-13).
+#
+# Migration vers convention `aibox_*` reportée P6 (image disque pré-installée
+# unifiée) — le rename volume Docker est destructif et exige une migration
+# data (`docker run --rm -v src:/from -v dst:/to alpine cp -a /from/. /to/`).
 volumes:
   ollama_models:
-    name: anythingllm_ollama_data    # ← volume existant, modèles ~14 GB
-    external: true                    # external car le reset le préserve toujours
+    name: anythingllm_ollama_data    # ← modèles Ollama (~14 GB), créé si absent
   open_webui_data:
     name: anythingllm_open-webui     # ← données utilisateurs OWUI (chats, RAG)
-    # PAS external : si le reset a supprimé le volume, compose le recrée vide.
-    # OWUI fera son setup au premier accès. Pour préserver les chats au reset,
-    # utiliser `./reset-as-client.sh --keep-owui`.
+    # Pour préserver les chats au reset, utiliser `./reset-as-client.sh --keep-owui`.
 
 # ----- Réseaux -------------------------------------------------------------
 networks:
