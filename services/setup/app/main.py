@@ -887,7 +887,18 @@ async def provision_sso(request: Request):
             k, _, v = line.partition("=")
             env[k] = v.strip("'\"")
 
-    host = (request.headers.get("host") or "localhost").split(":")[0]
+    # Détermine l'IP LAN du serveur — celle qui sera utilisée dans les
+    # redirect_uris OIDC et NEXTAUTH_URL. Ordre de priorité :
+    #   1. AIBOX_HOST_IP du .env (écrit par install.sh via `hostname -I`)
+    #   2. Header HTTP Host de la requête (peut être localhost si curl interne)
+    #   3. Fallback localhost (last resort)
+    # Sans ce fix, le wizard appelé via curl from container générait des
+    # redirect_uris pointant sur localhost — login OAuth foirait depuis tout
+    # browser sur le LAN. Bug observé 2026-05-13.
+    host = (
+        env.get("AIBOX_HOST_IP", "").strip()
+        or (request.headers.get("host") or "localhost").split(":")[0]
+    )
     report = sso_provisioning.provision_all(env, host)
 
     # Recrée les containers qui dépendent du .env mis à jour par provisioning.
