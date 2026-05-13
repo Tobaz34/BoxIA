@@ -91,9 +91,11 @@ elif echo "$COMMAND" | grep -qE 'docker[[:space:]]+compose.*(build|up|down|resta
 elif echo "$COMMAND" | grep -qE 'git[[:space:]]+(reset|checkout|pull|merge|rebase|push|fetch[[:space:]]+--all)'; then
   PATTERN="git mutation"
   REASON="Mutation git directe sur xefia. Le script s'occupe du reset propre."
-elif echo "$COMMAND" | grep -qE '(\./)?install\.sh'; then
+elif echo "$COMMAND" | grep -qE '(^|[/[:space:]])install\.sh([[:space:]]|$)'; then
+  # Précis : matche "install.sh" en début/fin de mot, PAS "aibox-install.sh"
+  # ou autres scripts dont le nom contient "install.sh" comme suffixe.
   PATTERN="install.sh"
-  REASON="install.sh est destructif (re-provisionne tout). Hors-pipeline."
+  REASON="install.sh BoxIA est destructif (re-provisionne tout). Hors-pipeline."
 elif echo "$COMMAND" | grep -qE '(\./)?reset-as-client'; then
   PATTERN="reset-as-client"
   REASON="reset-as-client.sh efface les données client. Confirmation utilisateur explicite requise hors hook."
