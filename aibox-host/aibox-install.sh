@@ -86,6 +86,13 @@ fi
 # ---- 4. Wizard ------------------------------------------------------------
 log "[4/8] Wizard configuration AI Box"
 mkdir -p "$HERMES_DIR/data"
+# Chown au user 'hermes' du container (UID 10000) AVANT le up.
+# Sans ça, l'entrypoint Hermes (qui tourne en hermes user après USER hermes
+# dans le Dockerfile) ne peut pas créer ses sous-dossiers (cron, sessions, etc.)
+# et le container entre en crashloop avec "mkdir: Permission denied".
+chown -R 10000:10000 "$HERMES_DIR/data" 2>/dev/null || true
+chmod 755 "$HERMES_DIR/data" 2>/dev/null || true
+
 if [ "$MODE" != "update" ] || [ ! -f "$HERMES_DIR/.env" ]; then
   bash "$SCRIPT_DIR/wizard.sh"
 else
