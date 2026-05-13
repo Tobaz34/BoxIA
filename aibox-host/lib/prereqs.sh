@@ -77,7 +77,10 @@ check_root() {
 }
 
 run_all_prereqs() {
-  check_root
+  # Mode --check : skip check_root (lecture seule, pas besoin d'élévation)
+  if [ "${CHECK_ONLY:-0}" != "1" ]; then
+    check_root
+  fi
   check_os
   check_cpu_ram
   check_disk
