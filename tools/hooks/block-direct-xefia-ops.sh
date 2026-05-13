@@ -43,6 +43,41 @@ if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|deploy-new-box|provision-m
   exit 0
 fi
 
+# 2bis. Exemption Hermes Agent (stack_xefia Portainer, hors scope BoxIA /srv/ai-stack/)
+#
+# Contexte : sur le même serveur xefia (192.168.15.210) coexistent DEUX stacks :
+#   - /srv/ai-stack/   = BoxIA (ce repo, géré via deploy-to-xefia.sh)
+#   - /srv/xefia/      = stack_xefia Portainer (AnythingLLM, Open-WebUI, OpenClaw,
+#                        Ollama partagé, Hermes Agent, etc.) — NON versionné dans
+#                        ce repo, géré via Portainer.
+#
+# L'intégration Hermes Agent vit dans /srv/xefia/hermes/ (compose) et
+# /srv/xefia/hermes_data/ (volume). Ces paths sont hors scope BoxIA :
+# pas de risque de dériver l'état git de /srv/ai-stack/.
+#
+# RÈGLE : si TOUS les paths /srv/... d'une commande sont préfixés par
+# /srv/xefia/hermes ou /srv/xefia/hermes_data (et aucun ".." de bypass),
+# on laisse passer — y compris docker compose up/down et redirect writes.
+if ! echo "$COMMAND" | grep -qE '\.\.(/|$)'; then
+  SRV_PATHS=$(echo "$COMMAND" | grep -oE '/srv/[A-Za-z0-9_./-]+' | sort -u)
+  if [ -n "$SRV_PATHS" ]; then
+    ALL_HERMES=true
+    while IFS= read -r p; do
+      if ! echo "$p" | grep -qE '^/srv/xefia/hermes(_data)?(/|$)'; then
+        ALL_HERMES=false
+        break
+      fi
+    done <<< "$SRV_PATHS"
+    # docker compose ciblé sur le compose Hermes → autorisé même sans path /srv/ explicite
+    if echo "$COMMAND" | grep -qE 'docker[[:space:]]+compose[[:space:]]+-f[[:space:]]+/srv/xefia/hermes/'; then
+      ALL_HERMES=true
+    fi
+    if [ "$ALL_HERMES" = "true" ]; then
+      exit 0
+    fi
+  fi
+fi
+
 # 3. Détection des patterns interdits (premier match gagne)
 PATTERN=""
 REASON=""
