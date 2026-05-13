@@ -122,7 +122,7 @@
 | S1.2 | Test RAG : upload 5 docs métier + 10 questions | 🔴 P0 | 1 j | ⬜ pending | Andre |
 | S1.3 | Activer bot Telegram + test E2E Hermes | 🔴 P0 | 0.5 j | ⬜ pending | Andre (BotFather) + Claude |
 | S1.4 | Test E2E Pennylane connector | 🟠 P1 | 1 j | ⬜ pending | Andre (creds) + Claude |
-| S1.5 | Fix 7 bugs install (admin_email, NEXTAUTH_URL, etc.) | 🟠 P1 | 2 j | ⬜ pending | Claude |
+| S1.5 | Fix 7 bugs install (admin_email, NEXTAUTH_URL, etc.) | 🟠 P1 | 2 j | 🟡 review | Claude |
 
 ### Risque Sprint 1
 - 🔴 **R-S1-01** : clé Anthropic non disponible → S1.1 bloqué → cascade S1.2/S1.4 (rester en local 30s, NPS pilote naze)
@@ -194,20 +194,20 @@
 
 #### Story P1.4 — Fix bugs pipeline install (7 bugs P1 identifiés)
 **User story** : En tant qu'install one-command, je veux pas avoir besoin de patches manuels pour qu'aibox-app fonctionne en LAN.
-**Effort** : 2 j | **Priorité** : 🟠 P1 | **État** : ⬜ pending
+**Effort** : 2 j | **Priorité** : 🟠 P1 | **État** : 🟡 review (code done, test fresh install pending)
 
-| Task | Effort | État | Notes |
+| Task | Effort | État | Commit |
 |---|---|---|---|
-| P1.4.1 — Fix `/api/configure` : propager `admin_password` vers create-admin-user | 1 h | ⬜ | services/setup/app/main.py |
-| P1.4.2 — Fix `/api/configure` : générer admin_email depuis payload, pas DOMAIN .env | 1 h | ⬜ | idem |
-| P1.4.3 — Auto-détection IP LAN dans NEXTAUTH_URL | 2 h | ⬜ | hostname -I ou wizard prompt |
-| P1.4.4 — Auto-détection IP dans AUTHENTIK_APP_ISSUER | 30 min | ⬜ | idem |
-| P1.4.5 — Authentik OIDC : ajouter IP LAN au redirect_uris auto via provision-sso | 1.5 h | ⬜ | sso_provisioning.py |
-| P1.4.6 — Compose Ollama : volume name renommé `aibox_ollama_models` (au lieu d'anythingllm_ollama_data legacy) | 1 h | ⬜ | services/inference/dc.yml |
-| P1.4.7 — Test fresh install sur xefia post-fix : tous les fixes runtime supprimés | 2 h | ⬜ | Wipe + re-install |
-| P1.4.8 — Commit chaque fix individuellement + push | 30 min | ⬜ | |
+| P1.4.1 — Fix `/api/configure` : propager `admin_password` vers create-admin-user | 1 h | ✅ | déjà OK dans le code existant (payload.admin_password ligne 504) ; vrai bug = install.sh bootstrap écrasait après → fix 5054e66 |
+| P1.4.2 — Fix `/api/configure` : générer admin_email depuis payload, pas DOMAIN .env | 1 h | ✅ | déjà OK (payload.admin_email ligne 503) ; vrai bug = idem → fix 5054e66 |
+| P1.4.3 — Auto-détection IP LAN dans NEXTAUTH_URL | 2 h | ✅ | `5054e66` (install.sh) + `e16376c` (/api/configure) |
+| P1.4.4 — Auto-détection IP dans AUTHENTIK_APP_ISSUER | 30 min | ✅ | idem `5054e66` + `e16376c` |
+| P1.4.5 — Authentik OIDC : ajouter IP LAN au redirect_uris auto via provision-sso | 1.5 h | ✅ | `2a68cfa` (utilise AIBOX_HOST_IP du .env, pas Host header) |
+| P1.4.6 — Compose Ollama : `external: true` retiré pour fresh install | 1 h | ✅ | `c570b9d` (volume créé si absent, name `anythingllm_ollama_data` préservé pour compat) |
+| P1.4.7 — Test fresh install sur xefia post-fix | 2 h | ⬜ pending | exige autorisation user pour wipe (destructive) |
+| P1.4.8 — Commits atomiques + push | 30 min | ✅ | 4 commits poussés `5054e66`, `e16376c`, `2a68cfa`, `c570b9d` |
 
-**Acceptance** : Fresh install xefia complète sans aucun patch manuel runtime
+**Acceptance** : Fresh install xefia complète sans aucun patch manuel runtime — **à valider via P1.4.7 (test)**
 
 #### Story P1.5 — Quick wins UX
 **User story** : Comme user web, je veux des éléments d'UI évidents (logout, breadcrumbs).
