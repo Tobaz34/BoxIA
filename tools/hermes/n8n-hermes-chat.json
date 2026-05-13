@@ -1,0 +1,54 @@
+{
+  "name": "Hermes Agent - Chat exemple",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-1",
+      "name": "Demarrage manuel",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://hermes:8642/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"qwen3:14b-64k\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"En une phrase: que peut faire Hermes Agent?\"}\n  ],\n  \"stream\": false,\n  \"max_tokens\": 150\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "http-hermes-1",
+      "name": "Appel Hermes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [550, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hermes-api-cred",
+          "name": "Hermes Bearer Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = items[0].json;\nreturn [{ json: { reponse: r.choices?.[0]?.message?.content, tokens: r.usage } }];"
+      },
+      "id": "extract-1",
+      "name": "Extraire reponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Demarrage manuel": {"main": [[{"node": "Appel Hermes", "type": "main", "index": 0}]]},
+    "Appel Hermes": {"main": [[{"node": "Extraire reponse", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"}
+}

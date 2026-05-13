@@ -1,0 +1,44 @@
+# Hermes Agent — stack standalone IA BOX (xefia, hors scope BoxIA /srv/ai-stack/)
+#
+# Vit dans /srv/xefia/hermes/. Image custom hermes:iabox (Dockerfile à côté).
+# Volume /srv/xefia/hermes_data/ chown hermes:hermes (UID 10000) par le container au boot.
+# Joint le réseau ollama_net (créé par Ollama) pour atteindre http://ollama:11434/v1.
+#
+# Déploiement / re-déploiement : tools/deploy-hermes-to-xefia.sh (idempotent).
+
+services:
+  hermes:
+    image: hermes:iabox
+    build:
+      context: /srv/xefia/hermes/
+      dockerfile: Dockerfile
+    container_name: hermes
+    restart: unless-stopped
+    command: gateway run
+    env_file:
+      - /srv/xefia/hermes/.env
+    environment:
+      - HERMES_HOME=/opt/data
+    volumes:
+      - /srv/xefia/hermes_data:/opt/data
+    ports:
+      # Dashboard web LAN. 8642 (API gateway) reste interne au ollama_net.
+      - "9119:9119"
+    networks:
+      - ollama_net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9119/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+networks:
+  ollama_net:
+    external: true

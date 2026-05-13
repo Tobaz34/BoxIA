@@ -39,7 +39,7 @@ fi
 # - provision-master-creds : pousse /etc/aibox-master/cloudflare.env via scp+sudo
 # - wipe-box              : reset destructif d'une box (containers + volumes)
 # - start-connector       : lance un container connecteur ad-hoc
-if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|deploy-new-box|provision-master-creds|wipe-box|redeploy-wizard|start-connector)\.sh'; then
+if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|deploy-hermes-to-xefia|deploy-new-box|provision-master-creds|wipe-box|redeploy-wizard|start-connector)\.sh'; then
   exit 0
 fi
 
