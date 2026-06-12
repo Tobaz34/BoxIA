@@ -13,6 +13,9 @@
 #   tools/deploy-to-xefia.sh --rollback            # rollback au dernier tag pre-deploy-*
 #   tools/deploy-to-xefia.sh --rollback --yes      # rollback sans confirmation
 #   tools/deploy-to-xefia.sh --status              # affiche le lock + dernier deploy
+#   tools/deploy-to-xefia.sh --repair-git <branche>  # ré-initialise .git côté
+#                                  serveur (l'install one-command copie le repo
+#                                  SANS .git → deploy et self-update cassés)
 #
 # Pré-requis :
 #   - Branche déjà commitée et pushée vers origin
@@ -43,6 +46,8 @@ SERVICE_NAME="app"  # nom du service dans services/app/docker-compose.yml
 CONTAINER_NAME="aibox-app"
 HEALTH_PATH="/"
 HEALTH_PORT="3100"  # port externe (Next.js en network_mode: host sur APP_PORT=3100)
+
+REPO_URL="${AIBOX_REPO_URL:-https://github.com/Tobaz34/BoxIA.git}"
 
 SESSION_ID="${USER:-claude}-$(hostname)-$$"
 TS=$(date +%s)
@@ -112,6 +117,40 @@ cmd_rollback() {
   smoke_test
   log_deploy "rollback" "$tag" "OK"
   ok "Rollback terminé sur $tag"
+}
+
+cmd_repair_git() {
+  local branch="${1:-}"
+  [[ -n "$branch" ]] || fail "--repair-git exige une branche : tools/deploy-to-xefia.sh --repair-git <branche>"
+  DEPLOY_LOG_KIND="repair-git"
+  DEPLOY_LOG_TARGET="$branch"
+
+  log "Réparation du repo git de $SERVER_REPO (install one-command = copie sans .git)"
+  if ssh_cmd "test -d $SERVER_REPO/.git" 2>/dev/null; then
+    fail "$SERVER_REPO/.git existe déjà — rien à réparer. Utilise un déploiement normal."
+  fi
+  if ! ssh_cmd "git ls-remote --exit-code '$REPO_URL' 'refs/heads/$branch' >/dev/null 2>&1"; then
+    fail "Branche $branch introuvable sur $REPO_URL (ou pas d'accès réseau au repo)."
+  fi
+
+  acquire_lock "repair-git:$branch"
+  trap release_lock EXIT
+
+  # init + fetch + checkout -f -B : remet les fichiers TRACKÉS au contenu de
+  # la branche. Les fichiers runtime non trackés (.env, data/, deploy.log,
+  # client_config.yaml) ne sont pas touchés — ils sont .gitignore'd.
+  ssh_cmd "set -e
+cd $SERVER_REPO
+git init -q -b main
+git remote add origin '$REPO_URL' 2>/dev/null || git remote set-url origin '$REPO_URL'
+git fetch origin --quiet
+git checkout -q -f -B '$branch' 'origin/$branch'
+echo '--- fichiers locaux divergents de la branche (info) :'
+git status --short | head -15
+git log -1 --format='HEAD = %h %s'" >&2
+
+  log_deploy "repair-git" "$branch" "OK"
+  ok "Repo git réparé — HEAD sur $branch. Les déploiements normaux refonctionnent."
 }
 
 # ---- Lock management ------------------------------------------------------
@@ -290,6 +329,7 @@ main() {
   case "${1:-}" in
     --status|status)     cmd_status; exit 0 ;;
     --rollback|rollback) cmd_rollback; exit 0 ;;
+    --repair-git)        cmd_repair_git "${2:-}"; exit 0 ;;
     -h|--help|"")        usage ;;
   esac
 

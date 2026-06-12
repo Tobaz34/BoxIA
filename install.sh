@@ -769,9 +769,12 @@ technologies:
   smb: ${TECH[SMB]}
 
 models:
-  llm_main: qwen2.5:7b
+  llm_main: qwen3:14b
   llm_embed: bge-m3
 EOF
+
+# Le .env contient tous les secrets de la stack : pas world-readable.
+chmod 600 .env
 
 c_green "  ✓ .env créé"
 c_green "  ✓ client_config.yaml créé"
