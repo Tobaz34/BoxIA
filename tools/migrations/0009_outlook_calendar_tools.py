@@ -122,14 +122,25 @@ def _load_yaml() -> str:
 
 
 def _find_provider(s):
+    # Dify ≥1.x renvoie 400 (et plus 404) sur .../api/get quand le provider
+    # n'existe pas — fallback sur le listing /tool-providers, stable.
     encoded = urllib.parse.quote(PROVIDER_NAME)
     try:
         r = s.get(f"/workspaces/current/tool-provider/api/get?provider={encoded}")
-        return r if r else None
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
+        if r:
+            return r
+    except urllib.error.HTTPError:
+        pass
+    try:
+        r = s.get("/workspaces/current/tool-providers")
+        items = r if isinstance(r, list) else (r.get("data") or [])
+        for p in items:
+            if isinstance(p, dict) and (p.get("name") == PROVIDER_NAME
+                                        or p.get("provider") == PROVIDER_NAME):
+                return p
+    except Exception:
+        pass
+    return None
 
 
 def _provider_id(s):

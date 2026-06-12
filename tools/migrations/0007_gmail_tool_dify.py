@@ -148,16 +148,23 @@ def _provider_credentials() -> dict:
 
 
 def _find_provider(s: _DifySession) -> dict | None:
-    """Retourne le record provider Gmail s'il existe, sinon None."""
+    """Retourne le record provider Gmail s'il existe, sinon None.
+
+    Dify ≥1.x renvoie 400 (et plus 404) sur .../api/get quand le provider
+    n'existe pas — on ne propage plus l'erreur, on retombe sur le listing
+    /tool-providers qui, lui, est stable.
+    """
     try:
         encoded = urllib.parse.quote(PROVIDER_NAME)
         r = s.get(f"/workspaces/current/tool-provider/api/get?provider={encoded}")
         if r:
             return r
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
+    except urllib.error.HTTPError:
+        pass
+    for p in _list_tool_providers(s):
+        if isinstance(p, dict) and (p.get("name") == PROVIDER_NAME
+                                    or p.get("provider") == PROVIDER_NAME):
+            return p
     return None
 
 
