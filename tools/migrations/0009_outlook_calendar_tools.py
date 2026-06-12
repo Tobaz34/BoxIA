@@ -96,12 +96,16 @@ class _DifySession:
             headers=self._headers({"Content-Type": "application/json"}),
             method="POST",
         )
-        with self.opener.open(req, timeout=30) as r:
-            raw = r.read()
-            try:
-                return json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                return {"raw": raw.decode("utf-8", errors="replace")}
+        try:
+            with self.opener.open(req, timeout=30) as r:
+                raw = r.read()
+                try:
+                    return json.loads(raw) if raw else {}
+                except json.JSONDecodeError:
+                    return {"raw": raw.decode("utf-8", errors="replace")}
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"POST {path} → HTTP {e.code} : {detail}") from e
 
 
 def _connect():
