@@ -7,6 +7,67 @@
 
 ---
 
+## [0.3.0] — 2026-06-12
+
+> Hardening complet suite à une review de code intégrale (5 audits
+> parallèles : routes API, libs, frontend React, connecteurs Python,
+> scripts d'infra). ~45 correctifs.
+
+### Security
+- **XSS artifacts neutralisé** : l'iframe HTML perd `allow-same-origin`
+  (un artifact généré par le LLM ne peut plus appeler `/api/*` avec les
+  cookies de session) ; les SVG sont rendus dans une iframe `sandbox=""`
+  au lieu d'une injection directe dans la page.
+- **Scrub PII non contournable** : quand l'anonymisation est activée
+  globalement par l'admin, le client ne peut plus la désactiver
+  requête par requête (`/api/chat-cloud`).
+- **text2sql** : transactions forcées `READ ONLY` côté code (plus
+  seulement par le rôle DB) + denylist étendue (`pg_read_file`,
+  `pg_sleep`, `dblink`...).
+- **Auth ajoutée** sur `/api/system/{warmup,github-status,check-updates,
+  update-status}` ; suppression de documents KB réservée admin ;
+  `/api/oauth/connections` (GET) réservé admin ; auth avant parsing du
+  multipart sur l'upload.
+- **Secrets** : clé de chiffrement de repli hardcodée supprimée
+  (fail-hard si `NEXTAUTH_SECRET` absent) ; credentials connecteurs
+  chiffrés at-rest (AES-256-GCM) dans `/data/connectors.json` avec
+  migration automatique ; `GITHUB_TOKEN` plus jamais dans l'argv SSH ;
+  `.env` en 600 ; comparaisons de tokens constant-time partout
+  (app + workers Python).
+- **Injection** : échappement iCal RFC 5545 (connecteur calendar),
+  anti-injection SQL dans `rgpd_erase_user.py`, échappement du JSON
+  inliné dans la page SSO.
+
+### Fixed
+- **Pipeline de mise à jour fiable** : un échec de build Docker fait
+  échouer le déploiement (avant : `git pull` OK + ancienne image
+  redémarrée + statut « OK ») ; le watcher rapporte le vrai code de
+  sortie (la branche « échec » était inatteignable) ; lock de
+  déploiement atomique avec TTL 30 min et libération par propriétaire.
+- **Migrations rejouées après un reset client** (`_state.json` purgé) —
+  la promesse « le reset rejoue tout » est de nouveau tenue.
+- **`install.sh`** : génération de secrets compatible `set -o pipefail`
+  (SIGPIPE), charset sans `$`, `client_config.yaml` aligné sur
+  `qwen3:14b`.
+- **Warmup VRAM** : précharge `LLM_MAIN` (qwen3:14b) au lieu des anciens
+  modèles qwen2.5 — le cold-start de la 1re question disparaît vraiment.
+- **Tool Concierge `system_health`** réparé (401 systématique) — le
+  Concierge sait de nouveau répondre à « tout fonctionne ? ».
+- **Connecteurs** : emails Microsoft Graph paginés (plus de perte
+  silencieuse au-delà de 50), curseur IMAP qui ne saute plus les mails
+  en échec, fichiers supprimés retirés de Qdrant (SMB/Nextcloud),
+  encodage cp1252 des FEC Windows (« € » corrompu), endpoint Odoo
+  `/partners` réparé, timeouts XML-RPC Odoo.
+- **Frontend** : polling d'indexation des documents réparé (stale
+  closure), réponses out-of-order au changement de conversation,
+  auto-scroll qui ne vole plus la position de lecture, fuite
+  d'intervalle du popup OAuth.
+- **Divers** : rotation du log d'audit effective, streams cloud coupés
+  à la déconnexion du client (tokens non facturés), `<think>` filtré
+  sur les workflows Dify, export RGPD signale la troncature.
+
+---
+
 ## [0.2.2] — 2026-05-04
 
 ### Added
