@@ -96,12 +96,16 @@ class _DifySession:
             headers=self._headers({"Content-Type": "application/json"}),
             method="POST",
         )
-        with self.opener.open(req, timeout=30) as r:
-            raw = r.read()
-            try:
-                return json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                return {"raw": raw.decode("utf-8", errors="replace")}
+        try:
+            with self.opener.open(req, timeout=30) as r:
+                raw = r.read()
+                try:
+                    return json.loads(raw) if raw else {}
+                except json.JSONDecodeError:
+                    return {"raw": raw.decode("utf-8", errors="replace")}
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"POST {path} → HTTP {e.code} : {detail}") from e
 
 
 def _connect():
@@ -118,27 +122,41 @@ def _load_yaml() -> str:
 
 
 def _find_provider(s):
+    # Dify ≥1.x renvoie 400 (et plus 404) sur .../api/get quand le provider
+    # n'existe pas — fallback sur le listing /tool-providers, stable.
     encoded = urllib.parse.quote(PROVIDER_NAME)
     try:
         r = s.get(f"/workspaces/current/tool-provider/api/get?provider={encoded}")
-        return r if r else None
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
-
-
-def _provider_id(s):
+        if r:
+            return r
+    except urllib.error.HTTPError:
+        pass
     try:
         r = s.get("/workspaces/current/tool-providers")
         items = r if isinstance(r, list) else (r.get("data") or [])
         for p in items:
             if isinstance(p, dict) and (p.get("name") == PROVIDER_NAME
                                         or p.get("provider") == PROVIDER_NAME):
-                return p.get("id") or PROVIDER_NAME
+                return p
     except Exception:
         pass
-    return PROVIDER_NAME
+    return None
+
+
+def _provider_id(s):
+    # None si absent — ne JAMAIS retomber sur le nom : une ref
+    # provider_id=<nom> dans agent_mode casse tous les chats de l'app en
+    # 500 (incident 2026-06-12, nettoyé par la migration 0013).
+    try:
+        r = s.get("/workspaces/current/tool-providers")
+        items = r if isinstance(r, list) else (r.get("data") or [])
+        for p in items:
+            if isinstance(p, dict) and (p.get("name") == PROVIDER_NAME
+                                        or p.get("provider") == PROVIDER_NAME):
+                return p.get("id")
+    except Exception:
+        pass
+    return None
 
 
 def _find_app(s, name):
@@ -214,6 +232,10 @@ def run() -> None:
     s.post(ep, payload)
 
     prov_id = _provider_id(s)
+    if not prov_id:
+        raise RuntimeError(
+            f"Provider '{PROVIDER_NAME}' introuvable après le {action} — "
+            "attach annulé pour ne pas écrire de ref orpheline.")
     for name in TARGET_AGENT_NAMES:
         app = _find_app(s, name)
         if not app:

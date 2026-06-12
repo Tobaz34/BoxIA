@@ -138,6 +138,9 @@ export function Chat() {
   const [suggested, setSuggested] = useState<string[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
+  // Séquence de chargement de conversation — invalide les réponses
+  // out-of-order quand l'utilisateur clique vite sur plusieurs conversations
+  const loadSeqRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -283,6 +286,8 @@ export function Chat() {
 
   function switchAgent(slug: string) {
     if (slug === currentAgent) return;
+    // Stoppe un éventuel streaming en cours — sa réponse appartient à l'ancien agent
+    abortRef.current?.abort();
     if (typeof window !== "undefined") {
       localStorage.setItem(LS_AGENT_KEY, slug);
     }
@@ -359,6 +364,11 @@ export function Chat() {
   }
 
   const loadConversation = useCallback(async (id: string) => {
+    // Stoppe un éventuel streaming en cours avant de changer de conversation
+    abortRef.current?.abort();
+    // Invalide les chargements précédents (deux clics rapides → seule la
+    // dernière réponse a le droit d'écrire dans l'état)
+    const seq = ++loadSeqRef.current;
     setConversationId(id);
     setError(null);
     setSuggested([]);
@@ -367,8 +377,10 @@ export function Chat() {
         `/api/conversations/${id}/messages?agent=${encodeURIComponent(currentAgent)}&limit=50`,
         { cache: "no-store" },
       );
+      if (seq !== loadSeqRef.current) return; // une requête plus récente a pris la main
       if (!r.ok) throw new Error("load failed");
       const j = await r.json();
+      if (seq !== loadSeqRef.current) return;
       const msgs: Message[] = [];
       for (const m of j.data || []) {
         const t = (m.created_at || 0) * 1000;
@@ -391,7 +403,9 @@ export function Chat() {
         fetchSuggested(last.difyMessageId);
       }
     } catch {
-      setError("Impossible de charger la conversation");
+      if (seq === loadSeqRef.current) {
+        setError("Impossible de charger la conversation");
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAgent]);
@@ -439,9 +453,16 @@ export function Chat() {
   }
 
   // ----- Auto-scroll -----
+  // Ne force le scroll que si l'utilisateur est déjà proche du bas :
+  // s'il a remonté pour relire, on ne lui vole pas sa position.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    // Mesuré APRÈS le rendu du nouveau contenu : le seuil doit absorber
+    // l'ajout d'un message utilisateur + placeholder (~200 px) sans
+    // décrocher le suivi quand on était en bas.
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 300) el.scrollTop = el.scrollHeight;
   }, [messages, streaming, suggested]);
 
   // ----- Raccourcis clavier globaux ----------------------------------

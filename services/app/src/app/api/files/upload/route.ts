@@ -14,6 +14,8 @@
  *   - Documents : 20 MB max (pdf, txt, md, docx, doc, csv, html)
  */
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { requireDifyContext, DIFY_BASE_URL } from "@/lib/dify";
 import { extractDocument, type ExtractResult } from "@/lib/extract-doc";
 
@@ -54,9 +56,21 @@ function classify(file: File): "image" | "document" | null {
 }
 
 export async function POST(req: NextRequest) {
+  // Auth AVANT le parsing : on ne paie pas le décodage d'un multipart
+  // (jusqu'à 20 Mo) pour un appelant anonyme.
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   const incoming = await req.formData();
   const agent = incoming.get("agent") as string | null;
   const file = incoming.get("file");
+
+  // Contexte Dify (re-vérifie session + user actif + agent valide)
+  // avant les validations de contenu.
+  const ctx = await requireDifyContext(agent);
+  if (ctx instanceof NextResponse) return ctx;
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "no_file" }, { status: 400 });
@@ -80,9 +94,6 @@ export async function POST(req: NextRequest) {
       { status: 413 },
     );
   }
-
-  const ctx = await requireDifyContext(agent);
-  if (ctx instanceof NextResponse) return ctx;
 
   // Re-encode le multipart pour Dify avec le user (requis par /v1/files/upload)
   const fd = new FormData();

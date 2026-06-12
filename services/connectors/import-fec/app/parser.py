@@ -107,14 +107,18 @@ class FECParseError(Exception):
 
 
 def _detect_encoding(blob: bytes) -> str:
-    """FEC officiel = ASCII Latin-1 ou UTF-8. On teste UTF-8 d'abord (plus strict)."""
-    for enc in ("utf-8", "utf-8-sig", "latin-1", "cp1252"):
+    """FEC officiel = ASCII Latin-1 ou UTF-8. On teste UTF-8 d'abord (plus strict).
+
+    cp1252 AVANT latin-1 : latin-1 décode n'importe quel octet sans jamais lever,
+    donc placé en dernier (fallback). Sinon « € » (0x80, cp1252) serait corrompu.
+    """
+    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
         try:
             blob.decode(enc)
             return enc
         except UnicodeDecodeError:
             continue
-    raise FECParseError("Encodage indétectable (ni UTF-8 ni Latin-1 ni CP1252)")
+    raise FECParseError("Encodage indétectable (ni UTF-8 ni CP1252 ni Latin-1)")
 
 
 def _detect_delimiter(first_line: str) -> str:

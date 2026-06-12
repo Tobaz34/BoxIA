@@ -57,7 +57,15 @@ git fetch --tags --quiet
 
 # 2. Tag actuellement déployé
 CURRENT=$(git describe --tags --exact-match 2>/dev/null || echo "untagged")
-log "Version actuelle : $CURRENT"
+# Si la box n'est pas sur un tag exact (branche, commit détaché), "untagged"
+# n'est pas une ref checkout-able : on capture le SHA HEAD comme cible de
+# rollback (sinon `git checkout untagged` échoue après un update.sh raté).
+if [[ "$CURRENT" == "untagged" ]]; then
+    ROLLBACK_REF=$(git rev-parse HEAD)
+else
+    ROLLBACK_REF="$CURRENT"
+fi
+log "Version actuelle : $CURRENT (cible rollback : $ROLLBACK_REF)"
 
 # 3. Dernier tag stable (vX.Y.Z, pas de pre-release alpha/beta/rc)
 LATEST=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vE 'alpha|beta|rc|pre' | head -1)
@@ -109,8 +117,8 @@ git checkout "$LATEST" --quiet || { notify "Échec git checkout $LATEST"; exit 1
 
 if ! ./update.sh; then
     notify "❌ Échec update.sh sur $LATEST. Voir logs box."
-    log "update.sh a échoué. Rollback automatique vers $CURRENT."
-    git checkout "$CURRENT" --quiet
+    log "update.sh a échoué. Rollback automatique vers $ROLLBACK_REF."
+    git checkout "$ROLLBACK_REF" --quiet
     ./update.sh || true
     exit 1
 fi

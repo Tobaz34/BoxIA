@@ -289,13 +289,20 @@ def run() -> None:
     print(f"  {action} provider {PROVIDER_NAME} via {ep}")
     s.post(ep, payload)
 
-    # 2. Récupère le provider_id réel pour l'attachement
-    provider_id = PROVIDER_NAME
+    # 2. Récupère le provider_id réel pour l'attachement. None si absent —
+    # ne JAMAIS retomber sur le nom : provider_id=<nom> dans agent_mode
+    # casse tous les chats de l'app en 500 (incident 2026-06-12, nettoyé
+    # par la migration 0013).
+    provider_id = None
     for p in _list_tool_providers(s):
         if isinstance(p, dict) and (p.get("name") == PROVIDER_NAME
                                     or p.get("provider") == PROVIDER_NAME):
-            provider_id = p.get("id") or PROVIDER_NAME
+            provider_id = p.get("id")
             break
+    if not provider_id:
+        raise RuntimeError(
+            f"Provider '{PROVIDER_NAME}' introuvable après le {action} — "
+            "attach annulé pour ne pas écrire de ref orpheline.")
 
     # 3. Attache aux agents cibles (best-effort par agent)
     results = []

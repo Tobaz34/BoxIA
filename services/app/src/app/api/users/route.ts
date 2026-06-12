@@ -10,6 +10,7 @@ import {
   EMPLOYEE_GROUP_NAME, toPublicUser, type AkUser, type AkGroup,
 } from "@/lib/authentik";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
+import { randomInt } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -193,9 +194,8 @@ function generateTempPassword(): string {
   // alphabet sans caractères ambigus (0/O, 1/l/I) pour la transmission orale
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
   let out = "";
-  const bytes = new Uint8Array(12);
-  // crypto.getRandomValues dispo dans Node 20+ et runtime Edge/Web
-  crypto.getRandomValues(bytes);
-  for (let i = 0; i < 12; i++) out += chars[bytes[i]! % chars.length];
+  // randomInt (CSPRNG, rejection sampling) évite le biais modulo
+  // qu'introduirait bytes[i] % chars.length (57 ne divise pas 256)
+  for (let i = 0; i < 12; i++) out += chars[randomInt(chars.length)]!;
   return out;
 }

@@ -28,6 +28,25 @@ def env(k: str, default: str = "") -> str:
     return v
 
 
+# Échecs collectés au fil des étapes → exit 1 à la fin si non vide
+_failures: list[str] = []
+
+
+def _run_checked(cmd: list[str], label: str) -> bool:
+    """Exécute la commande et collecte l'échec (au lieu de l'ignorer en silence)."""
+    res = subprocess.run(cmd)
+    if res.returncode != 0:
+        _failures.append(f"{label} (exit {res.returncode})")
+        print(f"  ⚠ {label} : échec (exit {res.returncode})", file=sys.stderr)
+        return False
+    return True
+
+
+def _sqlite_quote(s: str) -> str:
+    """Littéral SQL sûr pour sqlite3 CLI (pas de bind possible) : apostrophes doublées."""
+    return "'" + s.replace("'", "''") + "'"
+
+
 def erase_authentik(username: str, dry: bool) -> None:
     print(f"[Authentik] Suppression user {username}…")
     base = "http://aibox-authentik-server:9000/api/v3"
@@ -70,33 +89,38 @@ def erase_qdrant(username: str, dry: bool) -> None:
 
 def erase_owui(username: str, dry: bool) -> None:
     print(f"[Open WebUI] Purge conversations + uploads…")
+    usr = _sqlite_quote(username)  # anti-injection SQL
     cmd = [
         "docker", "exec", "open-webui", "sqlite3", "/app/backend/data/webui.db",
-        f"DELETE FROM chat WHERE user_id IN (SELECT id FROM user WHERE name='{username}' OR email='{username}'); "
-        f"DELETE FROM user WHERE name='{username}' OR email='{username}';",
+        f"DELETE FROM chat WHERE user_id IN (SELECT id FROM user WHERE name={usr} OR email={usr}); "
+        f"DELETE FROM user WHERE name={usr} OR email={usr};",
     ]
     if dry:
         print(f"  [dry-run] {' '.join(cmd)}")
         return
-    subprocess.run(cmd, check=False)
-    print("  ✓ owui purgé")
+    if _run_checked(cmd, "open-webui"):
+        print("  ✓ owui purgé")
 
 
 def erase_dify(username: str, dry: bool) -> None:
     print(f"[Dify] Suppression compte + données…")
-    # Dify v1.10 : supprimer via SQL direct dans la DB Dify
+    # Dify v1.10 : supprimer via SQL direct dans la DB Dify.
+    # Anti-injection : la valeur passe par une variable psql (-v) interpolée
+    # en littéral quoté via :'usr' — jamais par f-string dans le SQL.
     cmd = [
         "docker", "exec", "aibox-dify-db", "psql", "-U", "postgres", "-d", "dify",
+        "-v", "ON_ERROR_STOP=1",
+        "-v", f"usr={username}",
         "-c",
-        f"DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE from_account_id IN (SELECT id FROM accounts WHERE email='{username}')); "
-        f"DELETE FROM conversations WHERE from_account_id IN (SELECT id FROM accounts WHERE email='{username}'); "
-        f"DELETE FROM accounts WHERE email='{username}';",
+        "DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE from_account_id IN (SELECT id FROM accounts WHERE email=:'usr')); "
+        "DELETE FROM conversations WHERE from_account_id IN (SELECT id FROM accounts WHERE email=:'usr'); "
+        "DELETE FROM accounts WHERE email=:'usr';",
     ]
     if dry:
         print(f"  [dry-run] {' '.join(cmd[:6])} ...")
         return
-    subprocess.run(cmd, check=False)
-    print("  ✓ dify purgé")
+    if _run_checked(cmd, "dify"):
+        print("  ✓ dify purgé")
 
 
 def main() -> None:
@@ -111,6 +135,9 @@ def main() -> None:
     erase_owui(args.username, args.dry_run)
     erase_dify(args.username, args.dry_run)
     print("=== Terminé ===")
+    if _failures:
+        print(f"⚠ Effacements en échec : {', '.join(_failures)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

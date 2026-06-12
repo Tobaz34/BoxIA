@@ -49,7 +49,11 @@ export async function GET(req: Request) {
   } catch { /* noop */ }
 
   // Conversations + messages par agent (le user est scopé par email Dify)
+  // Les appels Dify sont plafonnés à 100 conversations / 100 messages :
+  // on signale la troncature dans le payload plutôt que de la taire.
   const agentsExport: Record<string, unknown> = {};
+  let conversationsTruncated = false;
+  let messagesTruncated = false;
   for (const meta of listAvailableAgents()) {
     const key = getAgentKey(meta.slug);
     if (!key) continue;
@@ -62,6 +66,9 @@ export async function GET(req: Request) {
       );
       if (cr.ok) {
         const cj = await cr.json();
+        if ((cj.data || []).length >= 100 || cj.has_more) {
+          conversationsTruncated = true;
+        }
         for (const conv of cj.data || []) {
           // 2. messages de la conversation
           let messages: unknown[] = [];
@@ -74,6 +81,9 @@ export async function GET(req: Request) {
             if (mr.ok) {
               const mj = await mr.json();
               messages = mj.data || [];
+              if (messages.length >= 100 || mj.has_more) {
+                messagesTruncated = true;
+              }
             }
           } catch { /* skip */ }
           conversations.push({ ...conv, messages });
@@ -94,6 +104,12 @@ export async function GET(req: Request) {
     user_email: email,
     profile,
     agents: agentsExport,
+    // Signale si les plafonds Dify (100 conversations / 100 messages par
+    // conversation) ont été atteints — l'export peut alors être incomplet.
+    truncated: {
+      conversations: conversationsTruncated,
+      messages: messagesTruncated,
+    },
     note:
       "Cet export est fourni au titre du droit à la portabilité (RGPD art. 20). " +
       "Conservez-le en lieu sûr — il contient l'intégralité de vos conversations.",

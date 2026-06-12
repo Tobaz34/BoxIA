@@ -43,10 +43,17 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     state["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-    STATE_FILE.write_text(
-        json.dumps(state, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    payload = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
+    try:
+        STATE_FILE.write_text(payload, encoding="utf-8")
+    except PermissionError:
+        # _state.json a pu être créé par root (install.sh lancé en sudo) alors
+        # que le runner tourne ensuite en user (deploy). Le dossier nous
+        # appartient (git checkout) → unlink autorisé, puis réécriture sous
+        # notre uid. Sans ça, l'état ne se sauve jamais et TOUTES les
+        # migrations se rejouent à chaque deploy.
+        STATE_FILE.unlink()
+        STATE_FILE.write_text(payload, encoding="utf-8")
 
 
 def list_migrations() -> list[Path]:
@@ -100,12 +107,17 @@ def cmd_run(state: dict, dry_run: bool = False) -> int:
             if m.is_applied():
                 print(f"  → déjà appliquée (is_applied=True), marque comme appliquée")
                 state.setdefault("applied", []).append(f.name)
+                # Persiste immédiatement : un crash sur une migration suivante
+                # ne doit pas perdre ce marquage.
+                if not dry_run:
+                    save_state(state)
                 continue
             if dry_run:
                 print(f"  → dry-run, skip exécution")
                 continue
             m.run()
             state.setdefault("applied", []).append(f.name)
+            save_state(state)  # persiste après CHAQUE migration réussie
             print(f"  ✓ {f.name} OK")
             ran += 1
         except Exception as e:

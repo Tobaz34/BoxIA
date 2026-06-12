@@ -84,6 +84,10 @@ export function DocumentsManager() {
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Ref miroir de docs pour que l'intervalle de polling lise la liste à jour
+  // (sinon la closure capture le [] initial et le refresh auto ne part jamais)
+  const docsRef = useRef<DifyDoc[]>([]);
+  docsRef.current = docs;
 
   const refresh = useCallback(async () => {
     try {
@@ -108,8 +112,8 @@ export function DocumentsManager() {
     refresh();
     // Auto-refresh tant que des docs sont en cours d'indexation
     const t = setInterval(() => {
-      // peek: si un doc est encore en cours, refresh
-      const indexing = docs.some(
+      // peek: si un doc est encore en cours, refresh (via le ref, pas la closure)
+      const indexing = docsRef.current.some(
         (d) =>
           (d.display_status || d.indexing_status || "") !== "available" &&
           (d.display_status || d.indexing_status || "") !== "error",
@@ -117,8 +121,7 @@ export function DocumentsManager() {
       if (indexing) refresh();
     }, 5000);
     return () => clearInterval(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refresh]);
 
   async function uploadFiles(files: FileList | File[]) {
     const list = Array.from(files);

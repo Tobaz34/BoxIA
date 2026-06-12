@@ -45,6 +45,14 @@ const PATTERNS: ScrubPattern[] = [
     replacement: "[IBAN_REDACTED]",
   },
   {
+    name: "email",
+    // AVANT les patterns numériques (siren/siret/nir) : sinon un email
+    // contenant 9+ chiffres (« contact123456789@x.fr ») se fait grignoter
+    // en « contact[SIREN_REDACTED]@x.fr » au lieu d'un caviardage propre.
+    re: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    replacement: "[EMAIL_REDACTED]",
+  },
+  {
     name: "credit_card",
     // 4 groupes de 4 chiffres séparés par espaces / tirets / rien
     re: /\b(?:\d{4}[\s-]?){3}\d{4}\b/g,
@@ -70,11 +78,6 @@ const PATTERNS: ScrubPattern[] = [
     // mais belt-and-suspenders).
     re: /\b\d{3}[\s]?\d{3}[\s]?\d{3}\b(?!\d)/g,
     replacement: "[SIREN_REDACTED]",
-  },
-  {
-    name: "email",
-    re: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
-    replacement: "[EMAIL_REDACTED]",
   },
   {
     name: "phone_fr",

@@ -1,5 +1,5 @@
 /**
- * GET    /api/oauth/connections      — liste des connexions OAuth (sans tokens)
+ * GET    /api/oauth/connections      — liste des connexions OAuth (sans tokens, admin only)
  * DELETE /api/oauth/connections?id=X — révoque une connexion (admin only)
  */
 import { NextResponse } from "next/server";
@@ -12,8 +12,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // Admin only — aligné sur le DELETE et sur le flow oauth/callback :
+  // les connexions OAuth sont gérées par l'admin, pas par les employés.
+  const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+  if (!isAdmin || !session?.user?.email) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const conns = await listConnections();
   // Strip les tokens chiffrés — on ne renvoie que les métadonnées.

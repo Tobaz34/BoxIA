@@ -23,6 +23,7 @@ Variables :
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import xmlrpc.client
@@ -42,12 +43,51 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("erp-odoo")
 
 
+XMLRPC_TIMEOUT_SECONDS = 30.0
+
+
+class TimeoutTransport(xmlrpc.client.Transport):
+    """Transport XML-RPC http avec timeout (évite les appels bloqués indéfiniment)."""
+
+    def __init__(self, timeout: float = XMLRPC_TIMEOUT_SECONDS, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._timeout = timeout
+
+    def make_connection(self, host):
+        conn = super().make_connection(host)
+        conn.timeout = self._timeout
+        return conn
+
+
+class TimeoutSafeTransport(xmlrpc.client.SafeTransport):
+    """Variante https (SafeTransport) avec timeout."""
+
+    def __init__(self, timeout: float = XMLRPC_TIMEOUT_SECONDS, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._timeout = timeout
+
+    def make_connection(self, host):
+        conn = super().make_connection(host)
+        conn.timeout = self._timeout
+        return conn
+
+
+def _make_transport():
+    if ODOO_URL.lower().startswith("https"):
+        return TimeoutSafeTransport()
+    return TimeoutTransport()
+
+
 def _connect():
-    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common", allow_none=True)
+    common = xmlrpc.client.ServerProxy(
+        f"{ODOO_URL}/xmlrpc/2/common", allow_none=True, transport=_make_transport()
+    )
     uid = common.authenticate(ODOO_DB, ODOO_USERNAME, ODOO_API_KEY, {})
     if not uid:
         raise RuntimeError("Odoo authentication failed")
-    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object", allow_none=True)
+    models = xmlrpc.client.ServerProxy(
+        f"{ODOO_URL}/xmlrpc/2/object", allow_none=True, transport=_make_transport()
+    )
     return uid, models
 
 
@@ -63,7 +103,8 @@ app = FastAPI(title="AI Box — Odoo Tool", version="0.1.0")
 def auth(authorization: Annotated[str | None, Header()] = None) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing Bearer token")
-    if authorization.removeprefix("Bearer ").strip() != TOOL_API_KEY:
+    # Comparaison constant-time (évite les timing attacks sur le token)
+    if not hmac.compare_digest(authorization.removeprefix("Bearer ").strip().encode(), TOOL_API_KEY.encode()):
         raise HTTPException(401, "Invalid token")
 
 
@@ -77,8 +118,11 @@ def healthz() -> dict:
 
 
 @app.get("/partners")
-def search_partners(q: str = Query(...), _: None = None) -> list[dict]:
-    auth(_)
+def search_partners(
+    q: str = Query(...),
+    authorization: Annotated[str | None, Header()] = None,
+) -> list[dict]:
+    auth(authorization)
     domain = ["|", ("name", "ilike", q), ("email", "ilike", q)]
     ids = _execute("res.partner", "search", [domain], {"limit": 10})
     if not ids:

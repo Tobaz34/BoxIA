@@ -96,6 +96,8 @@ export function OAuthConnectButton({
   const [secondsLeft, setSecondsLeft] = useState(0);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Watcher de fermeture de la popup OIDC — nettoyé au démontage
+  const popupWatcherRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -122,6 +124,7 @@ export function OAuthConnectButton({
     return () => {
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
       if (countdownRef.current) clearInterval(countdownRef.current);
+      if (popupWatcherRef.current) clearInterval(popupWatcherRef.current);
     };
   }, [refresh]);
 
@@ -184,9 +187,13 @@ export function OAuthConnectButton({
       return;
     }
     // Si l'admin ferme la popup sans completer, on arrête le spinner
-    const watcher = setInterval(() => {
+    if (popupWatcherRef.current) clearInterval(popupWatcherRef.current);
+    popupWatcherRef.current = setInterval(() => {
       if (popup.closed) {
-        clearInterval(watcher);
+        if (popupWatcherRef.current) {
+          clearInterval(popupWatcherRef.current);
+          popupWatcherRef.current = null;
+        }
         setOidcInProgress(false);
         // Refresh au cas où le succès ait eu lieu juste avant la fermeture
         refresh();
@@ -284,7 +291,7 @@ export function OAuthConnectButton({
           <a
             href={providerInfo.console_url}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="text-blue-400 hover:underline mt-1 inline-flex items-center gap-1"
           >
             Console <ExternalLink size={10} />
@@ -326,7 +333,7 @@ export function OAuthConnectButton({
           <a
             href={deviceFlow.verification_url_complete || deviceFlow.verification_url}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="text-blue-400 hover:underline inline-flex items-center gap-1"
           >
             {deviceFlow.verification_url} <ExternalLink size={10} />

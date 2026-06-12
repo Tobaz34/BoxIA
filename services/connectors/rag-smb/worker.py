@@ -270,6 +270,42 @@ def index_file(qd: QdrantClient, tree: TreeConnect, f: SmbFile) -> int:
     return len(points)
 
 
+def reconcile_deletions(qd: QdrantClient, current_paths: set[str]) -> int:
+    """Supprime de Qdrant les chunks des fichiers qui n'existent plus sur le share.
+
+    À n'appeler QUE si le walk SMB s'est terminé sans erreur — sinon on
+    risquerait de purger des fichiers juste temporairement inaccessibles.
+    """
+    if not qd.collection_exists(COLLECTION):
+        return 0
+    indexed_paths: set[str] = set()
+    offset = None
+    while True:
+        records, offset = qd.scroll(
+            collection_name=COLLECTION,
+            limit=256,
+            offset=offset,
+            with_payload=["path"],
+            with_vectors=False,
+        )
+        for r in records:
+            p = (r.payload or {}).get("path")
+            if p:
+                indexed_paths.add(p)
+        if offset is None:
+            break
+    gone = indexed_paths - current_paths
+    for p in gone:
+        qd.delete(
+            collection_name=COLLECTION,
+            points_selector=qm.FilterSelector(filter=qm.Filter(must=[
+                qm.FieldCondition(key="path", match=qm.MatchValue(value=p))
+            ])),
+        )
+        log.info("désindexé (supprimé du share): %s", p)
+    return len(gone)
+
+
 # ---------------------------------------------------------------- Main loop
 def sync_once() -> dict:
     log.info("=== Sync start (host=%s share=%s) ===", SMB_HOST, SMB_SHARE)
@@ -288,7 +324,17 @@ def sync_once() -> dict:
                 errors += 1
                 log.error("Erreur sur %s : %s", f.path, e)
                 log.debug(traceback.format_exc())
-        return {"files": len(files), "chunks_added": added, "errors": errors}
+        # Le walk s'est terminé sans exception (sinon on aurait levé avant) →
+        # le listing est complet, on peut réconcilier les fichiers supprimés.
+        # (Les erreurs d'indexation per-fichier ne retirent pas le path du
+        # listing, donc pas de risque de suppression abusive.)
+        deleted = 0
+        try:
+            deleted = reconcile_deletions(qd, {f.path for f in files})
+        except Exception as e:
+            log.error("Réconciliation Qdrant échouée : %s", e)
+            log.debug(traceback.format_exc())
+        return {"files": len(files), "chunks_added": added, "errors": errors, "deleted_paths": deleted}
     finally:
         try: tree.disconnect()
         except: pass

@@ -108,9 +108,10 @@ def _graph_get(path: str, params: dict | None = None) -> dict:
     s = get_settings()
     url = f"{_base_url()}{path}"
     p = dict(params or {})
-    p.setdefault("access_token", s.page_access_token)
+    # Token en header (pas en query string : évite la fuite dans les logs/proxies)
+    headers = {"Authorization": f"Bearer {s.page_access_token}"}
     with httpx.Client(timeout=s.http_timeout_seconds) as c:
-        r = c.get(url, params=p)
+        r = c.get(url, params=p, headers=headers)
         if r.status_code >= 400:
             raise MetaError(f"Meta {r.status_code}: {r.text[:300]}")
         return r.json()
@@ -126,9 +127,10 @@ def _graph_post(path: str, data: dict | None = None) -> dict:
     s = get_settings()
     url = f"{_base_url()}{path}"
     payload = dict(data or {})
-    payload.setdefault("access_token", s.page_access_token)
+    # Token en header (pas dans le body/query : évite la fuite dans les logs)
+    headers = {"Authorization": f"Bearer {s.page_access_token}"}
     with httpx.Client(timeout=s.http_timeout_seconds) as c:
-        r = c.post(url, data=payload)
+        r = c.post(url, data=payload, headers=headers)
         if r.status_code >= 400:
             raise MetaError(f"Meta {r.status_code}: {r.text[:300]}")
         return r.json()

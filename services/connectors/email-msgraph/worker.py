@@ -74,14 +74,32 @@ def token() -> str:
     return res["access_token"]
 
 
-def graph(method: str, path: str, **kwargs) -> dict:
+MAX_429_RETRIES = 3
+
+
+def graph(method: str, path: str, _attempt: int = 0, **kwargs) -> dict:
     headers = kwargs.pop("headers", {})
     headers["Authorization"] = f"Bearer {token()}"
     with httpx.Client(timeout=60.0) as c:
         r = c.request(method, f"{GRAPH_BASE}{path}", headers=headers, **kwargs)
         if r.status_code == 429:
+            if _attempt >= MAX_429_RETRIES:
+                raise RuntimeError(f"Graph 429 persistant après {MAX_429_RETRIES} tentatives sur {path}")
             time.sleep(int(r.headers.get("Retry-After", "10")))
-            return graph(method, path, headers=headers, **kwargs)
+            return graph(method, path, _attempt=_attempt + 1, **kwargs)
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+
+def graph_url(url: str, _attempt: int = 0) -> dict:
+    """GET sur une URL absolue (suivi de `@odata.nextLink`)."""
+    with httpx.Client(timeout=60.0) as c:
+        r = c.get(url, headers={"Authorization": f"Bearer {token()}"})
+        if r.status_code == 429:
+            if _attempt >= MAX_429_RETRIES:
+                raise RuntimeError(f"Graph 429 persistant après {MAX_429_RETRIES} tentatives (nextLink)")
+            time.sleep(int(r.headers.get("Retry-After", "10")))
+            return graph_url(url, _attempt=_attempt + 1)
         r.raise_for_status()
         return r.json() if r.content else {}
 
@@ -133,19 +151,36 @@ REPLY_SYSTEM = """Tu rédiges un brouillon de réponse pour un email professionn
 Réponds en français, format texte simple."""
 
 
+MAX_PAGES = 20
+
+
 def fetch_recent_emails(since: datetime) -> list[dict]:
-    """Récupère les mails reçus depuis `since` (sans pagination basique pour MVP)."""
+    """Récupère les mails reçus depuis `since`, en suivant `@odata.nextLink`
+    jusqu'à épuisement (borne de sécurité : MAX_PAGES pages).
+
+    Tri ascendant : si la borne de pages est atteinte, le curseur `last_run`
+    n'avance que jusqu'au dernier mail récupéré → les suivants seront repris
+    au prochain cycle (rien n'est perdu).
+    """
     iso = since.strftime("%Y-%m-%dT%H:%M:%SZ")
     data = graph("GET",
         f"/users/{MS_USER_ID}/mailFolders/inbox/messages",
         params={
             "$filter": f"receivedDateTime ge {iso}",
-            "$orderby": "receivedDateTime desc",
+            "$orderby": "receivedDateTime asc",
             "$top": "50",
             "$select": "id,subject,from,receivedDateTime,bodyPreview,body,categories,isRead",
         },
     )
-    return data.get("value", [])
+    out: list[dict] = list(data.get("value", []))
+    pages = 1
+    while "@odata.nextLink" in data and pages < MAX_PAGES:
+        data = graph_url(data["@odata.nextLink"])
+        out.extend(data.get("value", []))
+        pages += 1
+    if "@odata.nextLink" in data:
+        log.warning("Pagination interrompue après %d pages — la suite sera reprise au prochain cycle", pages)
+    return out
 
 
 def categorize_email(msg: dict) -> dict:

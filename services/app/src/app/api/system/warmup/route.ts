@@ -2,26 +2,35 @@
  * POST /api/system/warmup — pre-charge les modèles Ollama en mémoire VRAM.
  *
  * Au démarrage de l'app (ou à la 1re visite d'un user), appelle Ollama
- * pour qu'il charge les modèles principaux (qwen2.5:7b, qwen2.5vl:7b,
- * bge-m3) en GPU. Évite la latence de cold-start (~5-10 s) à la 1re
+ * pour qu'il charge le modèle principal (LLM_MAIN, qwen3:14b par défaut)
+ * et bge-m3 en GPU. Évite la latence de cold-start (~5-10 s) à la 1re
  * question du user.
+ *
+ * Le modèle vision (qwen2.5vl:7b) n'est PAS pre-warmé : sur un GPU 12 Go
+ * il ne tient pas en VRAM en même temps que qwen3:14b — le warmer
+ * évincerait le modèle principal, exactement l'inverse du but recherché.
  *
  * Ollama supporte ça via :
  *   POST /api/generate
- *   { "model": "qwen2.5:7b", "prompt": "", "keep_alive": "30m" }
+ *   { "model": "qwen3:14b", "prompt": "", "keep_alive": "30m" }
  * → load only, no generation.
  *
  * Idempotent. Appelé en background (fire-and-forget) par le client.
  */
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 
-/** Modèles à pre-warm. La liste pourrait être configurable via env mais
- *  les 3 ci-dessous couvrent 99 % des cas (chat texte, vision, embeddings). */
-const MODELS_TO_WARM = ["qwen2.5:7b", "qwen2.5vl:7b", "bge-m3"];
+/** Modèles à pre-warm — alignés sur la stack courante via env, avec les
+ *  défauts du provisioning (install.sh : LLM_MAIN=qwen3:14b). */
+const MODELS_TO_WARM = [
+  process.env.LLM_MAIN || "qwen3:14b",
+  process.env.EMBEDDING_MODEL || "bge-m3",
+];
 
 async function warmOne(model: string): Promise<{ model: string; ok: boolean; ms: number; error?: string }> {
   const t0 = Date.now();
@@ -49,8 +58,12 @@ async function warmOne(model: string): Promise<{ model: string; ok: boolean; ms:
 }
 
 export async function POST() {
-  // Aucune auth requise : l'effet est purement perf, et l'endpoint ne
-  // donne accès à aucune donnée sensible.
+  // Session requise : sans auth, n'importe qui sur le LAN pouvait
+  // déclencher des loads répétés de modèles (éviction VRAM, charge GPU).
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   const results = await Promise.all(MODELS_TO_WARM.map(warmOne));
   return NextResponse.json({
     base: OLLAMA_BASE_URL,

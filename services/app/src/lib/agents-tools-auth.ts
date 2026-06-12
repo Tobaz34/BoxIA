@@ -6,11 +6,21 @@
  * AGENTS_API_KEY (la même que pour le sidecar — déjà auto-générée par
  * install.sh / wizard /api/configure et propagée à aibox-app via .env).
  */
+import { createHash, timingSafeEqual } from "node:crypto";
+
+/** Comparaison constant-time : on compare les hash sha256 (même longueur
+ *  garantie) pour ne pas fuiter la longueur/préfixe du secret via timing. */
+function safeEqual(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a).digest();
+  const hb = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
+
 export function checkAgentsToolsAuth(req: Request): boolean {
   const expected = process.env.AGENTS_API_KEY;
   if (!expected) return false;
   const auth = req.headers.get("authorization") || "";
-  return auth === `Bearer ${expected}`;
+  return safeEqual(auth, `Bearer ${expected}`);
 }
 
 export function unauthorized(): Response {

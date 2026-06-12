@@ -1,7 +1,12 @@
 /**
  * DELETE /api/documents/[id] — retire un document de la KB.
+ *
+ * Admin only : la KB est partagée par toute l'entreprise — sans ce check,
+ * n'importe quel employé pouvait purger tous les documents en boucle.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { requireKbContext, kbFetch } from "@/lib/dify-kb";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 
@@ -14,6 +19,14 @@ export async function DELETE(
   const { id } = await params;
   const ctx = await requireKbContext();
   if (ctx instanceof NextResponse) return ctx;
+
+  const session = await getServerSession(authOptions);
+  if (!(session?.user as { isAdmin?: boolean } | undefined)?.isAdmin) {
+    return NextResponse.json(
+      { error: "forbidden",
+        message: "Seul un administrateur peut supprimer un document partagé." },
+      { status: 403 });
+  }
 
   const r = await kbFetch(`/v1/datasets/${ctx.datasetId}/documents/${id}`, {
     method: "DELETE",

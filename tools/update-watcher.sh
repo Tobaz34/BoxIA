@@ -52,8 +52,12 @@ docker_read_file() {
 
 docker_write_file() {
   local path="$1" content="$2"
+  # Best-effort (`|| true`) : pendant un déploiement, le container aibox-app
+  # est recréé et `docker exec` peut échouer transitoirement — sous `set -e`
+  # ça tuait le watcher en plein deploy. Perdre une écriture de statut est
+  # acceptable, perdre le watcher non.
   printf '%s' "$content" \
-    | docker exec -i -u "$APP_USER_UID" "$APP_CONTAINER" tee "$path" >/dev/null
+    | docker exec -i -u "$APP_USER_UID" "$APP_CONTAINER" tee "$path" >/dev/null || true
 }
 
 docker_remove_file() {
@@ -142,8 +146,11 @@ run_deploy() {
     fi
     sleep 2
   done
-  wait "$deploy_pid" || true
-  local rc=$?
+  # ATTENTION : `wait "$pid" || true; rc=$?` donnerait toujours rc=0 (code de
+  # `true`). Le if capture le vrai code retour sans déclencher `set -e` —
+  # la branche write_status "failed" redevient atteignable.
+  local rc=0
+  if wait "$deploy_pid"; then rc=0; else rc=$?; fi
 
   local finished_at
   finished_at=$(date -Iseconds)

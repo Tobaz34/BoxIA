@@ -1,0 +1,15 @@
+# Modelfile dérivé pour Hermes Agent
+#
+# Pourquoi : Hermes refuse les modèles dont le context_length < 64 000 tokens.
+# qwen3:14b natif = 40 960 → on force num_ctx 65 536 via Modelfile (Ollama
+# applique RoPE extrapolation au-delà du natif ; qualité un peu dégradée
+# au-delà de 40K tokens cumulés, OK en pratique pour usage agent).
+#
+# Création (idempotent — le script deploy-hermes-to-xefia.sh le rejoue si absent) :
+#   echo "..." | docker exec -i ollama sh -c 'cat > /tmp/Modelfile.qwen3-64k'
+#   docker exec ollama ollama create qwen3:14b-64k -f /tmp/Modelfile.qwen3-64k
+#
+# Alternative future : `ollama pull qwen2.5:14b` (128K natif, sans rope scaling).
+
+FROM qwen3:14b
+PARAMETER num_ctx 65536

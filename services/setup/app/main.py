@@ -478,6 +478,36 @@ async def configure(payload: WizardSubmit):
     #   0 = accepte les certs auto-signés (mode LAN)
     #   1 = rejette les certs auto-signés (mode prod, default safe)
     is_lan_mdns = payload.domain.endswith(".local")
+
+    # ---- IP LAN host pour NEXTAUTH_URL + AUTHENTIK_APP_ISSUER ----
+    # En mode LAN, le browser de l'employé tape http://192.168.x.y:3100 (IP du
+    # serveur dans le LAN). Si NEXTAUTH_URL est laissé en localhost dans le
+    # compose, le callback OAuth foire (le browser tente sa propre localhost).
+    # install.sh BOOTSTRAP écrit AIBOX_HOST_IP dans .env via `hostname -I`.
+    # On le préserve ici, et si absent (cas edge), on fallback sur 1) DOMAIN
+    # tel quel (mode prod) ou 2) localhost (mode dev).
+    aibox_host_ip = _keep("AIBOX_HOST_IP", lambda: "")
+    if not aibox_host_ip and is_lan_mdns:
+        # Tente de détecter via socket (peut donner l'IP du bridge Docker
+        # plutôt que LAN — best-effort, en pratique install.sh a déjà set).
+        try:
+            import socket as _socket
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM) as _s:
+                _s.connect(("1.1.1.1", 1))
+                aibox_host_ip = _s.getsockname()[0]
+        except Exception:
+            aibox_host_ip = "localhost"
+    if is_lan_mdns:
+        # LAN : pointe sur l'IP du serveur. Si vide → fallback domaine .local
+        # (qui doit être résoluble via mDNS depuis les browsers — pas tjs OK).
+        nextauth_host = aibox_host_ip or payload.domain
+        nextauth_url = f"http://{nextauth_host}:3100"
+        authentik_issuer = f"http://{nextauth_host}:9000/application/o/aibox-app/"
+    else:
+        # Production : domaine public HTTPS
+        nextauth_url = f"https://{payload.domain}"
+        authentik_issuer = f"https://auth.{payload.domain}/application/o/aibox-app/"
+
     if is_lan_mdns:
         domain_prefix = payload.domain.removesuffix(".local") or "aibox"
         acme_ca = "internal"
@@ -502,6 +532,15 @@ async def configure(payload: WizardSubmit):
         f"ADMIN_USERNAME={payload.admin_username}",
         f"ADMIN_EMAIL={payload.admin_email}",
         f"ADMIN_PASSWORD={shell_escape(payload.admin_password)}",
+        # IP LAN du host — utilisée pour NEXTAUTH_URL et AUTHENTIK_APP_ISSUER
+        # ci-dessous. Préservée du .env (où install.sh BOOTSTRAP l'a écrite
+        # via `hostname -I`), ou détectée best-effort si manquante.
+        f"AIBOX_HOST_IP={aibox_host_ip}",
+        # URL callback OAuth NextAuth — sans ça le compose default localhost
+        # casse le login depuis browser LAN (callback inaccessible).
+        f"NEXTAUTH_URL={nextauth_url}",
+        # Issuer Authentik OIDC — idem, doit être joignable depuis le browser.
+        f"AUTHENTIK_APP_ISSUER={authentik_issuer}",
         f"HW_PROFILE={payload.hw_profile}",
         # Modèle principal : qwen3:14b (9 GB VRAM, drop-in qwen2.5:14b).
         # Avantages 2026-05 (audit BentoML) : function calling natif,
@@ -848,7 +887,18 @@ async def provision_sso(request: Request):
             k, _, v = line.partition("=")
             env[k] = v.strip("'\"")
 
-    host = (request.headers.get("host") or "localhost").split(":")[0]
+    # Détermine l'IP LAN du serveur — celle qui sera utilisée dans les
+    # redirect_uris OIDC et NEXTAUTH_URL. Ordre de priorité :
+    #   1. AIBOX_HOST_IP du .env (écrit par install.sh via `hostname -I`)
+    #   2. Header HTTP Host de la requête (peut être localhost si curl interne)
+    #   3. Fallback localhost (last resort)
+    # Sans ce fix, le wizard appelé via curl from container générait des
+    # redirect_uris pointant sur localhost — login OAuth foirait depuis tout
+    # browser sur le LAN. Bug observé 2026-05-13.
+    host = (
+        env.get("AIBOX_HOST_IP", "").strip()
+        or (request.headers.get("host") or "localhost").split(":")[0]
+    )
     report = sso_provisioning.provision_all(env, host)
 
     # Recrée les containers qui dépendent du .env mis à jour par provisioning.

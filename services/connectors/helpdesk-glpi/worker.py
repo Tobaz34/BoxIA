@@ -14,6 +14,7 @@ Auth GLPI :
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from typing import Annotated
@@ -70,7 +71,9 @@ def call(method: str, path: str, **kwargs) -> dict:
 
 
 def auth(authorization: str | None) -> None:
-    if not authorization or authorization.removeprefix("Bearer ").strip() != TOOL_API_KEY:
+    # Comparaison constant-time (évite les timing attacks sur le token)
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(token.encode(), TOOL_API_KEY.encode()):
         raise HTTPException(401, "Auth required")
 
 

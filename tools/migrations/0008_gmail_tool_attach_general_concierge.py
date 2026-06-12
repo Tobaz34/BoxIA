@@ -114,17 +114,24 @@ def _find_app(s, name):
 
 def _provider_id(s):
     """Cherche l'id du provider Gmail dans /tool-providers (utilisé pour
-    construire les entrées agent_mode.tools)."""
+    construire les entrées agent_mode.tools).
+
+    Renvoie None si le provider n'existe pas. NE JAMAIS retomber sur le
+    nom : attacher un tool avec provider_id=<nom> écrit une ref orpheline
+    dans agent_mode → chaque chat de l'app casse en 500
+    (InFailedSqlTransaction au chargement des tools). Incident 2026-06-12
+    sur « Assistant général », nettoyé par la migration 0013.
+    """
     try:
         r = s.get("/workspaces/current/tool-providers")
         items = r if isinstance(r, list) else (r.get("data") or [])
         for p in items:
             if isinstance(p, dict) and (p.get("name") == PROVIDER_NAME
                                         or p.get("provider") == PROVIDER_NAME):
-                return p.get("id") or PROVIDER_NAME
+                return p.get("id")
     except Exception:
         pass
-    return PROVIDER_NAME
+    return None
 
 
 def _is_attached(model_config: dict) -> bool:
@@ -194,6 +201,10 @@ def is_applied() -> bool:
 def run() -> None:
     s = _connect()
     prov_id = _provider_id(s)
+    if not prov_id:
+        raise RuntimeError(
+            f"Provider '{PROVIDER_NAME}' absent de Dify — attach annulé "
+            "(la migration 0007 a dû échouer ; la rejouer d'abord).")
     results = []
     for name in TARGET_AGENT_NAMES:
         try:

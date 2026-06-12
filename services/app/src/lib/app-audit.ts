@@ -59,6 +59,11 @@ export interface AuditEntry {
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
+// Compteur d'écritures pour échantillonner la rotation (1 check sur 50)
+// — évite de relire tout le fichier à chaque append.
+let writesSinceRotateCheck = 0;
+const ROTATE_CHECK_EVERY = 50;
+
 async function ensureDir() {
   try {
     await fs.mkdir(STATE_DIR, { recursive: true });
@@ -73,6 +78,13 @@ export async function logAudit(entry: AuditEntry): Promise<void> {
       await ensureDir();
       const line = JSON.stringify(entry) + "\n";
       await fs.appendFile(AUDIT_FILE, line, "utf8");
+      // Rotation échantillonnée : on ne vérifie la taille qu'une écriture
+      // sur ROTATE_CHECK_EVERY pour ne pas relire le fichier à chaque fois.
+      writesSinceRotateCheck++;
+      if (writesSinceRotateCheck >= ROTATE_CHECK_EVERY) {
+        writesSinceRotateCheck = 0;
+        await maybeRotate();
+      }
     } catch (e) {
       console.warn("[app-audit] write error:", e);
     }
@@ -116,8 +128,8 @@ export async function readAudit(opts: ReadOpts = {}): Promise<AuditEntry[]> {
   }
 }
 
-/** Tronque le fichier si plus de MAX_ENTRIES (fire-and-forget, à appeler
- *  périodiquement — pour cette V1 on le fait à chaque écriture rare). */
+/** Tronque le fichier si plus de MAX_ENTRIES. Appelé automatiquement par
+ *  logAudit() une écriture sur ROTATE_CHECK_EVERY (échantillonnage). */
 export async function maybeRotate(): Promise<void> {
   try {
     const txt = await fs.readFile(AUDIT_FILE, "utf8");

@@ -162,27 +162,34 @@ def get_access_token() -> str:
     return res["access_token"]
 
 
-def graph_get(path: str, params: dict | None = None) -> dict:
+MAX_429_RETRIES = 3
+
+
+def graph_get(path: str, params: dict | None = None, _attempt: int = 0) -> dict:
     token = get_access_token()
     with httpx.Client(timeout=60.0) as c:
         r = c.get(f"{GRAPH_BASE}{path}", headers={"Authorization": f"Bearer {token}"}, params=params)
         if r.status_code == 429:
+            if _attempt >= MAX_429_RETRIES:
+                raise RuntimeError(f"Graph 429 persistant après {MAX_429_RETRIES} tentatives sur {path}")
             wait = int(r.headers.get("Retry-After", "10"))
             log.warning("Rate-limited, sleep %ds", wait)
             time.sleep(wait)
-            return graph_get(path, params)
+            return graph_get(path, params, _attempt=_attempt + 1)
         r.raise_for_status()
         return r.json()
 
 
-def graph_get_url(url: str) -> dict:
+def graph_get_url(url: str, _attempt: int = 0) -> dict:
     """Pour suivre `@odata.nextLink` qui contient l'URL absolue."""
     token = get_access_token()
     with httpx.Client(timeout=60.0) as c:
         r = c.get(url, headers={"Authorization": f"Bearer {token}"})
         if r.status_code == 429:
+            if _attempt >= MAX_429_RETRIES:
+                raise RuntimeError(f"Graph 429 persistant après {MAX_429_RETRIES} tentatives (nextLink)")
             time.sleep(int(r.headers.get("Retry-After", "10")))
-            return graph_get_url(url)
+            return graph_get_url(url, _attempt=_attempt + 1)
         r.raise_for_status()
         return r.json()
 

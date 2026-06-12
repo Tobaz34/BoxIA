@@ -147,6 +147,13 @@ services:
       AUTHENTIK_API_URL: http://localhost:9000
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
 
+      # ---- Modèles Ollama (warmup VRAM + affichages) ----
+      # Alignés sur le .env généré par install.sh. Sans ces vars, l'app
+      # retombe sur les défauts hardcodés (qwen3:14b / bge-m3) — cf
+      # /api/system/warmup.
+      LLM_MAIN:                        ${LLM_MAIN:-qwen3:14b}
+      EMBEDDING_MODEL:                 ${EMBEDDING_MODEL:-bge-m3}
+
       # Qdrant — utilisé par /api/connectors/sync-status pour compter
       # les points indexés de la collection rag_*_<TENANT>. En host mode
       # localhost:6333 fonctionne. La clé est requise (mode auth) ; sans

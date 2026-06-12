@@ -19,7 +19,9 @@ services:
       - qdrant_data:/qdrant/storage
       - qdrant_snapshots:/qdrant/snapshots
     environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      # :? → fail-fast au `docker compose up` si la var manque dans .env,
+      # plutôt que de démarrer Qdrant SANS API key (exposé LAN ports 6333/6334).
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY manquante dans .env}
       QDRANT__LOG_LEVEL: INFO
     # Qdrant + RocksDB ouvre énormément de fichiers (un par segment) quand
     # une collection grossit. Le ulimit Docker default (~1024) cause des

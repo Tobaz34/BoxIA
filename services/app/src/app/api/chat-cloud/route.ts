@@ -44,6 +44,10 @@ import { scrubPII, summarizeScrub } from "@/lib/pii-scrub";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 import { wrapStreamWithFileDetector } from "@/lib/chat-stream-files";
 import { stripThinkFromSSE } from "@/lib/strip-think";
+import { AGENTS } from "@/lib/agents";
+import { findDifyAppIdByName, getDifyApp } from "@/lib/dify-console";
+import { getCustomAgent } from "@/lib/custom-agents";
+import { getInstalledAgent } from "@/lib/installed-agents";
 
 export const dynamic = "force-dynamic";
 
@@ -97,9 +101,14 @@ export async function POST(req: NextRequest) {
       { status: 429 });
   }
 
-  // 3. PII scrub (default ON, peut être désactivé par body OU par paramètre global)
-  const piiEnabled =
-    body.pii_scrub_enabled !== false && state.pii_scrub_enabled !== false;
+  // 3. PII scrub — ON par défaut. Quand le scrub est activé globalement
+  // par l'admin (/settings), le flag du body NE PEUT PAS le désactiver :
+  // sinon n'importe quel employé pourrait envoyer emails/IBAN/NIR en clair
+  // au cloud en passant pii_scrub_enabled:false. Le body ne décide que si
+  // l'admin a explicitement désactivé le scrub global.
+  const piiEnabled = state.pii_scrub_enabled !== false
+    ? true
+    : body.pii_scrub_enabled !== false;
   let queryToSend = query;
   let scrubSummary = "";
   if (piiEnabled) {
@@ -113,38 +122,19 @@ export async function POST(req: NextRequest) {
   // [/FILE]` (qui est dans le pre_prompt côté Dify). Le cloud répond
   // alors avec du code Python ou du markdown qui ne sera jamais converti
   // en vrai fichier par wrapStreamWithFileDetector côté serveur. Bug
-  // structurel d'asymétrie cloud vs local. Fix : on récupère le
-  // pre_prompt via /api/agents/<slug> (loopback interne avec cookie de
-  // la session courante) et on le prépose au query.
+  // structurel d'asymétrie cloud vs local. Lecture directe côté serveur
+  // (l'ancien fetch loopback vers /api/agents/<slug> renvoyait 403 pour
+  // les non-admins — la route est admin-only — donc le pre_prompt n'était
+  // jamais injecté pour les employés, précisément la population qui
+  // utilise le fallback cloud).
   if (body.agent) {
-    try {
-      const origin = req.nextUrl.origin;
-      const agentResp = await fetch(
-        `${origin}/api/agents/${encodeURIComponent(body.agent)}`,
-        {
-          headers: {
-            Cookie: req.headers.get("cookie") || "",
-            Accept: "application/json",
-          },
-          // Bypass cache, on veut la version live du pre_prompt
-          cache: "no-store",
-        },
-      );
-      if (agentResp.ok) {
-        const agentData = await agentResp.json();
-        const pp = (agentData.pre_prompt || "").trim();
-        if (pp) {
-          queryToSend =
-            "[Contexte agent — instructions système]\n"
-            + pp
-            + "\n\n[Demande utilisateur]\n"
-            + queryToSend;
-        }
-      }
-    } catch {
-      // Best-effort : si le fetch échoue, on envoie le query brut.
-      // Le cloud répondra sans le contexte agent — moins bon mais
-      // pas bloquant.
+    const pp = await getAgentPrePrompt(body.agent);
+    if (pp) {
+      queryToSend =
+        "[Contexte agent — instructions système]\n"
+        + pp
+        + "\n\n[Demande utilisateur]\n"
+        + queryToSend;
     }
   }
 
@@ -156,17 +146,26 @@ export async function POST(req: NextRequest) {
     query_chars: query.length,
   }, ipFromHeaders(req));
 
-  // 5. Appel direct provider
+  // 5. Appel direct provider — avec abort si le client ferme l'onglet
+  // (req.signal) et timeout dur à 120 s (un provider qui hang ne doit pas
+  // bloquer un worker Next.js indéfiniment ni facturer des tokens après
+  // déconnexion).
+  const providerAbort = new AbortController();
+  const onClientAbort = () => providerAbort.abort();
+  req.signal.addEventListener("abort", onClientAbort, { once: true });
+  setTimeout(() => providerAbort.abort(), 120_000);
+  const signal = providerAbort.signal;
+
   let upstreamResponse: Response;
   try {
     if (provider === "anthropic") {
-      upstreamResponse = await callAnthropic(apiKey, model, queryToSend);
+      upstreamResponse = await callAnthropic(apiKey, model, queryToSend, signal);
     } else if (provider === "openai") {
-      upstreamResponse = await callOpenAi(apiKey, model, queryToSend);
+      upstreamResponse = await callOpenAi(apiKey, model, queryToSend, signal);
     } else if (provider === "google") {
-      upstreamResponse = await callGoogle(apiKey, model, queryToSend);
+      upstreamResponse = await callGoogle(apiKey, model, queryToSend, signal);
     } else if (provider === "mistral") {
-      upstreamResponse = await callMistral(apiKey, model, queryToSend);
+      upstreamResponse = await callMistral(apiKey, model, queryToSend, signal);
     } else {
       return NextResponse.json(
         { error: "unsupported_provider" }, { status: 400 });
@@ -280,7 +279,7 @@ function parseQueryForAnthropic(query: string): AnthropicContentBlock[] {
   return blocks;
 }
 
-async function callAnthropic(apiKey: string, model: string, prompt: string): Promise<Response> {
+async function callAnthropic(apiKey: string, model: string, prompt: string, signal?: AbortSignal): Promise<Response> {
   const content = parseQueryForAnthropic(prompt);
   return fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -295,10 +294,11 @@ async function callAnthropic(apiKey: string, model: string, prompt: string): Pro
       stream: true,
       max_tokens: 4096,
     }),
+    signal,
   });
 }
 
-async function callOpenAi(apiKey: string, model: string, prompt: string): Promise<Response> {
+async function callOpenAi(apiKey: string, model: string, prompt: string, signal?: AbortSignal): Promise<Response> {
   // GPT-4o vision : si data URL dans le prompt, on le passe en
   // content array avec type:image_url. Sinon string simple.
   const dataUrlMatch = prompt.match(/!\[[^\]]*\]\((data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)\)/);
@@ -323,6 +323,7 @@ async function callOpenAi(apiKey: string, model: string, prompt: string): Promis
     body: JSON.stringify({
       model, messages, stream: true, max_tokens: 4096,
     }),
+    signal,
   });
 }
 
@@ -334,7 +335,7 @@ async function callOpenAi(apiKey: string, model: string, prompt: string): Promis
  * Format vision : si data URL dans prompt → parts[].inline_data{mime_type, data}
  * Format text : parts[].text
  */
-async function callGoogle(apiKey: string, model: string, prompt: string): Promise<Response> {
+async function callGoogle(apiKey: string, model: string, prompt: string, signal?: AbortSignal): Promise<Response> {
   const dataUrlMatch = prompt.match(/!\[[^\]]*\]\(data:(image\/[^;]+);base64,([A-Za-z0-9+/=]+)\)/);
   const parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }> = [];
   if (dataUrlMatch) {
@@ -356,10 +357,11 @@ async function callGoogle(apiKey: string, model: string, prompt: string): Promis
       contents: [{ role: "user", parts }],
       generationConfig: { maxOutputTokens: 4096 },
     }),
+    signal,
   });
 }
 
-async function callMistral(apiKey: string, model: string, prompt: string): Promise<Response> {
+async function callMistral(apiKey: string, model: string, prompt: string, signal?: AbortSignal): Promise<Response> {
   return fetch("https://api.mistral.ai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -372,6 +374,7 @@ async function callMistral(apiKey: string, model: string, prompt: string): Promi
       stream: true,
       max_tokens: 4096,
     }),
+    signal,
   });
 }
 
@@ -398,6 +401,7 @@ function convertProviderStreamToDifySSE(
   let totalAnswer = "";
   let streamFailed = false;
   let streamError = "";
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
   return new ReadableStream({
     async start(controller) {
@@ -408,7 +412,7 @@ function convertProviderStreamToDifySSE(
         conversation_id: conversationId,
       })}\n\n`));
 
-      const reader = upstream.getReader();
+      reader = upstream.getReader();
       try {
         while (true) {
           const { value, done } = await reader.read();
@@ -484,7 +488,40 @@ function convertProviderStreamToDifySSE(
         }
       }
     },
+    // Si le consommateur aval (client HTTP) annule, on coupe la lecture du
+    // stream provider au lieu de le consommer jusqu'au bout (tokens
+    // facturés pour rien).
+    cancel(reason) {
+      try { reader?.cancel(reason); } catch { /* déjà fermé */ }
+    },
   });
+}
+
+/**
+ * Lit le pre_prompt d'un agent (builtin / custom / installé marketplace)
+ * directement via les libs serveur — même résolution que
+ * /api/agents/[slug] mais sans passer par la route HTTP (admin-only).
+ * Best-effort : renvoie "" si l'agent ou Dify est indisponible.
+ */
+async function getAgentPrePrompt(slug: string): Promise<string> {
+  try {
+    let appId: string | null = null;
+    const builtin = AGENTS[slug];
+    if (builtin) appId = await findDifyAppIdByName(builtin.name);
+    if (!appId) {
+      const custom = await getCustomAgent(slug);
+      if (custom) appId = custom.app_id;
+    }
+    if (!appId) {
+      const installed = await getInstalledAgent(slug);
+      if (installed) appId = installed.app_id;
+    }
+    if (!appId) return "";
+    const detail = await getDifyApp(appId);
+    return (detail?.model_config?.pre_prompt || "").trim();
+  } catch {
+    return "";
+  }
 }
 
 // Pricing : centralisé dans @/lib/cloud-providers (estimateCallCostEur)
