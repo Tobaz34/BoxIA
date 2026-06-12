@@ -22,6 +22,10 @@
 # =============================================================================
 set -euo pipefail
 
+# Toujours s'exécuter depuis le dossier du script : les chemins relatifs
+# (./backup.sh, tools/migrations/) cassent si on lance depuis ailleurs.
+cd "$(dirname "$0")"
+
 # Si root (lancé depuis container), pas besoin de sudo
 SUDO=""
 [[ "$EUID" -ne 0 ]] && SUDO="sudo"
@@ -200,6 +204,16 @@ fi
 if [[ -f /var/lib/aibox/.configured ]]; then
     $SUDO rm -f /var/lib/aibox/.configured
     echo "  🗑  /var/lib/aibox/.configured"
+fi
+
+# Migrations versionnées : on purge le state pour que TOUTES les migrations
+# soient rejouées au prochain déploiement. On ne peut PAS les rejouer ici
+# (run-pending.py --reset-state a besoin des DBs up, or ce script ne
+# redémarre que le wizard — la stack repart via install.sh post-wizard, qui
+# appelle run-pending.py et rejouera tout grâce au state vidé).
+if [[ -f tools/migrations/_state.json ]]; then
+    $SUDO rm -f tools/migrations/_state.json
+    echo "  🗑  tools/migrations/_state.json (migrations rejouées from scratch au prochain deploy)"
 fi
 
 # ----- Recréer le réseau et le .env minimal pour le wizard --------------------

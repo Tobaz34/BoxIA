@@ -100,12 +100,17 @@ def cmd_run(state: dict, dry_run: bool = False) -> int:
             if m.is_applied():
                 print(f"  → déjà appliquée (is_applied=True), marque comme appliquée")
                 state.setdefault("applied", []).append(f.name)
+                # Persiste immédiatement : un crash sur une migration suivante
+                # ne doit pas perdre ce marquage.
+                if not dry_run:
+                    save_state(state)
                 continue
             if dry_run:
                 print(f"  → dry-run, skip exécution")
                 continue
             m.run()
             state.setdefault("applied", []).append(f.name)
+            save_state(state)  # persiste après CHAQUE migration réussie
             print(f"  ✓ {f.name} OK")
             ran += 1
         except Exception as e:

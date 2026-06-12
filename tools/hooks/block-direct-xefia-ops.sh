@@ -24,7 +24,22 @@ set -e
 
 # Parse stdin JSON avec node (portable : tout dev Next.js a node).
 # Pas jq qui n'est pas installé par défaut sur Git Bash Windows.
-COMMAND=$(node -p 'try { JSON.parse(require("fs").readFileSync(0,"utf8"))?.tool_input?.command || "" } catch { "" }' 2>/dev/null)
+INPUT=$(cat || true)
+COMMAND=$(printf '%s' "$INPUT" | node -p 'try { JSON.parse(require("fs").readFileSync(0,"utf8"))?.tool_input?.command || "" } catch { "" }' 2>/dev/null || true)
+
+# FAIL-CLOSED : si on a reçu un input mais qu'on n'a pas pu en extraire la
+# commande (node absent, JSON cassé…), on BLOQUE au lieu de laisser passer —
+# sinon le hook devient un passoire silencieuse dès que node manque.
+if [ -z "$COMMAND" ] && [ -n "$INPUT" ]; then
+  {
+    echo "🛑 BLOQUÉ par hook block-direct-xefia-ops.sh"
+    echo ""
+    echo "Impossible d'extraire tool_input.command de l'input du hook"
+    echo "(node absent du PATH ou JSON non parsable). Par sécurité on bloque."
+    echo "Vérifie que node est installé et que le hook reçoit bien le JSON Claude."
+  } >&2
+  exit 2
+fi
 
 # 1. Pas de cible xefia → on s'en fout
 # (note: scp utilise le protocole ssh mais s'écrit `scp ...host:...`, pas
@@ -33,8 +48,13 @@ if ! echo "$COMMAND" | grep -qE '(ssh|scp).*(xefia|192\.168\.15\.210)'; then
   exit 0
 fi
 
-# 2. Whitelist : passe par le script officiel
-if echo "$COMMAND" | grep -qE 'tools/(deploy-to-xefia|start-connector)\.sh'; then
+# 2. Whitelist : la commande COMMENCE par le script officiel (match ancré
+# après trim — un simple `grep` en sous-chaîne laissait passer n'importe quoi
+# suivi de `# tools/deploy-to-xefia.sh` en commentaire). `^` dans [[ =~ ]]
+# matche le DÉBUT DE CHAÎNE (pas de REG_NEWLINE en bash), donc une commande
+# multi-ligne ne peut pas whitelist via sa 2e ligne.
+TRIMMED="${COMMAND#"${COMMAND%%[![:space:]]*}"}"  # ltrim espaces/retours-ligne
+if [[ "$TRIMMED" =~ ^(bash[[:space:]]+)?(\./)?tools/(deploy-to-xefia|start-connector)\.sh ]]; then
   exit 0
 fi
 

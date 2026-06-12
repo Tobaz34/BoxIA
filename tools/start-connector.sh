@@ -64,17 +64,20 @@ if ! ssh_cmd "test -f $COMPOSE"; then
   exit 1
 fi
 
+# set -o pipefail côté DISTANT sur chaque commande pipée vers tail : sans
+# lui, `docker compose ... | tail` renvoie le code de tail (0) et un build/up
+# cassé passait inaperçu (même bug que deploy-to-xefia.sh rebuild_app).
 case "$ACTION" in
   --up)
     c_blue "docker compose up -d sur $SLUG (--env-file $ENV_FILE)"
-    ssh_cmd "cd $SVC_DIR && docker compose --env-file $ENV_FILE up -d 2>&1 | tail -20" >&2
+    ssh_cmd "set -o pipefail; cd $SVC_DIR && docker compose --env-file $ENV_FILE up -d 2>&1 | tail -20" >&2
     ssh_cmd "docker ps --filter name=aibox-conn-$SLUG --format '{{.Names}}\t{{.Status}}'" >&2
     c_green "Up. Pour les logs : tools/start-connector.sh $SLUG --logs"
     ;;
   --rebuild)
     c_blue "docker compose build --no-cache (peut prendre 5-15 min) puis up"
-    ssh_cmd "cd $SVC_DIR && docker compose --env-file $ENV_FILE build --no-cache 2>&1 | tail -20" >&2
-    ssh_cmd "cd $SVC_DIR && docker compose --env-file $ENV_FILE up -d 2>&1 | tail -10" >&2
+    ssh_cmd "set -o pipefail; cd $SVC_DIR && docker compose --env-file $ENV_FILE build --no-cache 2>&1 | tail -20" >&2
+    ssh_cmd "set -o pipefail; cd $SVC_DIR && docker compose --env-file $ENV_FILE up -d 2>&1 | tail -10" >&2
     c_green "Rebuild + Up done."
     ;;
   --logs)
@@ -83,12 +86,12 @@ case "$ACTION" in
     ;;
   --stop)
     c_blue "docker compose stop"
-    ssh_cmd "cd $SVC_DIR && docker compose --env-file $ENV_FILE stop 2>&1 | tail -5" >&2
+    ssh_cmd "set -o pipefail; cd $SVC_DIR && docker compose --env-file $ENV_FILE stop 2>&1 | tail -5" >&2
     c_green "Stopped."
     ;;
   --restart)
     c_blue "docker compose restart"
-    ssh_cmd "cd $SVC_DIR && docker compose --env-file $ENV_FILE restart 2>&1 | tail -5" >&2
+    ssh_cmd "set -o pipefail; cd $SVC_DIR && docker compose --env-file $ENV_FILE restart 2>&1 | tail -5" >&2
     c_green "Restarted."
     ;;
   *)

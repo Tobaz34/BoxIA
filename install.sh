@@ -38,20 +38,33 @@ ask_yn() {
 
 gen_secret() {
   local len="${1:-48}"
-  tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c "$len"
+  # `head -c` en AMONT du tr : `tr </dev/urandom | head` meurt en SIGPIPE
+  # (exit 141) sous set -euo pipefail quand head ferme le pipe. Ici le
+  # premier head borne l'entrée ; on boucle si le filtrage tr renvoie moins
+  # de $len caractères utiles.
+  local out=""
+  while (( ${#out} < len )); do
+    out+="$(head -c 256 /dev/urandom | tr -dc 'A-Za-z0-9_-')"
+  done
+  printf '%s' "${out:0:len}"
 }
 
 # Génère un password "strong" garantissant au moins 1 majuscule, 1 minuscule,
 # 1 chiffre et 1 caractère spécial. Requis par certains services (n8n, GLPI…)
 # qui rejettent les mots de passe faibles. Préfixe "Aa1!" puis remplit avec
 # de l'aléatoire — l'ordre est mélangé pour éviter le pattern statique.
+# Charset volontairement SANS `$`, backtick, `#`, quotes : le .env est sourcé
+# non quoté (`set -a; . .env`) et ces caractères y seraient interprétés.
 gen_strong_pass() {
   local len="${1:-24}"
   if [[ $len -lt 8 ]]; then len=8; fi
   local fixed="Aa1!"  # garantit les 4 classes
   local rest_len=$((len - 4))
-  local rest
-  rest=$(tr -dc 'A-Za-z0-9!#$%*+-=?@_' </dev/urandom | head -c "$rest_len")
+  local rest=""
+  while (( ${#rest} < rest_len )); do
+    rest+="$(head -c 256 /dev/urandom | tr -dc 'A-Za-z0-9!%+=@_.-')"
+  done
+  rest="${rest:0:rest_len}"
   echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n'
 }
 
@@ -471,6 +484,9 @@ TTS_DEFAULT_VOICE=larynx:siwis-glow_tts
 SEARXNG_SECRET=${SEARXNG_SECRET}
 SEARXNG_URL=http://127.0.0.1:8888
 EOF
+# Le .env contient tous les secrets — pas de lecture pour group/other
+# (l'umask par défaut le créerait en 644).
+chmod 600 .env
 
 # Génération client_config.yaml (consommable par le futur portail)
 cat > client_config.yaml <<EOF
@@ -506,7 +522,8 @@ technologies:
   smb: ${TECH[SMB]}
 
 models:
-  llm_main: qwen2.5:7b
+  # Aligné sur LLM_MAIN/LLM_EMBED du .env généré ci-dessus.
+  llm_main: qwen3:14b
   llm_embed: bge-m3
 EOF
 
