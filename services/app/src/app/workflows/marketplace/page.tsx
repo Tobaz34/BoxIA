@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   Workflow, Search, ShieldAlert, Plus, RefreshCw, AlertCircle,
-  CheckCircle2, KeyRound, ExternalLink,
+  CheckCircle2, KeyRound, ExternalLink, PlugZap,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
@@ -29,6 +29,12 @@ interface MarketplaceCategoryDef {
   id: string;
   label: string;
   icon: string;
+}
+
+interface PrerequisitesStatus {
+  ready: boolean;
+  missing: string[];
+  missing_labels: string[];
 }
 
 interface MarketplaceWorkflow {
@@ -48,6 +54,8 @@ interface MarketplaceWorkflow {
   source_url?: string;
   total_views?: number;
   author?: string;
+  required_connectors?: string[];
+  prerequisites?: PrerequisitesStatus;
 }
 
 type SourceTab = "boxia" | "community";
@@ -165,6 +173,15 @@ export default function WorkflowsMarketplacePage() {
         body: JSON.stringify({ file: w.file }),
       });
       const j = await r.json().catch(() => ({}));
+      if (r.status === 422 && j.error === "prerequisites_missing") {
+        // Préflight refusé : le user doit configurer les connecteurs avant.
+        const labels = (j.missing_labels || []).join(", ");
+        setToast({
+          kind: "warn",
+          msg: `Connecte d'abord : ${labels}. Va dans /connectors pour les activer.`,
+        });
+        return;
+      }
       if (!r.ok) {
         setToast({
           kind: "err",
@@ -178,12 +195,14 @@ export default function WorkflowsMarketplacePage() {
           msg: t("workflows.marketplace.toastAlreadyInstalled", { name: j.name }),
         });
       } else {
-        setToast({
-          kind: "ok",
-          msg: w.credentials_required.length > 0
-            ? t("workflows.marketplace.toastInstalledNeedsCreds", { name: j.name })
-            : t("workflows.marketplace.toastInstalled", { name: j.name }),
-        });
+        // Si on a poussé des credentials automatiquement, on en informe l'admin.
+        const pushedCount = (j.credentials_pushed || []).length;
+        const baseMsg = pushedCount > 0
+          ? `${j.name} installé avec ${pushedCount} credential(s) auto-configurée(s). Active-le depuis /workflows.`
+          : (w.credentials_required.length > 0
+              ? t("workflows.marketplace.toastInstalledNeedsCreds", { name: j.name })
+              : t("workflows.marketplace.toastInstalled", { name: j.name }));
+        setToast({ kind: "ok", msg: baseMsg });
       }
       await reload();
     } catch (e) {
@@ -430,14 +449,33 @@ export default function WorkflowsMarketplacePage() {
                     </div>
                   )}
 
-                  {w.credentials_required.length > 0 && (
+                  {/* Pré-requis bloquants : connecteurs BoxIA non actifs.
+                      Quand présents, on cache le bandeau credentials_required
+                      legacy (qui devient redondant). */}
+                  {w.prerequisites && !w.prerequisites.ready ? (
+                    <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 mb-2 flex items-start gap-1.5">
+                      <PlugZap size={12} className="shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <div className="font-medium">Connecte d'abord :</div>
+                        <div className="opacity-90">
+                          {w.prerequisites.missing_labels.join(", ")}
+                        </div>
+                        <a
+                          href="/connectors"
+                          className="text-blue-400 hover:underline inline-flex items-center gap-0.5 mt-0.5"
+                        >
+                          Aller à Connecteurs <ExternalLink size={9} />
+                        </a>
+                      </div>
+                    </div>
+                  ) : w.credentials_required.length > 0 ? (
                     <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1 mb-2 flex items-start gap-1">
                       <KeyRound size={11} className="shrink-0 mt-0.5" />
                       <span>
                         {t("workflows.marketplace.credsRequired", { list: w.credentials_required.join(", ") })}
                       </span>
                     </div>
-                  )}
+                  ) : null}
 
                   <div className="flex items-center justify-between gap-2 mt-auto">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -460,6 +498,15 @@ export default function WorkflowsMarketplacePage() {
                           ? t("workflows.marketplace.active")
                           : t("workflows.marketplace.installed")}
                         <ExternalLink size={10} className="opacity-60" />
+                      </a>
+                    ) : w.prerequisites && !w.prerequisites.ready ? (
+                      <a
+                        href="/connectors"
+                        className="px-2.5 py-1 text-xs rounded-md bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-default flex items-center gap-1"
+                        title="Connecte d'abord les pré-requis pour installer ce workflow"
+                      >
+                        <PlugZap size={12} />
+                        Configurer
                       </a>
                     ) : (
                       <button

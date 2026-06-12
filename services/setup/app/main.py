@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import secrets
 import string
 import subprocess
@@ -36,6 +37,28 @@ AIBOX_ROOT = Path(os.environ.get("AIBOX_ROOT", "/srv/ai-stack"))
 STATE_FILE = Path(os.environ.get("STATE_FILE", "/state/configured"))
 QUESTIONNAIRE_FULL_PATH = AIBOX_ROOT / "config" / "questionnaire.yaml"
 QUESTIONNAIRE_ESSENTIALS_PATH = AIBOX_ROOT / "config" / "questionnaire-essentials.yaml"
+
+# ---- Cloudflare master credentials — chargés depuis volume mount ----------
+# Le compose monte /etc/aibox-master:/etc/aibox-master:ro (au lieu d'utiliser
+# env_file: qui fail si docker-compose CLIENT n'a pas la permission de lire
+# le fichier 600 root). Le container tourne en root → peut lire le fichier
+# même en mode strict 600 root:root. On populate les env vars manuellement
+# au boot pour que le reste du code (qui lit os.environ.get("CF_DEFAULT_*"))
+# fonctionne sans changement.
+_CF_MASTER_PATH = Path("/etc/aibox-master/cloudflare.env")
+if _CF_MASTER_PATH.is_file():
+    try:
+        for _line in _CF_MASTER_PATH.read_text().splitlines():
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            # setdefault → ne PAS écraser une var déjà présente dans l'env
+            # (cas dev où on veut overrider via -e CF_DEFAULT_*=... au run).
+            os.environ.setdefault(_k.strip(), _v.strip())
+        print(f"[setup-api] Loaded {_CF_MASTER_PATH} (master CF creds detected)")
+    except Exception as _e:
+        print(f"[setup-api] Failed to load {_CF_MASTER_PATH}: {_e}")
 
 # Mot de passe par défaut livré avec la box. Le wizard ne demande PAS au
 # client de saisir un mot de passe (évite les fautes de frappe lors de
@@ -66,6 +89,39 @@ class WizardSubmit(BaseModel):
     admin_password: str = ""
     hw_profile: str = "tpe"
     technologies: dict[str, Any] = {}
+
+    # ---- Cloudflare Tunnel (obligatoire à partir de 2026-05-05) ----
+    # Le sous-domaine prefix devient l'URL publique : <prefix>.ialocal.pro
+    # (zone DNS toujours ialocal.pro, gérée côté ops). Ex: "demo" → demo.ialocal.pro.
+    # Validation regex côté frontend : ^[a-z0-9-]{2,30}$
+    cloudflare_subdomain: str = ""
+    # 4 IDs Cloudflare nécessaires pour appeler l'API CF lors du provisioning.
+    # Pour les futurs clients, ces 4 valeurs seront pré-injectées via env du
+    # container wizard (CF_DEFAULT_*) → champs cachés. Pour la 1re install
+    # (xefia / démo), Andre saisit dans le wizard.
+    cf_account_id: str = ""
+    cf_tunnel_id: str = ""
+    cf_api_token: str = ""
+    cf_zone_id: str = ""
+
+    # ---- Branding (optionnel) ----
+    # Si vides → défaults appliqués (logo hexagone, bleu primary, vert accent,
+    # nom = client_name, footer vide). Aussi modifiable post-install via
+    # /settings → BrandingCard.
+    brand_logo_url: str = ""
+    brand_primary_color: str = "#3b82f6"
+    brand_accent_color: str = "#10b981"
+    brand_name_display: str = ""  # Vide = utilise client_name
+    brand_footer_text: str = ""
+
+
+class CloudflareTestPayload(BaseModel):
+    """Payload de validation des credentials CF avant submit du wizard."""
+    cf_account_id: str
+    cf_tunnel_id: str
+    cf_api_token: str
+    cf_zone_id: str
+    cloudflare_subdomain: str
 
 
 # ---- Helpers --------------------------------------------------------------
@@ -112,6 +168,132 @@ async def configured_page(request: Request):
 @app.get("/api/state")
 async def state():
     return {"configured": is_configured()}
+
+
+@app.get("/api/cloudflare/defaults")
+async def cloudflare_defaults():
+    """Retourne les credentials CF pré-injectées dans l'env du container
+    wizard, si présentes. Permet à l'UI de pré-remplir les champs et de les
+    masquer si c'est l'admin BoxIA qui les a déjà fournies à la box neuve.
+
+    Variables d'env attendues :
+      CF_DEFAULT_ACCOUNT_ID, CF_DEFAULT_TUNNEL_ID,
+      CF_DEFAULT_API_TOKEN, CF_DEFAULT_ZONE_ID, CF_DEFAULT_ROOT_DOMAIN
+
+    Si CF_DEFAULT_ROOT_DOMAIN n'est pas set, default = ialocal.pro.
+    Pour la 1re install (xefia/démo) ces vars ne sont PAS dans l'env →
+    le wizard les demandera au user (Andre saisit). Pour les futures
+    box clients, l'admin posera ces vars en pré-install et le client
+    ne verra que le champ "sous-domaine".
+    """
+    has_account = bool(os.environ.get("CF_DEFAULT_ACCOUNT_ID"))
+    has_tunnel = bool(os.environ.get("CF_DEFAULT_TUNNEL_ID"))
+    has_token = bool(os.environ.get("CF_DEFAULT_API_TOKEN"))
+    has_zone = bool(os.environ.get("CF_DEFAULT_ZONE_ID"))
+    return {
+        "root_domain": os.environ.get("CF_DEFAULT_ROOT_DOMAIN", "ialocal.pro"),
+        "has_master_creds": has_account and has_tunnel and has_token and has_zone,
+        "account_id": os.environ.get("CF_DEFAULT_ACCOUNT_ID", ""),
+        "tunnel_id": os.environ.get("CF_DEFAULT_TUNNEL_ID", ""),
+        "zone_id": os.environ.get("CF_DEFAULT_ZONE_ID", ""),
+        # On NE retourne PAS le token (sensible) — juste un flag is_set.
+        "api_token_set": has_token,
+    }
+
+
+@app.post("/api/cloudflare/test")
+async def cloudflare_test(payload: CloudflareTestPayload):
+    """Valide les credentials Cloudflare en appelant l'API CF :
+      1. GET /accounts/<id>/cfd_tunnel/<tunnel_id> → confirme le tunnel existe
+      2. GET /zones/<zone_id> → confirme l'accès à la zone
+      3. Optionnel : check que le sous-domaine n'est pas déjà pris (DNS record)
+
+    Pas d'écriture côté CF (juste read-only). Le provisioning effectif
+    arrive lors de /api/configure puis du script
+    setup-cloudflare-tunnel-hostnames.sh.
+    """
+    import urllib.request
+    import urllib.error
+    import json
+
+    # Validation regex du sous-domaine
+    if not re.match(r"^[a-z0-9-]{2,30}$", payload.cloudflare_subdomain):
+        raise HTTPException(400, {
+            "error": "invalid_subdomain",
+            "message": "Sous-domaine invalide (lettres minuscules, chiffres, tiret, 2-30 chars)"
+        })
+
+    # Si le frontend a envoyé le placeholder "__USE_MASTER_TOKEN__" (cas master
+    # creds pré-injectés, le wizard cache le champ token et envoie ce sentinel
+    # pour ne pas exposer le vrai token côté JS), on substitue par les valeurs
+    # depuis l'env (chargées depuis /etc/aibox-master/cloudflare.env au boot).
+    # Idem pour les autres IDs : si placeholder ou vide, fallback sur env.
+    cf_token = payload.cf_api_token
+    cf_account = payload.cf_account_id
+    cf_tunnel = payload.cf_tunnel_id
+    cf_zone = payload.cf_zone_id
+    if cf_token in ("__USE_MASTER_TOKEN__", "", None):
+        cf_token = os.environ.get("CF_DEFAULT_API_TOKEN", "")
+    if cf_account in ("__USE_MASTER_TOKEN__", "", None):
+        cf_account = os.environ.get("CF_DEFAULT_ACCOUNT_ID", "")
+    if cf_tunnel in ("__USE_MASTER_TOKEN__", "", None):
+        cf_tunnel = os.environ.get("CF_DEFAULT_TUNNEL_ID", "")
+    if cf_zone in ("__USE_MASTER_TOKEN__", "", None):
+        cf_zone = os.environ.get("CF_DEFAULT_ZONE_ID", "")
+    if not (cf_token and cf_account and cf_tunnel and cf_zone):
+        raise HTTPException(400, {
+            "error": "missing_credentials",
+            "message": "Credentials Cloudflare incomplets (ni dans le formulaire, ni dans /etc/aibox-master/cloudflare.env)",
+        })
+
+    headers = {
+        "Authorization": f"Bearer {cf_token}",
+        "Content-Type": "application/json",
+    }
+    api_base = "https://api.cloudflare.com/client/v4"
+
+    def cf_get(path: str) -> tuple[bool, dict]:
+        try:
+            req = urllib.request.Request(f"{api_base}{path}", headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return True, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return False, {"status": e.code, "reason": e.reason, "body": e.read().decode("utf-8", "replace")[:500]}
+        except Exception as e:
+            return False, {"status": 0, "reason": str(e)}
+
+    # 1. Tunnel
+    ok_tunnel, j_tunnel = cf_get(f"/accounts/{cf_account}/cfd_tunnel/{cf_tunnel}")
+    if not ok_tunnel:
+        raise HTTPException(400, {
+            "error": "tunnel_not_found",
+            "message": "Tunnel Cloudflare inaccessible (vérifier Account ID, Tunnel ID, et que le token a la permission Tunnel:Read)",
+            "detail": j_tunnel,
+        })
+
+    # 2. Zone
+    ok_zone, j_zone = cf_get(f"/zones/{cf_zone}")
+    if not ok_zone:
+        raise HTTPException(400, {
+            "error": "zone_not_found",
+            "message": "Zone Cloudflare inaccessible (vérifier Zone ID et que le token a la permission Zone.DNS:Edit + Zone:Read)",
+            "detail": j_zone,
+        })
+    zone_name = (j_zone.get("result") or {}).get("name", "")
+
+    # 3. Check subdomain disponibilité (optionnel — info, pas blocant)
+    subdomain_full = f"{payload.cloudflare_subdomain}.{zone_name}"
+    ok_dns, j_dns = cf_get(f"/zones/{cf_zone}/dns_records?name={subdomain_full}")
+    existing_records = (j_dns.get("result") or []) if ok_dns else []
+
+    return {
+        "ok": True,
+        "tunnel_name": (j_tunnel.get("result") or {}).get("name", ""),
+        "zone_name": zone_name,
+        "subdomain_full": subdomain_full,
+        "subdomain_already_used": len(existing_records) > 0,
+        "existing_records_count": len(existing_records),
+    }
 
 
 @app.get("/api/apps")
@@ -205,42 +387,83 @@ async def configure(payload: WizardSubmit):
     if not payload.admin_password:
         payload.admin_password = DEFAULT_ADMIN_PASSWORD
 
-    # Secrets internes (générés, jamais exposés au user final)
-    pg_dify = gen_secret(32)
-    pg_ak = gen_secret(32)
-    ak_secret = gen_secret(60)
-    dify_secret = gen_secret(50)
-    qdrant_key = gen_secret(32)
+    # ---- PRESERVATION DES SECRETS EXISTANTS ----
+    # En mode bootstrap (deploy-new-box.sh + AIBOX_BOOTSTRAP=1), install.sh
+    # a DÉJÀ créé un .env avec des secrets PG/encryption/etc. Et ces secrets
+    # sont DÉJÀ persistés dans les volumes Docker (Postgres user/pwd, n8n
+    # encryption key dans /home/node/.n8n/config, etc.).
+    # Si on régénère les secrets ici sans préserver les existants → le
+    # nouveau .env aura des secrets différents → mismatch avec les volumes
+    # → restart loop infini sur n8n, langfuse-web, agents, dify-plugin.
+    # Solution : lire le .env existant et préserver ses secrets, ne
+    # générer que ceux qui ne sont pas déjà là (1ère install vraie).
+    def _read_env_file(path: Path) -> dict[str, str]:
+        if not path.exists():
+            return {}
+        out: dict[str, str] = {}
+        try:
+            for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                v = v.strip()
+                # Strip outer quotes (shell-escaped values)
+                if (len(v) >= 2 and ((v[0] == "'" and v[-1] == "'") or (v[0] == '"' and v[-1] == '"'))):
+                    v = v[1:-1].replace("'\"'\"'", "'")
+                out[k.strip()] = v
+        except Exception as exc:
+            print(f"[setup-api] /api/configure: failed to read existing .env: {exc}")
+        return out
+    _existing = _read_env_file(AIBOX_ROOT / ".env")
+    def _keep(key: str, generator):
+        """Préserve la valeur existante du .env si présente, sinon génère."""
+        return _existing.get(key) or generator()
+
+    # Secrets internes (générés au 1er install, préservés ensuite)
+    pg_dify = _keep("PG_DIFY_PASSWORD", lambda: gen_secret(32))
+    pg_ak = _keep("PG_AUTHENTIK_PASSWORD", lambda: gen_secret(32))
+    ak_secret = _keep("AUTHENTIK_SECRET_KEY", lambda: gen_secret(60))
+    dify_secret = _keep("DIFY_SECRET_KEY", lambda: gen_secret(50))
+    qdrant_key = _keep("QDRANT_API_KEY", lambda: gen_secret(32))
     # Dify 1.x : plugin daemon a besoin de 2 secrets partagés avec dify-api
-    dify_plugin_key = gen_secret(50)
-    dify_inner_key = gen_secret(50)
+    dify_plugin_key = _keep("DIFY_PLUGIN_DAEMON_KEY", lambda: gen_secret(50))
+    dify_inner_key = _keep("DIFY_INNER_API_KEY", lambda: gen_secret(50))
     # Sidecars & connecteurs : auto-générées (jamais saisies par le client).
     # Cf. memory/product_appliance_principle.md — zéro intervention humaine.
     # Si on les omet, aibox-agents/mem0/connecteurs ne démarrent pas (les
     # composes les exigent comme variables required, donc compose lève une
     # erreur à `up`).
-    agents_api_key = gen_secret(48)
-    mem0_api_key = gen_secret(48)
-    fec_tool_api_key = gen_secret(48)
-    pennylane_tool_api_key = gen_secret(48)
-    glpi_tool_api_key = gen_secret(48)
-    odoo_tool_api_key = gen_secret(48)
-    text2sql_tool_api_key = gen_secret(48)
+    agents_api_key = _keep("AGENTS_API_KEY", lambda: gen_secret(48))
+    mem0_api_key = _keep("MEM0_API_KEY", lambda: gen_secret(48))
+    fec_tool_api_key = _keep("FEC_TOOL_API_KEY", lambda: gen_secret(48))
+    pennylane_tool_api_key = _keep("PENNYLANE_TOOL_API_KEY", lambda: gen_secret(48))
+    glpi_tool_api_key = _keep("GLPI_TOOL_API_KEY", lambda: gen_secret(48))
+    odoo_tool_api_key = _keep("ODOO_TOOL_API_KEY", lambda: gen_secret(48))
+    text2sql_tool_api_key = _keep("TEXT2SQL_TOOL_API_KEY", lambda: gen_secret(48))
     # n8n exige un mdp fort (8+ chars + 1 maj + 1 chiffre). gen_secret n'a
     # pas cette garantie, on génère donc un mdp dédié. setup_n8n_owner sait
     # le re-générer si besoin (rétry sur 400 password too weak).
-    n8n_password = gen_strong_password(24)
+    n8n_password = _keep("N8N_PASSWORD", lambda: gen_strong_password(24))
 
     # ----- Services optionnels post-sprint 2026-05 -----
     # Langfuse (observability), TTS Piper (voice), SearXNG (web search).
     # Vars auto-générées : si l'admin ne déploie pas le compose, elles
     # restent dans .env mais sans effet (no-op côté aibox-app).
-    langfuse_db_password = gen_secret(32)
-    langfuse_salt = gen_secret(32)
-    langfuse_nextauth_secret = gen_secret(64)
-    langfuse_public_key = "pk-lf-aibox-" + gen_secret(24)
-    langfuse_secret_key = "sk-lf-aibox-" + gen_secret(32)
-    searxng_secret = gen_secret(64)
+    langfuse_db_password = _keep("LANGFUSE_DB_PASSWORD", lambda: gen_secret(32))
+    langfuse_salt = _keep("LANGFUSE_SALT", lambda: gen_secret(32))
+    langfuse_nextauth_secret = _keep("LANGFUSE_NEXTAUTH_SECRET", lambda: gen_secret(64))
+    langfuse_public_key = _keep("LANGFUSE_PUBLIC_KEY", lambda: "pk-lf-aibox-" + gen_secret(24))
+    langfuse_secret_key = _keep("LANGFUSE_SECRET_KEY", lambda: "sk-lf-aibox-" + gen_secret(32))
+    searxng_secret = _keep("SEARXNG_SECRET", lambda: gen_secret(64))
+    if _existing:
+        kept = sum(1 for k in [
+            "PG_DIFY_PASSWORD", "PG_AUTHENTIK_PASSWORD", "AUTHENTIK_SECRET_KEY",
+            "DIFY_SECRET_KEY", "QDRANT_API_KEY", "DIFY_PLUGIN_DAEMON_KEY",
+            "DIFY_INNER_API_KEY", "AGENTS_API_KEY", "MEM0_API_KEY",
+            "N8N_PASSWORD", "LANGFUSE_DB_PASSWORD",
+        ] if k in _existing)
+        print(f"[setup-api] /api/configure: preserved {kept} secrets from existing .env")
 
     # Échappe les caractères spéciaux pour bash (.env est sourcé par scripts shell)
     def shell_escape(s: str) -> str:
@@ -255,6 +478,36 @@ async def configure(payload: WizardSubmit):
     #   0 = accepte les certs auto-signés (mode LAN)
     #   1 = rejette les certs auto-signés (mode prod, default safe)
     is_lan_mdns = payload.domain.endswith(".local")
+
+    # ---- IP LAN host pour NEXTAUTH_URL + AUTHENTIK_APP_ISSUER ----
+    # En mode LAN, le browser de l'employé tape http://192.168.x.y:3100 (IP du
+    # serveur dans le LAN). Si NEXTAUTH_URL est laissé en localhost dans le
+    # compose, le callback OAuth foire (le browser tente sa propre localhost).
+    # install.sh BOOTSTRAP écrit AIBOX_HOST_IP dans .env via `hostname -I`.
+    # On le préserve ici, et si absent (cas edge), on fallback sur 1) DOMAIN
+    # tel quel (mode prod) ou 2) localhost (mode dev).
+    aibox_host_ip = _keep("AIBOX_HOST_IP", lambda: "")
+    if not aibox_host_ip and is_lan_mdns:
+        # Tente de détecter via socket (peut donner l'IP du bridge Docker
+        # plutôt que LAN — best-effort, en pratique install.sh a déjà set).
+        try:
+            import socket as _socket
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM) as _s:
+                _s.connect(("1.1.1.1", 1))
+                aibox_host_ip = _s.getsockname()[0]
+        except Exception:
+            aibox_host_ip = "localhost"
+    if is_lan_mdns:
+        # LAN : pointe sur l'IP du serveur. Si vide → fallback domaine .local
+        # (qui doit être résoluble via mDNS depuis les browsers — pas tjs OK).
+        nextauth_host = aibox_host_ip or payload.domain
+        nextauth_url = f"http://{nextauth_host}:3100"
+        authentik_issuer = f"http://{nextauth_host}:9000/application/o/aibox-app/"
+    else:
+        # Production : domaine public HTTPS
+        nextauth_url = f"https://{payload.domain}"
+        authentik_issuer = f"https://auth.{payload.domain}/application/o/aibox-app/"
+
     if is_lan_mdns:
         domain_prefix = payload.domain.removesuffix(".local") or "aibox"
         acme_ca = "internal"
@@ -279,6 +532,15 @@ async def configure(payload: WizardSubmit):
         f"ADMIN_USERNAME={payload.admin_username}",
         f"ADMIN_EMAIL={payload.admin_email}",
         f"ADMIN_PASSWORD={shell_escape(payload.admin_password)}",
+        # IP LAN du host — utilisée pour NEXTAUTH_URL et AUTHENTIK_APP_ISSUER
+        # ci-dessous. Préservée du .env (où install.sh BOOTSTRAP l'a écrite
+        # via `hostname -I`), ou détectée best-effort si manquante.
+        f"AIBOX_HOST_IP={aibox_host_ip}",
+        # URL callback OAuth NextAuth — sans ça le compose default localhost
+        # casse le login depuis browser LAN (callback inaccessible).
+        f"NEXTAUTH_URL={nextauth_url}",
+        # Issuer Authentik OIDC — idem, doit être joignable depuis le browser.
+        f"AUTHENTIK_APP_ISSUER={authentik_issuer}",
         f"HW_PROFILE={payload.hw_profile}",
         # Modèle principal : qwen3:14b (9 GB VRAM, drop-in qwen2.5:14b).
         # Avantages 2026-05 (audit BentoML) : function calling natif,
@@ -345,6 +607,55 @@ async def configure(payload: WizardSubmit):
         f"SEARXNG_SECRET={searxng_secret}",
         "SEARXNG_URL=http://127.0.0.1:8888",
     ]
+
+    # ----- Cloudflare Tunnel (toujours présent depuis 2026-05-05) -----
+    # Le wizard demande au client juste le sous-domaine prefix ; les 4 IDs
+    # CF sont injectées soit via env du container (cas client : pré-rempli
+    # par l'admin BoxIA), soit saisies manuellement par l'admin lors de la
+    # 1re install démo. Le script tools/setup-cloudflare-tunnel-hostnames.sh
+    # est appelé automatiquement à la fin du déploiement pour créer DNS +
+    # ingress tunnel via API Cloudflare.
+    if payload.cloudflare_subdomain:
+        cf_root = os.environ.get("CF_DEFAULT_ROOT_DOMAIN", "ialocal.pro")
+        public_domain = f"{payload.cloudflare_subdomain}.{cf_root}"
+        # Substitution des placeholders "__USE_MASTER_TOKEN__" envoyés par le
+        # frontend quand l'admin BoxIA a pré-injecté les master creds. On lit
+        # alors les vraies valeurs depuis l'env (chargé depuis
+        # /etc/aibox-master/cloudflare.env au boot du container).
+        def _resolve(payload_val: str, env_key: str) -> str:
+            if payload_val in ("__USE_MASTER_TOKEN__", "", None):
+                return os.environ.get(env_key, "")
+            return payload_val
+        cf_account = _resolve(payload.cf_account_id, "CF_DEFAULT_ACCOUNT_ID")
+        cf_tunnel = _resolve(payload.cf_tunnel_id, "CF_DEFAULT_TUNNEL_ID")
+        cf_token = _resolve(payload.cf_api_token, "CF_DEFAULT_API_TOKEN")
+        cf_zone = _resolve(payload.cf_zone_id, "CF_DEFAULT_ZONE_ID")
+        env_lines.extend([
+            "",
+            "# ----- Cloudflare Tunnel (set par wizard) -----",
+            f"AIBOX_PUBLIC_DOMAIN={public_domain}",
+            f"CLOUDFLARE_ACCOUNT_ID={shell_escape(cf_account)}",
+            f"CLOUDFLARE_TUNNEL_ID={shell_escape(cf_tunnel)}",
+            f"CLOUDFLARE_API_TOKEN={shell_escape(cf_token)}",
+            f"CLOUDFLARE_ZONE_ID={shell_escape(cf_zone)}",
+        ])
+
+    # ----- Branding (optionnel, défauts hexagone bleu/vert) -----
+    # Toutes les vars sont aussi modifiables post-install via /settings →
+    # BrandingCard. Le wizard les pré-remplit pour qu'on puisse livrer une
+    # box "marquée client" dès le 1er accès.
+    brand_name_final = payload.brand_name_display.strip() or payload.client_name
+    env_lines.extend([
+        "",
+        "# ----- Branding (set par wizard, modifiable via /settings) -----",
+        f"BRAND_NAME={shell_escape(brand_name_final)}",
+        f"BRAND_LOGO_URL={shell_escape(payload.brand_logo_url.strip())}",
+        f"BRAND_PRIMARY_COLOR={shell_escape(payload.brand_primary_color or '#3b82f6')}",
+        f"BRAND_ACCENT_COLOR={shell_escape(payload.brand_accent_color or '#10b981')}",
+        f"BRAND_FOOTER_TEXT={shell_escape(payload.brand_footer_text.strip())}",
+        # CLIENT_NAME déjà set en haut (l. 270), pas de doublon
+    ])
+
     for key, val in payload.technologies.items():
         if isinstance(val, bool):
             env_lines.append(f"CLIENT_HAS_{key.upper()}={'true' if val else 'false'}")
@@ -576,7 +887,18 @@ async def provision_sso(request: Request):
             k, _, v = line.partition("=")
             env[k] = v.strip("'\"")
 
-    host = (request.headers.get("host") or "localhost").split(":")[0]
+    # Détermine l'IP LAN du serveur — celle qui sera utilisée dans les
+    # redirect_uris OIDC et NEXTAUTH_URL. Ordre de priorité :
+    #   1. AIBOX_HOST_IP du .env (écrit par install.sh via `hostname -I`)
+    #   2. Header HTTP Host de la requête (peut être localhost si curl interne)
+    #   3. Fallback localhost (last resort)
+    # Sans ce fix, le wizard appelé via curl from container générait des
+    # redirect_uris pointant sur localhost — login OAuth foirait depuis tout
+    # browser sur le LAN. Bug observé 2026-05-13.
+    host = (
+        env.get("AIBOX_HOST_IP", "").strip()
+        or (request.headers.get("host") or "localhost").split(":")[0]
+    )
     report = sso_provisioning.provision_all(env, host)
 
     # Recrée les containers qui dépendent du .env mis à jour par provisioning.
@@ -663,6 +985,50 @@ async def deploy_start():
         stderr=subprocess.STDOUT,
     )
     return {"pid": proc.pid, "log": str(log_path)}
+
+
+@app.post("/api/deploy/setup-cloudflare-tunnel")
+async def setup_cloudflare_tunnel():
+    """Provisionne le tunnel Cloudflare en appelant le script
+    tools/setup-cloudflare-tunnel-hostnames.sh à la racine du repo.
+
+    Pré-requis : .env contient AIBOX_PUBLIC_DOMAIN + 4 vars CLOUDFLARE_*
+    (set par /api/configure si l'user a fourni le sous-domaine au wizard).
+
+    Si AIBOX_PUBLIC_DOMAIN absent → no-op (mode LAN-only, pas d'erreur).
+    Le script crée DNS records + ingress rules CF pour les sous-domaines
+    standards : flows.<domain>, agents.<domain>, auth.<domain>, etc.
+    """
+    env_file = AIBOX_ROOT / ".env"
+    if not env_file.exists():
+        raise HTTPException(400, "Pas de .env — lance /api/configure d'abord")
+    env_text = env_file.read_text()
+    if "AIBOX_PUBLIC_DOMAIN=" not in env_text:
+        return {"ok": True, "skipped": "no_public_domain", "message": "Mode LAN-only — pas de tunnel à configurer"}
+
+    script_path = AIBOX_ROOT / "tools" / "setup-cloudflare-tunnel-hostnames.sh"
+    if not script_path.exists():
+        return {"ok": False, "error": "script_not_found", "path": str(script_path)}
+
+    # Le script lit /srv/ai-stack/.env automatiquement, pas besoin de passer
+    # les credentials en arg.
+    try:
+        proc = subprocess.run(
+            ["bash", str(script_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(AIBOX_ROOT),
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "timeout_120s"}
+
+    return {
+        "ok": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "stdout_tail": proc.stdout[-2000:],
+        "stderr_tail": proc.stderr[-1000:] if proc.stderr else "",
+    }
 
 
 @app.post("/api/configure/finish")

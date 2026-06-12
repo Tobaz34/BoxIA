@@ -94,7 +94,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "missing_id", hint: "?id=<thread_id>" }, { status: 400 });
   }
 
-  const tok = await getToolToken("google", "gmail-workspace");
+  const tok = await getToolToken("google", "gmail");
   if (!tok.ok) return NextResponse.json(tok.body, { status: tok.status });
 
   const r = await fetch(

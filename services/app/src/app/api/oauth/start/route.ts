@@ -1,13 +1,22 @@
 /**
- * GET /api/oauth/start?provider=google&connector_slug=google-drive
+ * GET /api/oauth/start?provider=google&connector_slug=google-drive[&narrow=1]
  *
  * Démarre un flow OIDC Authorization Code + PKCE :
  *   - Génère code_verifier + state
  *   - Pose un cookie httpOnly avec le pending chiffré
  *   - Redirige vers le authorize_endpoint du provider
  *
+ * Par défaut (mode "broad") demande l'union des scopes de tous les
+ * connecteurs frères du provider — donc un seul consent Google active
+ * Drive + Gmail + Calendar pour le même compte. Cf
+ * unionConnectorScopes() dans oauth-providers.ts.
+ *
+ * `?narrow=1` : redemande uniquement les scopes du connector_slug
+ * (mode legacy / debug).
+ *
  * L'admin atterrit sur Google/Microsoft, autorise, est redirigé vers
- * /api/oauth/callback. Cf lib/oauth-oidc.ts.
+ * /api/oauth/callback. La callback distribue le token aux slugs frères
+ * éligibles. Cf lib/oauth-oidc.ts.
  */
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -15,6 +24,7 @@ import { authOptions } from "@/lib/auth";
 import { logAction, ipFromHeaders } from "@/lib/audit-helper";
 import { startOIDC, OAUTH_STATE_COOKIE } from "@/lib/oauth-oidc";
 import type { OAuthProviderId } from "@/lib/oauth-providers";
+import { unionConnectorScopes } from "@/lib/oauth-providers";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +37,13 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const provider = url.searchParams.get("provider");
   const connectorSlug = url.searchParams.get("connector_slug");
+  const narrow = url.searchParams.get("narrow") === "1";
+  // ?prompt=select_account → bouton « Ajouter un autre compte »
+  const promptParam = url.searchParams.get("prompt");
+  const promptMode: "select_account" | "consent" | undefined =
+    promptParam === "select_account" ? "select_account"
+    : promptParam === "consent" ? "consent"
+    : undefined;
   if (!provider || !connectorSlug) {
     return NextResponse.json({ error: "missing_params" }, { status: 400 });
   }
@@ -34,10 +51,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unsupported_provider" }, { status: 400 });
   }
   try {
+    // Mode broad par défaut : 1 consent active tous les connecteurs frères.
+    const broadScopes = narrow ? undefined : unionConnectorScopes(provider as OAuthProviderId);
     const result = startOIDC(
       provider as OAuthProviderId,
       connectorSlug,
       session.user.email,
+      broadScopes,
+      promptMode,
     );
     await logAction("settings.update", `oauth_oidc_started:${provider}:${connectorSlug}`, {
       actor: session.user.email,

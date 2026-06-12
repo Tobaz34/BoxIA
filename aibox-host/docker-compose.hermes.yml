@@ -1,0 +1,54 @@
+# Hermes Agent — service à ajouter au stack BoxIA sur un PC client
+#
+# Ce compose démarre UNIQUEMENT Hermes. Le reste du stack BoxIA (Ollama, Dify,
+# n8n, Postgres, Authentik, aibox-app, connecteurs) est démarré séparément par
+# install.sh BoxIA. Hermes les joint via le réseau aibox_net partagé.
+#
+# Variables d'env attendues (dans /opt/aibox/hermes/.env, généré par wizard.sh) :
+#   API_SERVER_KEY           : clé Bearer gateway Hermes
+#   TELEGRAM_BOT_TOKEN       : token bot @BotFather
+#   TELEGRAM_ALLOWED_USERS   : chat_id employés autorisés (comma-sep)
+#   ANTHROPIC_API_KEY/...    : clé cloud LLM (optionnel)
+#   AIBOX_AGENT_KEY          : shared secret pour appeler les microservices connecteurs
+#   AIBOX_CONNECTORS_HOST    : ex http://localhost (Bearer auth sur services Python)
+
+services:
+  hermes:
+    image: aibox-hermes:fr
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aibox-hermes
+    restart: unless-stopped
+    command: gateway run
+    env_file:
+      - /opt/aibox/hermes/.env
+    environment:
+      - HERMES_HOME=/opt/data
+    volumes:
+      - /opt/aibox/hermes/data:/opt/data
+    ports:
+      # Dashboard interne, exposé en LAN. WAN = derrière reverse proxy.
+      - "9119:9119"
+    networks:
+      - aibox_net
+    extra_hosts:
+      # Permet à Hermes de joindre les microservices connecteurs en host-mode
+      # ou les services exposés sur la machine hôte (ex: 3CX SIP)
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9119/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+networks:
+  aibox_net:
+    external: true

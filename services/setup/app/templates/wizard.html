@@ -14,10 +14,12 @@
       <div class="subtitle">Assistant de configuration initiale</div>
       <div class="progress">
         <div class="step" data-step="1">1. Entreprise</div>
-        <div class="step" data-step="2">2. Domaine</div>
-        <div class="step" data-step="3">3. Environnement IT</div>
-        <div class="step" data-step="4">4. Récap</div>
-        <div class="step" data-step="5">5. Déploiement</div>
+        <div class="step" data-step="2">2. Admin</div>
+        <div class="step" data-step="3">3. Accès distant</div>
+        <div class="step" data-step="4">4. Environnement IT</div>
+        <div class="step" data-step="5">5. Branding</div>
+        <div class="step" data-step="6">6. Récap</div>
+        <div class="step" data-step="7">7. Déploiement</div>
       </div>
     </header>
 
@@ -64,15 +66,15 @@
 
       <!-- STEP 2 -->
       <section class="step-content" data-step="2" hidden>
-        <h1>🌐 Domaine et compte administrateur</h1>
+        <h1>👤 Compte administrateur</h1>
 
-        <label>Domaine d'accès interne
-          <input type="text" id="domain" placeholder="ai.monentreprise.local">
-          <small>Sous-domaines auto : auth./agents./chat. (TLS Let's Encrypt si domaine public).</small>
-        </label>
+        <!-- Domaine interne fixé en dur à "aibox.local" — pas demandé au client.
+             Le vrai accès se fait via le sous-domaine Cloudflare (étape 3) qui
+             est public/HTTPS. Le domaine interne sert uniquement au DNS LAN
+             optionnel (mDNS), il n'a pas besoin d'être personnalisé. -->
+        <input type="hidden" id="domain" value="aibox.local">
 
-        <h2 style="margin-top:24px;font-size:16px;font-weight:600;">👤 Compte administrateur</h2>
-        <p style="margin-top:4px;margin-bottom:16px;font-size:13px;">Ce compte est le premier utilisateur. Il aura tous les droits et pourra ensuite créer les comptes des autres collaborateurs.</p>
+        <p style="margin-top:0;margin-bottom:16px;font-size:13px;color:var(--muted);">Ce compte est le premier utilisateur. Il aura tous les droits et pourra ensuite créer les comptes des autres collaborateurs.</p>
 
         <label>Nom complet
           <input type="text" id="admin_fullname" placeholder="Jean Dupont">
@@ -104,8 +106,50 @@
         </div>
       </section>
 
-      <!-- STEP 3 -->
+      <!-- STEP 3 — Accès distant Cloudflare -->
       <section class="step-content" data-step="3" hidden>
+        <h1>🌍 Accès distant via Cloudflare</h1>
+        <p>Votre AI Box sera accessible publiquement via un sous-domaine Cloudflare sécurisé (HTTPS, sans ouverture de port LAN).</p>
+
+        <label>Sous-domaine choisi
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="text" id="cloudflare_subdomain" placeholder="acme" pattern="[a-z0-9-]{2,30}" required style="flex:1;">
+            <span style="font-family:monospace;color:var(--muted);">.<span id="cf_root_domain">ialocal.pro</span></span>
+          </div>
+          <small>Lettres minuscules, chiffres, tiret. 2 à 30 caractères. Ex: <code>acme</code> → <code>acme.ialocal.pro</code></small>
+        </label>
+
+        <div id="cf_master_creds_section" style="margin-top:24px;padding:14px 16px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;">
+          <div style="font-weight:600;margin-bottom:6px;">⚙️ Credentials Cloudflare master</div>
+          <p style="margin:0 0 10px 0;font-size:12px;color:var(--muted);line-height:1.5;">
+            Ces 4 IDs sont les vôtres (admin BoxIA). Pour les futures box clients, ces champs seront masqués (pré-injectés).
+          </p>
+
+          <label>Cloudflare Account ID
+            <input type="text" id="cf_account_id" placeholder="32 caractères hex" autocomplete="off">
+          </label>
+          <label>Cloudflare Tunnel ID
+            <input type="text" id="cf_tunnel_id" placeholder="UUID du tunnel" autocomplete="off">
+          </label>
+          <label>Cloudflare API Token
+            <input type="password" id="cf_api_token" placeholder="scoped : Tunnel:Edit, Zone.DNS:Edit, Zone:Read" autocomplete="off">
+          </label>
+          <label>Cloudflare Zone ID
+            <input type="text" id="cf_zone_id" placeholder="32 caractères hex" autocomplete="off">
+          </label>
+        </div>
+
+        <button id="cf_test_btn" onclick="testCloudflare()" style="margin-top:12px;">🔍 Tester la connexion Cloudflare</button>
+        <div id="cf_test_result" style="margin-top:8px;font-size:13px;"></div>
+
+        <div class="actions">
+          <button onclick="prev(3)">← Précédent</button>
+          <button class="primary" id="cf_next_btn" onclick="next(3)" disabled>Suivant →</button>
+        </div>
+      </section>
+
+      <!-- STEP 4 — Environnement IT (ex-step 3) -->
+      <section class="step-content" data-step="4" hidden>
         <h1>🧰 Votre environnement IT</h1>
         <p>Indiquez ce que votre entreprise utilise. Nous activerons les connecteurs IA correspondants.</p>
 
@@ -114,25 +158,59 @@
         </div>
 
         <div class="actions">
-          <button onclick="prev(3)">← Précédent</button>
-          <button class="primary" onclick="next(3)">Suivant →</button>
+          <button onclick="prev(4)">← Précédent</button>
+          <button class="primary" onclick="next(4)">Suivant →</button>
         </div>
       </section>
 
-      <!-- STEP 4 -->
-      <section class="step-content" data-step="4" hidden>
+      <!-- STEP 5 — Branding (optionnel) -->
+      <section class="step-content" data-step="5" hidden>
+        <h1>🎨 Branding (optionnel)</h1>
+        <p>Personnalisez l'apparence de votre AI Box. Tous les champs sont optionnels — vous pourrez les modifier à tout moment dans Paramètres → Branding.</p>
+
+        <label>Nom affiché
+          <input type="text" id="brand_name_display" placeholder="(défaut : nom de l'entreprise)">
+          <small>Apparaît dans le header et le titre de l'onglet navigateur.</small>
+        </label>
+
+        <label>URL du logo (optionnel)
+          <input type="url" id="brand_logo_url" placeholder="https://exemple.com/logo.png">
+          <small>Vide = hexagone par défaut. Format PNG/SVG recommandé, hauteur 28px.</small>
+        </label>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <label>Couleur primaire
+            <input type="color" id="brand_primary_color" value="#3b82f6">
+          </label>
+          <label>Couleur d'accent
+            <input type="color" id="brand_accent_color" value="#10b981">
+          </label>
+        </div>
+
+        <label>Texte de pied de page (optionnel)
+          <input type="text" id="brand_footer_text" placeholder="© 2026 Mon Entreprise — Confidentiel">
+        </label>
+
+        <div class="actions">
+          <button onclick="prev(5)">← Précédent</button>
+          <button class="primary" onclick="next(5)">Suivant →</button>
+        </div>
+      </section>
+
+      <!-- STEP 6 — Récap -->
+      <section class="step-content" data-step="6" hidden>
         <h1>📋 Récapitulatif</h1>
         <p>Vérifiez vos informations avant de lancer le déploiement.</p>
         <pre id="recap"></pre>
 
         <div class="actions">
-          <button onclick="prev(4)">← Précédent</button>
+          <button onclick="prev(6)">← Précédent</button>
           <button class="primary" onclick="deploy()">🚀 Lancer le déploiement</button>
         </div>
       </section>
 
-      <!-- STEP 5 -->
-      <section class="step-content" data-step="5" hidden>
+      <!-- STEP 7 — Déploiement -->
+      <section class="step-content" data-step="7" hidden>
         <h1>⚙️ Déploiement en cours</h1>
         <div id="logs">
           <pre id="log-output">En attente du démarrage...</pre>

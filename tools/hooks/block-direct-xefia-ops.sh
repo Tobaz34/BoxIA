@@ -48,14 +48,56 @@ if ! echo "$COMMAND" | grep -qE '(ssh|scp).*(xefia|192\.168\.15\.210)'; then
   exit 0
 fi
 
-# 2. Whitelist : la commande COMMENCE par le script officiel (match ancré
-# après trim — un simple `grep` en sous-chaîne laissait passer n'importe quoi
-# suivi de `# tools/deploy-to-xefia.sh` en commentaire). `^` dans [[ =~ ]]
-# matche le DÉBUT DE CHAÎNE (pas de REG_NEWLINE en bash), donc une commande
-# multi-ligne ne peut pas whitelist via sa 2e ligne.
+# 2. Whitelist : la commande COMMENCE par un script officiel de la pipeline
+# (match ancré après trim — un simple `grep` en sous-chaîne laissait passer
+# n'importe quoi suivi de `# tools/deploy-to-xefia.sh` en commentaire). `^`
+# dans [[ =~ ]] matche le DÉBUT DE CHAÎNE (pas de REG_NEWLINE en bash), donc
+# une commande multi-ligne ne peut pas whitelist via sa 2e ligne.
+# - deploy-to-xefia        : redéploie aibox-app (rebuild ciblé + migrations)
+# - deploy-hermes-to-xefia : redéploie le sidecar Hermes Agent
+# - deploy-new-box         : déploie sur une box neuve (rsync + creds + install BOOTSTRAP)
+# - provision-master-creds : pousse /etc/aibox-master/cloudflare.env via scp+sudo
+# - wipe-box               : reset destructif d'une box (containers + volumes)
+# - redeploy-wizard        : relance le wizard setup
+# - start-connector        : lance un container connecteur ad-hoc
 TRIMMED="${COMMAND#"${COMMAND%%[![:space:]]*}"}"  # ltrim espaces/retours-ligne
-if [[ "$TRIMMED" =~ ^(bash[[:space:]]+)?(\./)?tools/(deploy-to-xefia|start-connector)\.sh ]]; then
+if [[ "$TRIMMED" =~ ^(bash[[:space:]]+)?(\./)?tools/(deploy-to-xefia|deploy-hermes-to-xefia|deploy-new-box|provision-master-creds|wipe-box|redeploy-wizard|start-connector)\.sh ]]; then
   exit 0
+fi
+
+# 2bis. Exemption Hermes Agent (stack_xefia Portainer, hors scope BoxIA /srv/ai-stack/)
+#
+# Contexte : sur le même serveur xefia (192.168.15.210) coexistent DEUX stacks :
+#   - /srv/ai-stack/   = BoxIA (ce repo, géré via deploy-to-xefia.sh)
+#   - /srv/xefia/      = stack_xefia Portainer (AnythingLLM, Open-WebUI, OpenClaw,
+#                        Ollama partagé, Hermes Agent, etc.) — NON versionné dans
+#                        ce repo, géré via Portainer.
+#
+# L'intégration Hermes Agent vit dans /srv/xefia/hermes/ (compose) et
+# /srv/xefia/hermes_data/ (volume). Ces paths sont hors scope BoxIA :
+# pas de risque de dériver l'état git de /srv/ai-stack/.
+#
+# RÈGLE : si TOUS les paths /srv/... d'une commande sont préfixés par
+# /srv/xefia/hermes ou /srv/xefia/hermes_data (et aucun ".." de bypass),
+# on laisse passer — y compris docker compose up/down et redirect writes.
+if ! echo "$COMMAND" | grep -qE '\.\.(/|$)'; then
+  SRV_PATHS=$(echo "$COMMAND" | grep -oE '/srv/[A-Za-z0-9_./-]+' | sort -u)
+  if [ -n "$SRV_PATHS" ]; then
+    ALL_HERMES=true
+    while IFS= read -r p; do
+      if ! echo "$p" | grep -qE '^/srv/xefia/hermes(_data)?(/|$)'; then
+        ALL_HERMES=false
+        break
+      fi
+    done <<< "$SRV_PATHS"
+    # docker compose ciblé sur le compose Hermes → autorisé même sans path /srv/ explicite
+    if echo "$COMMAND" | grep -qE 'docker[[:space:]]+compose[[:space:]]+-f[[:space:]]+/srv/xefia/hermes/'; then
+      ALL_HERMES=true
+    fi
+    if [ "$ALL_HERMES" = "true" ]; then
+      exit 0
+    fi
+  fi
 fi
 
 # 3. Détection des patterns interdits (premier match gagne)
@@ -71,9 +113,11 @@ elif echo "$COMMAND" | grep -qE 'docker[[:space:]]+compose.*(build|up|down|resta
 elif echo "$COMMAND" | grep -qE 'git[[:space:]]+(reset|checkout|pull|merge|rebase|push|fetch[[:space:]]+--all)'; then
   PATTERN="git mutation"
   REASON="Mutation git directe sur xefia. Le script s'occupe du reset propre."
-elif echo "$COMMAND" | grep -qE '(\./)?install\.sh'; then
+elif echo "$COMMAND" | grep -qE '(^|[/[:space:]])install\.sh([[:space:]]|$)'; then
+  # Précis : matche "install.sh" en début/fin de mot, PAS "aibox-install.sh"
+  # ou autres scripts dont le nom contient "install.sh" comme suffixe.
   PATTERN="install.sh"
-  REASON="install.sh est destructif (re-provisionne tout). Hors-pipeline."
+  REASON="install.sh BoxIA est destructif (re-provisionne tout). Hors-pipeline."
 elif echo "$COMMAND" | grep -qE '(\./)?reset-as-client'; then
   PATTERN="reset-as-client"
   REASON="reset-as-client.sh efface les données client. Confirmation utilisateur explicite requise hors hook."

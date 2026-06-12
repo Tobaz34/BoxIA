@@ -17,9 +17,21 @@ c_yellow() { printf "\033[1;33m%s\033[0m\n" "$*"; }
 c_red()    { printf "\033[1;31m%s\033[0m\n" "$*"; }
 hr()       { printf "%.0s─" {1..70}; printf "\n"; }
 
+# En mode AIBOX_BOOTSTRAP=1 (utilisé par tools/deploy-new-box.sh), `ask` et
+# `ask_yn` court-circuitent le prompt et renvoient directement le default.
+# Le but : préparer une box neuve sans interaction humaine — toutes les vraies
+# valeurs (nom client, secteur, technos, sous-domaine CF, branding) seront
+# collectées par le wizard web ensuite et écraseront ces defaults.
 ask() {
   local prompt="$1" default="${2:-}"
   local answer
+  if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+    # Trace côté stderr pour qu'on voit ce qui est choisi (et que ça ne pollue
+    # pas le stdout que le caller capture avec $(...)).
+    printf "  %s → %s (bootstrap)\n" "$prompt" "${default:-<vide>}" >&2
+    echo "$default"
+    return 0
+  fi
   if [[ -n "$default" ]]; then
     read -rp "$(c_blue "  $prompt") [$default] : " answer
     echo "${answer:-$default}"
@@ -31,41 +43,47 @@ ask() {
 
 ask_yn() {
   local prompt="$1" default="${2:-n}" answer
+  if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+    printf "  %s → %s (bootstrap)\n" "$prompt" "$default" >&2
+    [[ "${default,,}" == "y" || "${default,,}" == "yes" || "${default,,}" == "o" ]]
+    return $?
+  fi
   read -rp "$(c_blue "  $prompt") [y/N] : " answer
   answer="${answer:-$default}"
   [[ "${answer,,}" == "y" || "${answer,,}" == "yes" || "${answer,,}" == "o" ]]
 }
 
 gen_secret() {
+  # Le subshell ( set +o pipefail; ... ) est nécessaire car install.sh tourne
+  # avec `set -euo pipefail` (cf. ligne 9). Le pipe `tr | head -c N` provoque
+  # un SIGPIPE sur tr quand head ferme stdin après avoir lu N bytes — sans
+  # pipefail c'est ignoré, mais avec pipefail ça remonte comme exit 141 et
+  # casse l'install. Le subshell isole le `set +o pipefail` à cette commande.
   local len="${1:-48}"
-  # `head -c` en AMONT du tr : `tr </dev/urandom | head` meurt en SIGPIPE
-  # (exit 141) sous set -euo pipefail quand head ferme le pipe. Ici le
-  # premier head borne l'entrée ; on boucle si le filtrage tr renvoie moins
-  # de $len caractères utiles.
-  local out=""
-  while (( ${#out} < len )); do
-    out+="$(head -c 256 /dev/urandom | tr -dc 'A-Za-z0-9_-')"
-  done
-  printf '%s' "${out:0:len}"
+  ( set +o pipefail; tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c "$len" )
 }
 
 # Génère un password "strong" garantissant au moins 1 majuscule, 1 minuscule,
 # 1 chiffre et 1 caractère spécial. Requis par certains services (n8n, GLPI…)
 # qui rejettent les mots de passe faibles. Préfixe "Aa1!" puis remplit avec
 # de l'aléatoire — l'ordre est mélangé pour éviter le pattern statique.
-# Charset volontairement SANS `$`, backtick, `#`, quotes : le .env est sourcé
-# non quoté (`set -a; . .env`) et ces caractères y seraient interprétés.
 gen_strong_pass() {
   local len="${1:-24}"
   if [[ $len -lt 8 ]]; then len=8; fi
-  local fixed="Aa1!"  # garantit les 4 classes
+  # Préfixe garantit les 4 classes : majuscule, minuscule, chiffre, spécial.
+  # On évite le '!' (history expansion bash interactif). On utilise '#' qui
+  # est safe dans tous les contextes shell + accepté par toutes les policies.
+  local fixed="Aa1#"
   local rest_len=$((len - 4))
-  local rest=""
-  while (( ${#rest} < rest_len )); do
-    rest+="$(head -c 256 /dev/urandom | tr -dc 'A-Za-z0-9!%+=@_.-')"
-  done
-  rest="${rest:0:rest_len}"
-  echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n'
+  local rest
+  # CRITIQUE — Pool tr : éviter les plages accidentelles. Dans 'A-Za-z0-9...',
+  # le `-` est interprété comme plage entre 2 chars. La version précédente
+  # avait '+-=' qui était une plage de + (43) à = (61), incluant `<`, `;`,
+  # `:`, `/`, `,` etc. — TOUS dangereux dans un .env (cassent le source).
+  # Fix : ne mettre que des chars individuels. `-` doit être en première
+  # ou DERNIÈRE position de la string pour être literal.
+  rest=$( set +o pipefail; tr -dc 'A-Za-z0-9_.@#%' </dev/urandom | head -c "$rest_len" )
+  ( set +o pipefail; echo -n "${fixed}${rest}" | fold -w1 | shuf | tr -d '\n' )
 }
 
 # ---- Fonction de déploiement (réutilisable depuis CLI ou wizard web) -------
@@ -78,17 +96,35 @@ prepare_app_data_dirs() {
   # Sans chown, tout `fs.writeFile("/data/...")` rate avec EACCES dès qu'on
   # essaie d'enregistrer un agent custom, audit log, état connecteurs, etc.
   #
-  # Idempotent : à relancer à chaque deploy_stack ne pose pas de problème
-  # (chown -R sur ~10 KB de JSON, négligeable).
+  # Logique idempotente :
+  #   1. Si /srv/ai-stack/data existe déjà avec uid=1001 → rien à faire (skip)
+  #   2. Si root (UID 0) → mkdir + chown direct, pas de sudo
+  #   3. Si non-root + sudo dispo → sudo (peut prompter mdp en TTY)
+  #   4. Sinon → best-effort (peut fail silencieusement si pas owner)
+  #
+  # Ce séquencement évite l'appel sudo systématique qui plantait dans les
+  # contextes non-TTY (deploy-new-box.sh) où /data était déjà OK depuis
+  # un deploy précédent (préservé par wipe-box.sh par défaut).
   c_blue "  → Préparation des dossiers persistants /data..."
-  if command -v sudo >/dev/null 2>&1; then
+
+  if [ -d /srv/ai-stack/data ] && [ "$(stat -c '%u' /srv/ai-stack/data 2>/dev/null)" = "1001" ]; then
+    c_green "    ✓ /srv/ai-stack/data existe déjà (uid=1001) — skip"
+    return 0
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    mkdir -p /srv/ai-stack/data
+    chown -R 1001:1001 /srv/ai-stack/data
+    chmod 755 /srv/ai-stack/data
+    c_green "    ✓ /srv/ai-stack/data préparé (root direct)"
+  elif command -v sudo >/dev/null 2>&1; then
     sudo mkdir -p /srv/ai-stack/data
     sudo chown -R 1001:1001 /srv/ai-stack/data
     sudo chmod 755 /srv/ai-stack/data
+    c_green "    ✓ /srv/ai-stack/data préparé (via sudo)"
   else
-    # Mode root direct (wizard web tourne déjà en root)
-    mkdir -p /srv/ai-stack/data
-    chown -R 1001:1001 /srv/ai-stack/data 2>/dev/null || true
+    mkdir -p /srv/ai-stack/data 2>/dev/null || true
+    chown -R 1001:1001 /srv/ai-stack/data 2>/dev/null || c_yellow "    ⚠ chown 1001 a échoué (pas root, pas sudo)"
     chmod 755 /srv/ai-stack/data 2>/dev/null || true
   fi
 }
@@ -100,8 +136,20 @@ deploy_stack() {
 
   prepare_app_data_dirs
 
-  c_blue "  → Création du réseau Docker partagé..."
-  docker network create "${NETWORK_NAME:-aibox_net}" 2>/dev/null || true
+  c_blue "  → Création des réseaux Docker partagés..."
+  # 2 networks externes utilisés par plusieurs composes :
+  #   - aibox_net (par défaut, override via NETWORK_NAME)
+  #   - ollama_net (utilisé par services/inference + services/setup)
+  # Sans ça, les composes plantent au démarrage avec :
+  #   network ollama_net declared as external, but could not be found
+  # Idempotent : `docker network create` exit 1 si existe → ignoré.
+  for net in "${NETWORK_NAME:-aibox_net}" ollama_net; do
+    if docker network inspect "$net" >/dev/null 2>&1; then
+      c_green "    ✓ Network $net existe déjà"
+    else
+      docker network create "$net" >/dev/null && c_green "    ✓ Network $net créé"
+    fi
+  done
 
   c_blue "  → Pull des images (peut prendre 5-15 min)..."
   docker compose --env-file "$env_file" pull
@@ -120,7 +168,11 @@ deploy_stack() {
   ( cd services/dify && docker compose --env-file "$env_file" up -d )
 
   c_blue "  → Démarrage Inference (Ollama + Open WebUI)..."
-  ( cd services/inference && docker compose --env-file "$env_file" up -d ) || \
+  # --force-recreate : Ollama a un container_name fixe ('ollama') qui peut
+  # exister depuis un précédent deploy AVEC un compose différent (ex: sans
+  # runtime: nvidia → GPU pas vu). Sans --force-recreate, compose réutilise
+  # le container existant et les modifs du compose sont ignorées.
+  ( cd services/inference && docker compose --env-file "$env_file" up -d --force-recreate ) || \
       c_yellow "    (déjà en cours d'exécution ou conflict avec stack héritée — non bloquant)"
 
   # NOTE — Edge Caddy n'est PAS démarré ici. Quand install.sh tourne en
@@ -210,7 +262,125 @@ deploy_stack() {
   fi
 }
 
+# ---- Provisioning des master credentials BoxIA (Cloudflare, etc.) ----------
+#
+# Pourquoi : sur une box neuve, le wizard de premier démarrage doit pouvoir
+# masquer la section "credentials Cloudflare" et ne demander au CLIENT que le
+# sous-domaine (ex: "acme" → acme.ialocal.pro). Pour ça, le container wizard
+# (cf. services/setup/docker-compose.yml) lit /etc/aibox-master/cloudflare.env
+# au démarrage. Si ce fichier existe, le wizard saute la section credentials.
+#
+# Cette fonction écrit /etc/aibox-master/cloudflare.env si — et seulement si —
+# les variables CF_MASTER_* sont définies dans l'environnement qui lance ce
+# script. Workflow type :
+#
+#   # Sur ta machine (Andre) :
+#   source ~/.boxia/master-creds.env  # contient CF_MASTER_ACCOUNT_ID, etc.
+#   scp -r . root@new-box:/srv/ai-stack/
+#   ssh root@new-box "cd /srv/ai-stack && CF_MASTER_ACCOUNT_ID=$CF_MASTER_ACCOUNT_ID \
+#     CF_MASTER_TUNNEL_ID=$CF_MASTER_TUNNEL_ID \
+#     CF_MASTER_API_TOKEN=$CF_MASTER_API_TOKEN \
+#     CF_MASTER_ZONE_ID=$CF_MASTER_ZONE_ID \
+#     ./install.sh"
+#
+# Si les vars sont absentes (cas dev local, ou client qui réinstalle sa propre
+# box sans nos credentials BoxIA) → on skippe avec un warning et le wizard
+# basculera en mode "demander les credentials au client".
+#
+# Idempotent : si /etc/aibox-master/cloudflare.env existe déjà, on le réécrit
+# (les credentials peuvent avoir été rotés depuis la dernière install). Si on
+# ne veut PAS l'écraser, exporter AIBOX_KEEP_EXISTING_MASTER_CREDS=1.
+provision_master_creds() {
+  local cf_account="${CF_MASTER_ACCOUNT_ID:-}"
+  local cf_tunnel="${CF_MASTER_TUNNEL_ID:-}"
+  local cf_token="${CF_MASTER_API_TOKEN:-}"
+  local cf_zone="${CF_MASTER_ZONE_ID:-}"
+  local cf_root="${CF_MASTER_ROOT_DOMAIN:-ialocal.pro}"
+
+  # Aucun credential maître fourni → mode "client autonome"
+  if [[ -z "$cf_account" && -z "$cf_tunnel" && -z "$cf_token" && -z "$cf_zone" ]]; then
+    if [[ -f /etc/aibox-master/cloudflare.env ]]; then
+      c_green "  ✓ Master credentials Cloudflare déjà présents (/etc/aibox-master/cloudflare.env), conservés"
+    else
+      c_yellow "  ⚠ Pas de master credentials Cloudflare fournis (CF_MASTER_*)"
+      c_yellow "    → Le wizard demandera les 4 IDs Cloudflare au client lui-même."
+      c_yellow "    → Pour les pré-injecter (ce que BoxIA fait avant livraison), relance avec :"
+      c_yellow "      CF_MASTER_ACCOUNT_ID=... CF_MASTER_TUNNEL_ID=... \\\\"
+      c_yellow "      CF_MASTER_API_TOKEN=... CF_MASTER_ZONE_ID=... ./install.sh"
+    fi
+    return 0
+  fi
+
+  # Au moins un credential fourni → on exige les 4 obligatoires (root_domain optionnel)
+  local missing=()
+  [[ -z "$cf_account" ]] && missing+=("CF_MASTER_ACCOUNT_ID")
+  [[ -z "$cf_tunnel" ]]  && missing+=("CF_MASTER_TUNNEL_ID")
+  [[ -z "$cf_token" ]]   && missing+=("CF_MASTER_API_TOKEN")
+  [[ -z "$cf_zone" ]]    && missing+=("CF_MASTER_ZONE_ID")
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    c_red "  ✗ Provisioning master creds incomplet — variables manquantes : ${missing[*]}"
+    c_red "    Soit fournis les 4 (account/tunnel/token/zone), soit aucune."
+    exit 1
+  fi
+
+  # Si le fichier existe et qu'on ne veut pas l'écraser → skip
+  if [[ -f /etc/aibox-master/cloudflare.env && "${AIBOX_KEEP_EXISTING_MASTER_CREDS:-0}" == "1" ]]; then
+    c_yellow "  ⚠ /etc/aibox-master/cloudflare.env existe et AIBOX_KEEP_EXISTING_MASTER_CREDS=1 → préservé"
+    return 0
+  fi
+
+  c_blue "  → Provisioning /etc/aibox-master/cloudflare.env (master Cloudflare BoxIA)..."
+
+  # On a besoin de root pour écrire dans /etc/. Détection du contexte :
+  # - Si on est root (UID 0) : pas de sudo
+  # - Sinon : sudo (qui peut prompter le mot de passe en interactif)
+  local SUDO=""
+  if [[ "$(id -u)" -ne 0 ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      c_red "  ✗ Ni root, ni sudo disponible. Impossible d'écrire /etc/aibox-master/."
+      exit 1
+    fi
+    SUDO="sudo"
+  fi
+
+  # Mode 755 dossier : permet aux non-root de faire test -f cloudflare.env
+  $SUDO install -d -m 755 -o root -g root /etc/aibox-master
+
+  # Atomic write via fichier temporaire + rename, comme ça pas de fenêtre
+  # où le fichier serait partiellement écrit pendant qu'un container le lit.
+  local tmpfile
+  tmpfile=$(mktemp)
+  cat > "$tmpfile" <<EOF
+# /etc/aibox-master/cloudflare.env
+# Master credentials Cloudflare BoxIA — généré par install.sh le $(date -Iseconds)
+# Ne pas commit, ne pas partager. Survit aux resets clients (hors /srv/ai-stack/).
+CF_DEFAULT_ACCOUNT_ID=$cf_account
+CF_DEFAULT_TUNNEL_ID=$cf_tunnel
+CF_DEFAULT_API_TOKEN=$cf_token
+CF_DEFAULT_ZONE_ID=$cf_zone
+CF_DEFAULT_ROOT_DOMAIN=$cf_root
+EOF
+  # Mode 640 root:docker pour que docker-compose CLIENT puisse lire le
+  # fichier (cf. provision-master-creds.sh pour le détail). Fallback 600
+  # root:root si le group docker n'existe pas.
+  if getent group docker >/dev/null 2>&1; then
+    $SUDO install -m 640 -o root -g docker "$tmpfile" /etc/aibox-master/cloudflare.env
+  else
+    $SUDO install -m 600 -o root -g root "$tmpfile" /etc/aibox-master/cloudflare.env
+  fi
+  rm -f "$tmpfile"
+
+  c_green "  ✓ Master Cloudflare credentials écrits (root:root 600, $(echo "$cf_token" | wc -c | awk '{print $1-1}') chars token)"
+  c_green "    Le wizard masquera la section credentials et ne demandera que le sous-domaine."
+}
+
 # ---- Mode non-interactif (utilisé par le wizard web ou CI) -----------------
+# Note : provision_master_creds n'est appelée QUE en mode interactif. En mode
+# non-interactif, install.sh tourne dans le container du wizard (qui n'a pas
+# /etc/aibox-master/ monté) et de toute façon les CF_DEFAULT_* ont déjà été
+# lues par le container au démarrage (env_file dans services/setup/docker-compose.yml).
+# Provisionner les master creds est une étape "préparation hardware par BoxIA",
+# pas une étape "déploiement runtime par le client".
 if [[ "${AIBOX_NONINTERACTIVE:-0}" == "1" ]]; then
   c_blue "════════════════════════════════════════════════════════════════════"
   c_blue "  AI Box — Déploiement non-interactif (mode wizard web)"
@@ -227,13 +397,28 @@ if [[ "${AIBOX_NONINTERACTIVE:-0}" == "1" ]]; then
 fi
 
 # ---- Header -----------------------------------------------------------------
-clear
+# En mode BOOTSTRAP (deploy-new-box.sh), pas de `clear` : on veut conserver les
+# logs SSH précédents (Docker install, code push, etc.) pour que l'opérateur
+# voie tout l'historique en cas de pépin.
+if [[ "${AIBOX_BOOTSTRAP:-0}" != "1" ]]; then
+  clear
+fi
 c_green "╔══════════════════════════════════════════════════════════════════╗"
+if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+c_green "║          AI BOX — Bootstrap automatique (zero-question)           ║"
+else
 c_green "║              AI BOX — Installation interactive                    ║"
+fi
 c_green "╚══════════════════════════════════════════════════════════════════╝"
 echo
-c_yellow "Cet assistant va configurer votre serveur IA local."
-c_yellow "Toutes les valeurs sont modifiables après installation dans .env"
+if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+  c_yellow "Mode bootstrap : toutes les questions seront auto-répondues avec"
+  c_yellow "les valeurs par défaut. Le wizard web (port 80) collectera les"
+  c_yellow "vraies valeurs auprès du client et écrasera ce .env initial."
+else
+  c_yellow "Cet assistant va configurer votre serveur IA local."
+  c_yellow "Toutes les valeurs sont modifiables après installation dans .env"
+fi
 echo
 hr
 
@@ -251,11 +436,40 @@ else
   GPU_VRAM="0"
   c_yellow "  ⚠ Pas de GPU NVIDIA — certains modèles seront lents en CPU"
 fi
+# Provisionne /etc/aibox-master/cloudflare.env si CF_MASTER_* sont set dans
+# l'env qui lance install.sh (c'est le moment "préparation hardware par BoxIA",
+# avant livraison au client). Sinon, simple warning et on continue → le wizard
+# basculera en mode "demander les credentials au client".
+provision_master_creds
 hr
 
 # ---- Étape 2 : identité client ----------------------------------------------
+# IMPORTANT : si .env existe déjà (re-run install, ou wizard web a déjà écrit
+# ses valeurs réelles), on PRÉSERVE les valeurs existantes comme defaults pour
+# `ask`. Sans ça, en mode AIBOX_BOOTSTRAP=1 (rappelé), `ask` retournerait à
+# nouveau "Acme SARL" et écraserait les vraies valeurs client. Bug observé
+# 2026-05-13 : .env contenait "Acme SARL" même après /api/configure avec un
+# payload différent.
+EXISTING_ENV="${SCRIPT_DIR}/.env"
+if [[ -f "$EXISTING_ENV" ]]; then
+  # Source dans une sub-shell vide pour ne pas polluer l'env courant (qui
+  # pourrait avoir des vars set par le wizard parent setup-api).
+  while IFS='=' read -r k v; do
+    [[ -z "$k" || "$k" == \#* ]] && continue
+    # Strip outer quotes
+    v="${v#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"
+    case "$k" in
+      CLIENT_NAME|CLIENT_SECTOR|CLIENT_USERS_COUNT|DOMAIN|ADMIN_EMAIL|ADMIN_USERNAME|ADMIN_PASSWORD|HW_PROFILE)
+        # N'override que si pas déjà set par le caller (ex: wizard web)
+        [[ -z "${!k:-}" ]] && export "$k=$v"
+        ;;
+    esac
+  done < "$EXISTING_ENV"
+  c_green "  ✓ .env existant détecté → préserve les valeurs CLIENT_*, DOMAIN, ADMIN_*"
+fi
+
 c_blue "[2/7] Identité du client"
-CLIENT_NAME=$(ask "Nom de l'entreprise cliente" "Acme SARL")
+CLIENT_NAME=$(ask "Nom de l'entreprise cliente" "${CLIENT_NAME:-Acme SARL}")
 echo
 echo "  Secteurs : 1) services  2) btp  3) juridique  4) sante  5) immobilier"
 echo "             6) comptabilite  7) autre"
@@ -274,10 +488,10 @@ hr
 
 # ---- Étape 3 : domaine et admin ---------------------------------------------
 c_blue "[3/7] Domaine et compte administrateur"
-DOMAIN=$(ask "Domaine racine (ex: ai.monclient.fr)" "ai.${CLIENT_NAME// /-}.local")
+DOMAIN=$(ask "Domaine racine (ex: ai.monclient.fr)" "${DOMAIN:-ai.${CLIENT_NAME// /-}.local}")
 DOMAIN="${DOMAIN,,}"
-ADMIN_EMAIL=$(ask "Email administrateur" "admin@${DOMAIN#*.}")
-ADMIN_USERNAME=$(ask "Identifiant admin Authentik" "akadmin")
+ADMIN_EMAIL=$(ask "Email administrateur" "${ADMIN_EMAIL:-admin@${DOMAIN#*.}}")
+ADMIN_USERNAME=$(ask "Identifiant admin Authentik" "${ADMIN_USERNAME:-akadmin}")
 hr
 
 # ---- Étape 4 : profil hardware ----------------------------------------------
@@ -316,33 +530,58 @@ hr
 
 # ---- Étape 6 : génération .env + client_config.yaml --------------------------
 c_blue "[6/7] Génération de la configuration..."
-ADMIN_PASSWORD=$(gen_secret 24)
-PG_DIFY_PASSWORD=$(gen_secret 32)
-PG_AUTHENTIK_PASSWORD=$(gen_secret 32)
-AUTHENTIK_SECRET_KEY=$(gen_secret 60)
-DIFY_SECRET_KEY=$(gen_secret 50)
-QDRANT_API_KEY=$(gen_secret 32)
+
+# Auto-détection IP LAN pour NEXTAUTH_URL / AUTHENTIK_APP_ISSUER. Sans ça,
+# les defaults du compose sont `localhost` → quand un user se connecte
+# depuis 192.168.x.y, le redirect OAuth foire (callback URL pointe sur
+# localhost qui est sa propre machine, pas le serveur). Bug observé
+# 2026-05-13. AIBOX_HOST_IP peut être passé par le caller (wizard web)
+# pour override. Sinon `hostname -I` donne la 1re IP de l'interface LAN.
+if [[ -z "${AIBOX_HOST_IP:-}" ]]; then
+  AIBOX_HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+fi
+if [[ -z "$AIBOX_HOST_IP" ]]; then
+  c_yellow "  ⚠ Impossible de détecter l'IP LAN — fallback localhost (login web depuis IP externe foirera)"
+  AIBOX_HOST_IP="localhost"
+fi
+c_green "  ✓ IP LAN détectée : $AIBOX_HOST_IP (utilisée pour NEXTAUTH_URL + AUTHENTIK_APP_ISSUER)"
+
+# Préserver ADMIN_PASSWORD existant si .env contient une valeur (reprise après
+# crash ou recall en mode bootstrap). Génération nouvelle seulement si vide.
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(gen_secret 24)}"
+PG_DIFY_PASSWORD="${PG_DIFY_PASSWORD:-$(gen_secret 32)}"
+PG_AUTHENTIK_PASSWORD="${PG_AUTHENTIK_PASSWORD:-$(gen_secret 32)}"
+AUTHENTIK_SECRET_KEY="${AUTHENTIK_SECRET_KEY:-$(gen_secret 60)}"
+DIFY_SECRET_KEY="${DIFY_SECRET_KEY:-$(gen_secret 50)}"
+# Plugin Daemon (Dify ≥1.x) : 2 secrets distincts requis. Sans eux le
+# container aibox-dify-plugin-daemon plante au boot avec :
+#   invalid configuration: Field validation for 'ServerKey' failed on 'required'
+#   invalid configuration: Field validation for 'DifyInnerApiKey' failed on 'required'
+# Cf services/dify/docker-compose.yml — vars SERVER_KEY et INNER_API_KEY_FOR_PLUGIN.
+DIFY_PLUGIN_DAEMON_KEY="${DIFY_PLUGIN_DAEMON_KEY:-$(gen_secret 48)}"
+DIFY_INNER_API_KEY="${DIFY_INNER_API_KEY:-$(gen_secret 48)}"
+QDRANT_API_KEY="${QDRANT_API_KEY:-$(gen_secret 32)}"
 # ---- Sidecars & connecteurs : auto-génération obligatoire ----
 # Principe produit : aucun secret ne doit être saisi à la main par l'admin
 # client (cf. memory/product_appliance_principle.md). Ces valeurs sont
 # utilisées uniquement entre nos services internes ; les credentials vers
 # des SaaS externes (Pennylane, MS Graph...) sont saisis via UI /connectors.
-AGENTS_API_KEY=$(gen_secret 48)
-MEM0_API_KEY=$(gen_secret 48)
-FEC_TOOL_API_KEY=$(gen_secret 48)
-PENNYLANE_TOOL_API_KEY=$(gen_secret 48)
-GLPI_TOOL_API_KEY=$(gen_secret 48)
-ODOO_TOOL_API_KEY=$(gen_secret 48)
-TEXT2SQL_TOOL_API_KEY=$(gen_secret 48)
+AGENTS_API_KEY="${AGENTS_API_KEY:-$(gen_secret 48)}"
+MEM0_API_KEY="${MEM0_API_KEY:-$(gen_secret 48)}"
+FEC_TOOL_API_KEY="${FEC_TOOL_API_KEY:-$(gen_secret 48)}"
+PENNYLANE_TOOL_API_KEY="${PENNYLANE_TOOL_API_KEY:-$(gen_secret 48)}"
+GLPI_TOOL_API_KEY="${GLPI_TOOL_API_KEY:-$(gen_secret 48)}"
+ODOO_TOOL_API_KEY="${ODOO_TOOL_API_KEY:-$(gen_secret 48)}"
+TEXT2SQL_TOOL_API_KEY="${TEXT2SQL_TOOL_API_KEY:-$(gen_secret 48)}"
 # Shared secret entre aibox-app (Next.js) et les workers connecteurs Python.
 # Les workers (rag-gdrive, rag-msgraph) le présentent dans X-Connector-Token
 # pour récupérer un access_token OAuth déchiffré via /api/oauth/internal/token.
 # Cf services/app/src/lib/connector-tool-helpers.ts et services/connectors/_lib/oauth.py.
-CONNECTOR_INTERNAL_TOKEN=$(gen_secret 48)
+CONNECTOR_INTERNAL_TOKEN="${CONNECTOR_INTERNAL_TOKEN:-$(gen_secret 48)}"
 # n8n exige un password fort (8+ chars, 1 maj, 1 chiffre). On génère un
 # password dédié plutôt que réutiliser ADMIN_PASSWORD qui peut ne pas
 # respecter ces règles. Le wizard provisionne n8n owner avec celui-ci.
-N8N_PASSWORD=$(gen_strong_pass 24)
+N8N_PASSWORD="${N8N_PASSWORD:-$(gen_strong_pass 24)}"
 
 # Services optionnels post-sprint 2026-05 (Langfuse, TTS Piper, SearXNG).
 # Vars auto-générées : si l'admin ne déploie pas le compose correspondant,
@@ -350,12 +589,12 @@ N8N_PASSWORD=$(gen_strong_pass 24)
 #   - Langfuse :   cd services/observability && docker compose up -d
 #   - TTS Piper :  cd services/tts && docker compose up -d
 #   - SearXNG :    cd services/search && docker compose up -d
-LANGFUSE_DB_PASSWORD=$(gen_secret 32)
-LANGFUSE_SALT=$(gen_secret 32)
-LANGFUSE_NEXTAUTH_SECRET=$(gen_secret 64)
-LANGFUSE_PUBLIC_KEY="pk-lf-aibox-$(gen_secret 24)"
-LANGFUSE_SECRET_KEY="sk-lf-aibox-$(gen_secret 32)"
-SEARXNG_SECRET=$(gen_secret 64)
+LANGFUSE_DB_PASSWORD="${LANGFUSE_DB_PASSWORD:-$(gen_secret 32)}"
+LANGFUSE_SALT="${LANGFUSE_SALT:-$(gen_secret 32)}"
+LANGFUSE_NEXTAUTH_SECRET="${LANGFUSE_NEXTAUTH_SECRET:-$(gen_secret 64)}"
+LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-pk-lf-aibox-$(gen_secret 24)}"
+LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-sk-lf-aibox-$(gen_secret 32)}"
+SEARXNG_SECRET="${SEARXNG_SECRET:-$(gen_secret 64)}"
 
 cat > .env <<EOF
 # Généré par install.sh le $(date -Iseconds)
@@ -369,6 +608,15 @@ CLIENT_USERS_COUNT=${CLIENT_USERS_COUNT}
 # ----- DOMAINE & TLS -----
 DOMAIN=${DOMAIN}
 ADMIN_EMAIL=${ADMIN_EMAIL}
+
+# ----- URLs LAN auto-détectées (login OAuth) -----
+# IP réelle du serveur dans le LAN — utilisée par NextAuth pour générer
+# l'URL callback OAuth et par aibox-app pour construire l'issuer Authentik.
+# Sans ces vars, le compose utilise localhost en défaut, ce qui casse le
+# login depuis un browser sur le LAN (callback URL inaccessible).
+AIBOX_HOST_IP=${AIBOX_HOST_IP}
+NEXTAUTH_URL=http://${AIBOX_HOST_IP}:3100
+AUTHENTIK_APP_ISSUER=http://${AIBOX_HOST_IP}:9000/application/o/aibox-app/
 
 # ----- ADMIN PAR DÉFAUT (Authentik) -----
 ADMIN_USERNAME=${ADMIN_USERNAME}
@@ -415,6 +663,8 @@ PG_DIFY_PASSWORD=${PG_DIFY_PASSWORD}
 PG_AUTHENTIK_PASSWORD=${PG_AUTHENTIK_PASSWORD}
 AUTHENTIK_SECRET_KEY=${AUTHENTIK_SECRET_KEY}
 DIFY_SECRET_KEY=${DIFY_SECRET_KEY}
+DIFY_PLUGIN_DAEMON_KEY=${DIFY_PLUGIN_DAEMON_KEY}
+DIFY_INNER_API_KEY=${DIFY_INNER_API_KEY}
 QDRANT_API_KEY=${QDRANT_API_KEY}
 
 # ----- SIDECARS & CONNECTEURS (auto-générés, ne PAS modifier) -----
@@ -484,9 +734,6 @@ TTS_DEFAULT_VOICE=larynx:siwis-glow_tts
 SEARXNG_SECRET=${SEARXNG_SECRET}
 SEARXNG_URL=http://127.0.0.1:8888
 EOF
-# Le .env contient tous les secrets — pas de lecture pour group/other
-# (l'umask par défaut le créerait en 644).
-chmod 600 .env
 
 # Génération client_config.yaml (consommable par le futur portail)
 cat > client_config.yaml <<EOF
@@ -522,8 +769,7 @@ technologies:
   smb: ${TECH[SMB]}
 
 models:
-  # Aligné sur LLM_MAIN/LLM_EMBED du .env généré ci-dessus.
-  llm_main: qwen3:14b
+  llm_main: qwen2.5:7b
   llm_embed: bge-m3
 EOF
 
@@ -540,6 +786,31 @@ if ! ask_yn "Lancer le déploiement maintenant ?" "y"; then
 fi
 
 deploy_stack
+
+# En mode BOOTSTRAP : démarre AUSSI le wizard (services/setup) sur ${SETUP_PORT:-80}.
+# Sans ça, le client n'a pas d'UI pour renseigner ses vraies infos après le
+# bootstrap → la box reste avec les valeurs placeholder ("Acme SARL", etc.).
+# Variable SETUP_PORT permet d'overrider le port (utile si :80 est déjà pris,
+# ex: par Nextcloud sur xefia → SETUP_PORT=8080).
+if [[ "${AIBOX_BOOTSTRAP:-0}" == "1" ]]; then
+  hr
+  c_blue "  → Démarrage du wizard de setup (services/setup) sur :${SETUP_PORT:-80}..."
+  # Networks aibox_net + ollama_net déjà créés par deploy_stack juste avant.
+  # --build : sans ça, docker compose réutilise l'image existante et ignore
+  # tout changement dans services/setup/app/ (main.py, templates/, etc.).
+  # Pas idéal pour la perf au 2e deploy, mais essentiel pour qu'un fix de
+  # bug dans le wizard soit pris en compte sans manipuler les images.
+  if ( cd services/setup && SETUP_PORT="${SETUP_PORT:-80}" \
+       docker compose --env-file ../../.env up -d --build ); then
+    c_green "    ✓ Wizard accessible sur http://<box>:${SETUP_PORT:-80}"
+    BOOTSTRAP_WIZARD_URL="http://<box>:${SETUP_PORT:-80}"
+  else
+    c_yellow "    ⚠ Le wizard n'a pas démarré (port ${SETUP_PORT:-80} occupé ?)."
+    c_yellow "      Logs    : docker logs aibox-setup-caddy"
+    c_yellow "      Retry   : SETUP_PORT=<autre> ./install.sh"
+    BOOTSTRAP_WIZARD_URL=""
+  fi
+fi
 
 hr
 c_green "╔══════════════════════════════════════════════════════════════════╗"

@@ -34,6 +34,36 @@ interface Connection {
   expires_at?: number;
 }
 
+const PROVIDER_NICE_NAME: Record<ProviderId, string> = {
+  google: "Google",
+  microsoft: "Microsoft 365",
+};
+
+const PROVIDER_SIBLING_DESC: Record<ProviderId, string> = {
+  google: "Drive, Gmail, Calendar",
+  microsoft: "OneDrive, Outlook, Calendar, SharePoint, Teams",
+};
+
+// Convertit un scope OAuth verbeux en label humain. Doublon volontaire
+// avec lib/oauth-providers.ts:humanizeScope() — on évite l'import server-side
+// dans un composant client.
+function humanizeScope(scope: string): string | null {
+  if (
+    scope === "openid" || scope === "email" || scope === "profile" ||
+    scope === "offline_access" || scope === "User.Read"
+  ) return null;
+  if (scope === "https://www.googleapis.com/auth/drive.readonly") return "Drive (lecture)";
+  if (scope === "https://www.googleapis.com/auth/gmail.readonly") return "Gmail (lecture)";
+  if (scope === "https://www.googleapis.com/auth/calendar.readonly") return "Calendar (lecture)";
+  if (scope === "Files.Read" || scope === "Files.Read.All") return "OneDrive (lecture)";
+  if (scope === "Mail.Read") return "Outlook Mail (lecture)";
+  if (scope === "Calendars.Read") return "Outlook Calendar (lecture)";
+  if (scope === "Sites.Read.All") return "SharePoint (lecture)";
+  if (scope.startsWith("ChannelMessage")) return "Teams messages (lecture)";
+  if (scope.startsWith("Channel")) return "Teams canaux (lecture)";
+  return scope;
+}
+
 interface DeviceFlowResp {
   request_id: string;
   user_code: string;
@@ -133,10 +163,15 @@ export function OAuthConnectButton({
 
   // ===== OIDC popup flow =====
 
-  function handleConnectOIDC() {
+  function handleConnectOIDC(promptMode?: "select_account") {
     setOauthError(null);
     setOidcInProgress(true);
-    const url = `/api/oauth/start?provider=${encodeURIComponent(provider)}&connector_slug=${encodeURIComponent(connectorSlug)}`;
+    const params = new URLSearchParams({
+      provider,
+      connector_slug: connectorSlug,
+    });
+    if (promptMode) params.set("prompt", promptMode);
+    const url = `/api/oauth/start?${params.toString()}`;
     const w = 520;
     const h = 640;
     const left = (window.screen.width - w) / 2;
@@ -268,26 +303,17 @@ export function OAuthConnectButton({
 
   // Connecté
   if (connection && !deviceFlow) {
+    const niceScopes = (connection.scopes || [])
+      .map(humanizeScope)
+      .filter((s): s is string => !!s);
     return (
-      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs">
-        <div className="flex items-center gap-2 flex-wrap">
-          <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
-          <span className="font-medium text-emerald-300">
-            Connecté{connection.account_email ? ` — ${connection.account_email}` : ""}
-          </span>
-          <button
-            onClick={handleDisconnect}
-            className="ml-auto text-[11px] text-red-400/80 hover:text-red-300 flex items-center gap-1"
-          >
-            <Link2Off size={10} /> Déconnecter
-          </button>
-        </div>
-        {connection.scopes && connection.scopes.length > 0 && (
-          <div className="text-[10px] text-muted mt-1 font-mono line-clamp-2">
-            scopes : {connection.scopes.join(", ")}
-          </div>
-        )}
-      </div>
+      <ConnectedCard
+        connection={connection}
+        provider={provider}
+        niceScopes={niceScopes}
+        onDisconnect={handleDisconnect}
+        onConnectAnother={() => handleConnectOIDC("select_account")}
+      />
     );
   }
 
@@ -344,10 +370,15 @@ export function OAuthConnectButton({
   }
 
   // État initial : bouton OIDC (primaire) + lien Device Flow (fallback)
+  // Sibling-account hint : si un autre slug du même provider est déjà
+  // connecté (ex: l'admin a connecté Drive, et il ouvre maintenant la
+  // modale Gmail), on lui dit "votre compte X est déjà connecté pour
+  // ce provider — réutilisez-le ?"
   return (
     <div className="space-y-2">
+      <SiblingAccountHint provider={provider} connectorSlug={connectorSlug} />
       <button
-        onClick={handleConnectOIDC}
+        onClick={() => handleConnectOIDC()}
         disabled={!providerInfo || oidcInProgress}
         className={`w-full px-3 py-2 rounded-md border ${PROVIDER_BRAND[provider].color} bg-card text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50`}
       >
@@ -358,6 +389,10 @@ export function OAuthConnectButton({
           ? "Autorisation en cours…"
           : `Connecter avec ${providerInfo?.name || provider}`}
       </button>
+      <p className="text-[10px] text-muted">
+        Une seule connexion {providerInfo?.name || provider} couvre tous les services compatibles
+        {provider === "google" ? " (Drive, Gmail, Calendar)" : provider === "microsoft" ? " (OneDrive, Outlook, Calendar, SharePoint, Teams)" : ""}.
+      </p>
       <div className="flex items-center justify-end">
         <button
           onClick={handleConnectDevice}
@@ -373,6 +408,214 @@ export function OAuthConnectButton({
           <AlertTriangle size={11} className="mt-0.5 shrink-0" /> {oauthError}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Si une connexion OAuth existe pour le même provider mais un AUTRE
+ * connector_slug, on l'affiche en hint + propose un bouton "Activer ici
+ * aussi" qui copie le token vers le slug courant. Compatible avec les
+ * connexions créées avant le broadcast automatique du callback.
+ */
+function SiblingAccountHint({
+  provider, connectorSlug,
+}: { provider: ProviderId; connectorSlug: string }) {
+  const [sibling, setSibling] = useState<Connection | null>(null);
+  const [adopting, setAdopting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch("/api/oauth/connections", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        const conns = (j.connections as Connection[]) || [];
+        const sameProvider = conns.find(
+          (c) => c.provider_id === provider && c.connector_slug !== connectorSlug,
+        );
+        if (!cancelled) setSibling(sameProvider || null);
+      } catch { /* tolère */ }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [provider, connectorSlug]);
+
+  if (!sibling) return null;
+
+  async function adopt() {
+    if (!sibling) return;
+    setAdopting(true);
+    try {
+      // POST sur /api/oauth/connections/adopt (créé en parallèle)
+      await fetch("/api/oauth/connections/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_id: sibling.id,
+          target_slug: connectorSlug,
+        }),
+      });
+      // Recharger l'état parent (refresh via reload — robuste, simple)
+      window.location.reload();
+    } catch {
+      setAdopting(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-xs">
+      <div className="flex items-center gap-1.5 mb-1">
+        <CheckCircle2 size={12} className="text-blue-400" />
+        <span className="font-medium text-blue-300">
+          Compte déjà connecté{sibling.account_email ? ` (${sibling.account_email})` : ""}
+        </span>
+      </div>
+      <div className="text-muted text-[11px] mb-2">
+        Vous l'utilisez déjà pour <code className="text-foreground">{sibling.connector_slug}</code>.
+        Activer ici sans nouveau consent ?
+      </div>
+      <button
+        onClick={adopt}
+        disabled={adopting}
+        className="text-[11px] px-2 py-1 rounded bg-blue-500/15 hover:bg-blue-500/25 text-blue-200 disabled:opacity-50"
+      >
+        {adopting ? "…" : "Réutiliser ce compte"}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Carte "Connecté" affichée quand une connexion existe pour ce slug.
+ * Affiche :
+ *   - le compte (email) connecté, ou un warning si l'email est manquant
+ *     (avec un bouton "Récupérer l'identité" qui appelle refresh-userinfo)
+ *   - les permissions accordées en labels humains (Drive (lecture)…)
+ *   - 2 boutons :
+ *       1. « Déconnecter ce service » (juste ce slug — comportement original)
+ *       2. « Déconnecter tout » (cascade : delete tous les sibling slugs
+ *          du même compte/provider) — exposé via /api/oauth/accounts DELETE
+ *   - 1 lien « Ajouter un autre compte » qui force prompt=select_account
+ *     côté provider (Microsoft) ou access_type=offline+prompt=consent (Google)
+ *     — utile quand l'admin a un compte perso ET un pro et veut switch.
+ */
+function ConnectedCard({
+  connection, provider, niceScopes, onDisconnect, onConnectAnother,
+}: {
+  connection: Connection;
+  provider: ProviderId;
+  niceScopes: string[];
+  onDisconnect: () => void;
+  onConnectAnother: () => void;
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [cascading, setCascading] = useState(false);
+  const noEmail = !connection.account_email;
+
+  async function refreshUserinfo() {
+    setRefreshing(true);
+    try {
+      await fetch("/api/oauth/accounts/refresh-userinfo", { method: "POST" });
+      window.location.reload();
+    } catch {
+      setRefreshing(false);
+    }
+  }
+
+  async function disconnectAccount() {
+    if (noEmail) {
+      // Pas d'email → cascade par provider sans filtre
+      if (!confirm(
+        `Cette action déconnecte TOUS les services ${PROVIDER_NICE_NAME[provider]} ` +
+        `liés à ce token (${PROVIDER_SIBLING_DESC[provider]}). Continuer ?`,
+      )) return;
+    } else {
+      if (!confirm(
+        `Déconnecter le compte ${connection.account_email} ?\n` +
+        `→ Tous les services ${PROVIDER_NICE_NAME[provider]} associés ` +
+        `(${PROVIDER_SIBLING_DESC[provider]}) seront déconnectés.`,
+      )) return;
+    }
+    setCascading(true);
+    const params = new URLSearchParams({ provider });
+    if (connection.account_email) params.set("email", connection.account_email);
+    else params.set("email", "");
+    await fetch(`/api/oauth/accounts?${params.toString()}`, { method: "DELETE" });
+    window.location.reload();
+  }
+
+  return (
+    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs space-y-2">
+      <div className="flex items-start gap-2 flex-wrap">
+        <CheckCircle2 size={12} className="text-emerald-400 shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-emerald-300">
+            {connection.account_email ? (
+              <>
+                Connecté avec <span className="font-semibold">{connection.account_email}</span>
+              </>
+            ) : (
+              <>
+                Connecté <span className="text-amber-300/80 ml-1">(compte non identifié)</span>
+              </>
+            )}
+            {connection.account_name && (
+              <span className="text-muted font-normal"> · {connection.account_name}</span>
+            )}
+          </div>
+          <div className="text-[10px] text-muted">
+            Couvre aussi : {PROVIDER_SIBLING_DESC[provider]}
+          </div>
+        </div>
+      </div>
+
+      {noEmail && (
+        <button
+          onClick={refreshUserinfo}
+          disabled={refreshing}
+          className="text-[10px] text-amber-300 hover:text-amber-200 underline disabled:opacity-50"
+        >
+          {refreshing ? "…" : "Récupérer l'identité du compte"}
+        </button>
+      )}
+
+      {niceScopes.length > 0 && (
+        <div className="text-[10px] text-muted">
+          Permissions :{" "}
+          {niceScopes.map((s, i) => (
+            <span key={s} className="text-foreground/80">
+              {s}{i < niceScopes.length - 1 ? ", " : ""}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-3 pt-1 border-t border-emerald-500/10">
+        <button
+          onClick={onDisconnect}
+          className="text-[11px] text-muted hover:text-foreground"
+          title="Garde la connexion principale, retire juste ce service"
+        >
+          Retirer ce service
+        </button>
+        <button
+          onClick={disconnectAccount}
+          disabled={cascading}
+          className="text-[11px] text-red-400/80 hover:text-red-300 inline-flex items-center gap-1 disabled:opacity-50"
+          title="Déconnecte le compte entier (tous les services partagés)"
+        >
+          <Link2Off size={10} /> {cascading ? "…" : "Déconnecter le compte"}
+        </button>
+        <button
+          onClick={onConnectAnother}
+          className="text-[11px] text-blue-300 hover:text-blue-200 ml-auto"
+          title="Ouvre le flow OAuth pour ajouter un compte différent"
+        >
+          + Ajouter un autre compte
+        </button>
+      </div>
     </div>
   );
 }

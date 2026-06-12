@@ -18,6 +18,7 @@ import {
   Zap,
   Network,
   BarChart3,
+  Database,
   X,
 } from "lucide-react";
 import { ConnectorsStatus } from "./ConnectorsStatus";
@@ -37,6 +38,7 @@ const items = [
 const adminItems = [
   { href: "/users",                 labelKey: "sidebar.admin.users",          icon: Users },
   { href: "/connectors",            labelKey: "sidebar.admin.connectors",     icon: Plug },
+  { href: "/rag",                   labelKey: "sidebar.admin.rag",            icon: Database },
   { href: "/agents/marketplace",    labelKey: "sidebar.admin.marketplaceAi",  icon: Sparkles },
   { href: "/workflows/marketplace", labelKey: "sidebar.admin.marketplaceN8n", icon: Zap },
   { href: "/integrations/mcp",      labelKey: "sidebar.admin.mcp",            icon: Network },

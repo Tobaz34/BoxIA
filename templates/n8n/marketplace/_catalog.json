@@ -7,7 +7,8 @@
     { "id": "rag", "label": "RAG / KB", "icon": "📁" },
     { "id": "helpdesk", "label": "Helpdesk", "icon": "🎫" },
     { "id": "backup", "label": "Backup", "icon": "💾" },
-    { "id": "monitoring", "label": "Monitoring", "icon": "🩺" }
+    { "id": "monitoring", "label": "Monitoring", "icon": "🩺" },
+    { "id": "microsoft", "label": "Microsoft 365", "icon": "🪟" }
   ],
   "workflows": [
     {
@@ -19,7 +20,8 @@
       "difficulty": "facile",
       "credentials_required": [],
       "boxia_services": ["pennylane"],
-      "default_active": false
+      "default_active": false,
+      "required_connectors": ["pennylane"]
     },
     {
       "file": "invoice_alert_threshold.json",
@@ -30,7 +32,8 @@
       "difficulty": "facile",
       "credentials_required": [],
       "boxia_services": ["pennylane"],
-      "default_active": false
+      "default_active": false,
+      "required_connectors": ["pennylane"]
     },
     {
       "file": "imap_daily_triage.json",
@@ -39,9 +42,17 @@
       "category": "email",
       "description": "Toutes les heures, lit les nouveaux emails IMAP, les classe via l'agent IA triage (commercial/support/admin/spam), génère un brouillon de réponse pour les \"à répondre\" et stocke le digest dans /data.",
       "difficulty": "facile",
-      "credentials_required": ["IMAP (host, port, user, mdp)"],
+      "credentials_required": [],
       "boxia_services": ["agents"],
-      "default_active": false
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Lire IMAP (à configurer)",
+          "connector_slug": "imap-generic",
+          "n8n_credential_key": "imap"
+        }
+      ],
+      "required_connectors": ["imap-generic"]
     },
     {
       "file": "smtp_invoice_reminder.json",
@@ -50,9 +61,17 @@
       "category": "finance",
       "description": "Tous les lundis, prend les factures impayées (Pennylane) > 30j et envoie automatiquement un email de relance courtois au client. Brouillon généré par agent IA \"support clients\".",
       "difficulty": "moyen",
-      "credentials_required": ["SMTP (envoi email)"],
+      "credentials_required": [],
       "boxia_services": ["pennylane", "agents"],
-      "default_active": false
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Envoie brouillon admin",
+          "connector_slug": "smtp",
+          "n8n_credential_key": "smtp"
+        }
+      ],
+      "required_connectors": ["pennylane", "smtp"]
     },
     {
       "file": "rag_smb_resync.json",
@@ -74,7 +93,8 @@
       "difficulty": "facile",
       "credentials_required": [],
       "boxia_services": ["glpi"],
-      "default_active": false
+      "default_active": false,
+      "required_connectors": ["glpi"]
     },
     {
       "file": "qdrant_snapshot_weekly.json",
@@ -99,15 +119,95 @@
       "default_active": true
     },
     {
+      "file": "outlook_morning_digest.json",
+      "name": "Digest Outlook matinal",
+      "icon": "📬",
+      "category": "microsoft",
+      "description": "Lun-Ven 7h, lit les emails non lus de votre boîte Outlook et envoie un digest synthétique à l'admin (auteur, sujet, aperçu). Identifie les emails importants en priorité.",
+      "difficulty": "facile",
+      "credentials_required": [],
+      "boxia_services": [],
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Outlook : non lus",
+          "connector_slug": "outlook-graph",
+          "n8n_credential_key": "microsoftOutlookOAuth2Api"
+        },
+        {
+          "node_name": "Envoyer digest admin",
+          "connector_slug": "outlook-graph",
+          "n8n_credential_key": "microsoftOutlookOAuth2Api"
+        }
+      ],
+      "required_connectors": ["outlook-graph"]
+    },
+    {
+      "file": "outlook_calendar_briefing.json",
+      "name": "Briefing agenda Outlook",
+      "icon": "📅",
+      "category": "microsoft",
+      "description": "Lun-Ven 7h30, récupère les RDV du jour (Outlook Calendar), les formate en briefing matinal (heure, sujet, lieu/visio, participants) et l'envoie par email à l'admin.",
+      "difficulty": "facile",
+      "credentials_required": [],
+      "boxia_services": [],
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Agenda du jour",
+          "connector_slug": "outlook-calendar",
+          "n8n_credential_key": "microsoftOutlookOAuth2Api"
+        },
+        {
+          "node_name": "Envoyer briefing admin",
+          "connector_slug": "outlook-graph",
+          "n8n_credential_key": "microsoftOutlookOAuth2Api"
+        }
+      ],
+      "required_connectors": ["outlook-calendar", "outlook-graph"]
+    },
+    {
+      "file": "onedrive_recent_files_digest.json",
+      "name": "Activité OneDrive (digest)",
+      "icon": "📁",
+      "category": "microsoft",
+      "description": "Toutes les 4 heures, liste les fichiers récemment modifiés dans votre OneDrive et alerte par email si activité (auteur, taille, dossier). Utile pour suivre l'activité de l'équipe.",
+      "difficulty": "facile",
+      "credentials_required": [],
+      "boxia_services": [],
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "OneDrive : récents",
+          "connector_slug": "onedrive",
+          "n8n_credential_key": "microsoftOneDriveOAuth2Api"
+        },
+        {
+          "node_name": "Envoyer digest admin",
+          "connector_slug": "outlook-graph",
+          "n8n_credential_key": "microsoftOutlookOAuth2Api"
+        }
+      ],
+      "required_connectors": ["onedrive", "outlook-graph"]
+    },
+    {
       "file": "weekly_activity_report.json",
       "name": "Rapport hebdo activité IA",
       "icon": "📊",
       "category": "monitoring",
       "description": "Tous les vendredis à 17h, génère un rapport d'activité (conversations, agents les plus utilisés, workflows déclenchés) et l'envoie à l'admin par email.",
       "difficulty": "moyen",
-      "credentials_required": ["SMTP"],
+      "credentials_required": [],
       "boxia_services": [],
-      "default_active": false
+      "default_active": false,
+      "n8n_credentials_mapping": [
+        {
+          "node_name": "Email rapport",
+          "connector_slug": "smtp",
+          "n8n_credential_key": "smtp"
+        }
+      ],
+      "required_connectors": ["smtp"]
     }
   ]
 }

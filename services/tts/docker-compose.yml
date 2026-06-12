@@ -35,7 +35,11 @@ services:
     command: ["--no-espeak", "--no-glow-speak", "--no-marytts",
               "--no-festival", "--no-flite", "--no-nanotts"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5500/api/voices"]
+      # L'image opentts:fr n'a PAS curl. On utilise python (présent dans
+      # l'image car opentts est en python). Sans ça, le healthcheck plante
+      # 'curl: executable file not found' → état "unhealthy" en permanence
+      # (faux positif — le service répond bien sur :5500).
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5500/api/voices\", timeout=3)' || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

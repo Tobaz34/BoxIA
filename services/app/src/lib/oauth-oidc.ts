@@ -84,6 +84,15 @@ export function startOIDC(
   connectorSlug: string,
   initiatedBy?: string,
   extraScopes?: string[],
+  /**
+   * "select_account" → force le provider à afficher le sélecteur de
+   *   compte même si l'utilisateur a une session active. Indispensable
+   *   pour le bouton « Ajouter un autre compte ».
+   * "consent" → re-demande explicitement le consent (utile pour Google
+   *   quand on veut être sûr d'obtenir un refresh_token).
+   * "none" → laisse le provider décider (default).
+   */
+  promptMode?: "select_account" | "consent" | "none",
 ): StartOIDCResult {
   const provider = OAUTH_PROVIDERS[providerId];
   if (!provider) throw new Error(`unknown_provider:${providerId}`);
@@ -113,7 +122,13 @@ export function startOIDC(
   if (provider.requires_offline_access) {
     params.set("access_type", "offline");
   }
-  if (provider.requires_consent_prompt) {
+  // Choix du `prompt` :
+  //   - select_account explicit (override par l'appelant) → toujours
+  //   - sinon, requires_consent_prompt (Google) → consent
+  //   - sinon rien (= "none" implicite, provider décide)
+  if (promptMode === "select_account") {
+    params.set("prompt", "select_account");
+  } else if (promptMode === "consent" || provider.requires_consent_prompt) {
     params.set("prompt", "consent");
   }
 
@@ -201,7 +216,12 @@ export async function handleOIDCCallback(
   const refreshToken = data.refresh_token as string | undefined;
   const expiresIn = (data.expires_in as number) || 3600;
 
-  // Récupère email + name
+  // Récupère email + name — important pour :
+  //   - afficher "Connecté avec X" dans l'UI
+  //   - regrouper les sibling-slugs sous le même account_email
+  //   - le check "écraser un autre account ?" du broadcast sibling
+  // Si userinfo échoue silencieusement on log une erreur explicite (visible
+  // dans `docker logs aibox-app`) au lieu de juste laisser un null.
   let accountEmail: string | undefined;
   let accountName: string | undefined;
   if (provider.userinfo_endpoint) {
@@ -209,31 +229,135 @@ export async function handleOIDCCallback(
       const ui = await fetch(provider.userinfo_endpoint, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (ui.ok) {
+      if (!ui.ok) {
+        const txt = await ui.text().catch(() => "");
+        console.error(
+          `[oauth-oidc] userinfo fetch failed for ${pending.provider_id}: ` +
+          `HTTP ${ui.status} — ${txt.slice(0, 200)}`,
+        );
+      } else {
         const uj = await ui.json();
+        // Microsoft Graph /me : `mail` (souvent null pour comptes perso) ou
+        // `userPrincipalName` (toujours présent). Google : `email`.
         accountEmail = uj.email || uj.mail || uj.userPrincipalName;
         accountName = uj.name || uj.displayName;
+        if (!accountEmail) {
+          console.warn(
+            `[oauth-oidc] userinfo OK mais aucun email pour ${pending.provider_id} — ` +
+            `payload keys: ${Object.keys(uj).join(",")}`,
+          );
+        }
       }
-    } catch { /* tolère */ }
+    } catch (e) {
+      console.error(`[oauth-oidc] userinfo throw for ${pending.provider_id}:`, e);
+    }
   }
 
   const id = `${pending.provider_id}:${pending.connector_slug}`;
+  const accessTokenEncrypted = encryptToken(accessToken);
+  const refreshTokenEncrypted = refreshToken ? encryptToken(refreshToken) : undefined;
+  const expiresAt = Date.now() + expiresIn * 1000;
+
   const conn: OAuthConnection = {
     id,
     provider_id: pending.provider_id,
     connector_slug: pending.connector_slug,
     scopes: pending.scopes,
-    access_token_encrypted: encryptToken(accessToken),
-    refresh_token_encrypted: refreshToken ? encryptToken(refreshToken) : undefined,
-    expires_at: Date.now() + expiresIn * 1000,
+    access_token_encrypted: accessTokenEncrypted,
+    refresh_token_encrypted: refreshTokenEncrypted,
+    expires_at: expiresAt,
     account_email: accountEmail,
     account_name: accountName,
     connected_at: Date.now(),
     connected_by: pending.initiated_by,
     last_refreshed_at: Date.now(),
   };
+
   const s = await _readStore();
   s.connections[id] = conn;
+
+  // ---- Account-sharing : si le token couvre les scopes des slugs
+  // frères (ex Google Drive + Gmail + Calendar), on auto-crée des
+  // entrées pour eux. L'admin n'a pas besoin de re-cliquer "Connecter
+  // avec Google" sur chaque connecteur. Cf siblingSlugs() dans
+  // oauth-providers.ts.
+  //
+  // Règles :
+  //   - On ne broadcast QUE si on a effectivement reçu les scopes
+  //     requis par le sibling (cas du mode broad=1 de /api/oauth/start).
+  //   - On n'écrase PAS une entrée sibling existante avec un account
+  //     DIFFÉRENT (l'admin a peut-être un compte perso pour Drive et un
+  //     compte pro pour Gmail — on respecte ça).
+  const broadcastedSlugs: string[] = [pending.connector_slug];
+  try {
+    const { siblingSlugs } = await import("./oauth-providers");
+    const grantedScopes = String(data.scope || "").split(/\s+/).filter(Boolean);
+    const haveScopes = new Set([...pending.scopes, ...grantedScopes]);
+    const siblings = siblingSlugs(pending.provider_id);
+    const { OAUTH_PROVIDERS } = await import("./oauth-providers");
+    const provider = OAUTH_PROVIDERS[pending.provider_id];
+
+    for (const sib of siblings) {
+      if (sib === pending.connector_slug) continue;
+      const sibId = `${pending.provider_id}:${sib}`;
+      const existing = s.connections[sibId];
+      if (existing && existing.account_email && accountEmail
+          && existing.account_email !== accountEmail) {
+        // Compte différent → on ne touche pas
+        continue;
+      }
+      // Le sibling exige-t-il des scopes qu'on a effectivement reçus ?
+      const requiredSibScopes = provider.connector_scopes?.[sib] || [];
+      const haveAll = requiredSibScopes.every((sc) => haveScopes.has(sc));
+      if (!haveAll) continue;
+      s.connections[sibId] = {
+        id: sibId,
+        provider_id: pending.provider_id,
+        connector_slug: sib,
+        scopes: requiredSibScopes,
+        access_token_encrypted: accessTokenEncrypted,
+        refresh_token_encrypted: refreshTokenEncrypted,
+        expires_at: expiresAt,
+        account_email: accountEmail,
+        account_name: accountName,
+        connected_at: existing?.connected_at || Date.now(),
+        connected_by: pending.initiated_by,
+        last_refreshed_at: Date.now(),
+      };
+      broadcastedSlugs.push(sib);
+    }
+  } catch {
+    // best-effort, on ne bloque pas la connexion principale
+  }
+
   await _writeStore(s);
+
+  // ---- Auto-activate des slugs touchés dans connectors-state ----
+  // Sans ça, l'OAuth donne le token mais le connector reste "inactive"
+  // → invisible dans la sidebar « Connecteurs (N) ». Pour le user
+  // c'est confusing : il connecte Microsoft mais ne voit que SharePoint
+  // dans la sidebar (pas Outlook ni Calendar) parce qu'il n'a pas
+  // re-cliqué « Activer » sur chaque connecteur. On automatise.
+  //
+  // Les `required` fields sont skippés grâce au check `oauthProvider`
+  // dans activateConnector — donc une activation sans saisie marche.
+  // Best-effort : on ne bloque pas la connexion OAuth si l'activation
+  // échoue (ex: connector spec absent).
+  try {
+    const { activateConnector } = await import("./connectors-state");
+    const { getConnector } = await import("./connectors");
+    for (const slug of broadcastedSlugs) {
+      try {
+        const spec = getConnector(slug);
+        if (!spec) continue; // slug pas dans le catalog (ex: marketplace MCP)
+        await activateConnector(slug, {});
+      } catch (e) {
+        console.warn(`[oauth-oidc] auto-activate failed for ${slug}:`, e);
+      }
+    }
+  } catch (e) {
+    console.error("[oauth-oidc] auto-activate broadcast failed:", e);
+  }
+
   return { ok: true, connection: conn };
 }

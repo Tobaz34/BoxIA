@@ -60,7 +60,7 @@ export function ConnectorsStatus() {
         </Link>
       </div>
 
-      <div className="space-y-0.5">
+      <div className="space-y-0.5 max-h-56 overflow-y-auto">
         {active.length === 0 && (
           <Link
             href="/connectors"
@@ -72,12 +72,16 @@ export function ConnectorsStatus() {
         {active.slice(0, MAX_VISIBLE).map((c) => (
           <Link
             key={c.slug}
-            href="/connectors"
+            // Deep-link vers la modale de gestion du connecteur (au lieu
+            // de juste la page hub). ConnectorsManager détecte ?open=…
+            // et ouvre directement la modale + scrolle dans la bonne
+            // catégorie. UX : 1 clic = gestion immédiate du connecteur.
+            href={`/connectors?open=${encodeURIComponent(c.slug)}`}
             className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs hover:bg-muted/20 transition-default"
             title={
               c.state?.last_error
                 ? `${c.name} — erreur : ${c.state.last_error}`
-                : `${c.name} — actif`
+                : `${c.name} — actif (cliquer pour gérer)`
             }
           >
             <span>{c.icon}</span>

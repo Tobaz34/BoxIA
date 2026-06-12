@@ -1,0 +1,109 @@
+{
+  "name": "AI Box — Activité OneDrive (digest)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "trigger_4h",
+      "name": "Toutes les 4h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/root/search(q='')?$select=id,name,lastModifiedDateTime,lastModifiedBy,size,webUrl,parentReference&$orderby=lastModifiedDateTime desc&$top=20",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "options": {}
+      },
+      "id": "graph_search",
+      "name": "OneDrive : récents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst items = (r.value || []).filter(f => {\n  if (!f.lastModifiedDateTime) return false;\n  const ago = Date.now() - new Date(f.lastModifiedDateTime).getTime();\n  return ago < 4 * 3600 * 1000; // 4 dernières heures\n});\nif (items.length === 0) return [{ json: { skip: true, count: 0 } }];\nconst fmtSize = (n) => n < 1024 ? n+'o' : n < 1024*1024 ? Math.round(n/1024)+'Ko' : (n/1024/1024).toFixed(1)+'Mo';\nconst lines = items.slice(0, 15).map(f => {\n  const who = f.lastModifiedBy?.user?.displayName || '?';\n  const size = fmtSize(f.size || 0);\n  const folder = f.parentReference?.name || '';\n  return `- ${f.name} (${size}) — modifié par ${who}${folder ? ' dans '+folder : ''}`;\n}).join('\\n');\nconst body = `Bonjour,\\n\\nActivité OneDrive sur les 4 dernières heures — ${items.length} fichier(s) modifié(s) :\\n\\n${lines}\\n\\n— AI Box`;\nreturn [{ json: { count: items.length, body } }];"
+      },
+      "id": "format_files",
+      "name": "Format digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has_items",
+              "leftValue": "={{$json.skip}}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "notTrue", "singleValue": true }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "filter_skip",
+      "name": "Activité ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "subject": "=📁 AI Box — Activité OneDrive ({{$json.count}} fichiers en 4h)",
+        "bodyContent": "={{$json.body}}",
+        "bodyContentType": "Text",
+        "toRecipients": "={{$env.ADMIN_EMAIL}}",
+        "additionalFields": {}
+      },
+      "id": "send_digest",
+      "name": "Envoyer digest admin",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [1120, 240]
+    }
+  ],
+  "connections": {
+    "Toutes les 4h": {
+      "main": [[{ "node": "OneDrive : récents", "type": "main", "index": 0 }]]
+    },
+    "OneDrive : récents": {
+      "main": [[{ "node": "Format digest", "type": "main", "index": 0 }]]
+    },
+    "Format digest": {
+      "main": [[{ "node": "Activité ?", "type": "main", "index": 0 }]]
+    },
+    "Activité ?": {
+      "main": [
+        [{ "node": "Envoyer digest admin", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "AI Box" },
+    { "name": "Microsoft" },
+    { "name": "RAG" },
+    { "name": "Marketplace" }
+  ]
+}

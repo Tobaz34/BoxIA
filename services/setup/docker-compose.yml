@@ -23,10 +23,24 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Marqueur "configuré"
       - aibox_setup_state:/state
+      # Master credentials Cloudflare BoxIA — montés en read-only.
+      # Pourquoi pas env_file: ? Parce que docker-compose CLIENT (qui parse
+      # le YAML côté host) tourne en USER clikinfo, qui ne peut PAS lire un
+      # fichier 600 root → "open ...: permission denied" au démarrage.
+      # Avec un volume mount, c'est le container (qui tourne en root) qui
+      # lit le fichier — pas de problème de perms côté host. Le code Python
+      # (main.py) populate les env vars CF_DEFAULT_* depuis ce fichier au
+      # boot. Si le fichier est absent, le wizard bascule en mode "client
+      # demande les 4 IDs CF" automatiquement.
+      - /etc/aibox-master:/etc/aibox-master:ro
     environment:
       AIBOX_ROOT: /srv/ai-stack
       STATE_FILE: /state/configured
       PYTHONUNBUFFERED: "1"
+      # CF_DEFAULT_* sont chargées dynamiquement par main.py depuis le
+      # volume mount /etc/aibox-master/cloudflare.env (cf. above).
+      # Pour override en dev (test sans master creds), passer en -e à
+      # `docker run`, ou éditer /etc/aibox-master/cloudflare.env directement.
     networks:
       - aibox_net
       - ollama_net   # pour atteindre n8n / open-webui hérités

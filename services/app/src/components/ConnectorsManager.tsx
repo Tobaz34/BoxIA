@@ -17,11 +17,15 @@ import {
   CheckCircle2, X, Settings as SettingsIcon, Search, Clock,
   Shield, Lock, ArrowLeft, ChevronRight,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { HUBS, type ConnectorCategory, type ConnectorHub } from "@/lib/connectors";
 import { OAuthConnectButton } from "@/components/OAuthConnectButton";
 import { ConnectorSyncStatus } from "@/components/ConnectorSyncStatus";
+import { SharePointPicker, type SelectedDrive } from "@/components/SharePointPicker";
+import { ConnectorStatusPanel } from "@/components/ConnectorStatusPanel";
+import { ProviderAccountsBar } from "@/components/ProviderAccountsBar";
 
 interface Field {
   key: string;
@@ -88,6 +92,22 @@ const IMPL_BADGE: Record<ImplStatus, { label: string; cls: string }> = {
   coming_soon:  { label: "À venir",    cls: "bg-muted/20 text-muted" },
 };
 
+/**
+ * Parse la valeur stockée dans config.drive_ids (JSON sérialisé) →
+ * SelectedDrive[] consommable par <SharePointPicker>. Renvoie [] si vide
+ * ou JSON invalide (compat avec l'ancien stockage `site_url` string).
+ */
+function parseSelectedDrives(raw: string | undefined): SelectedDrive[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return v as SelectedDrive[];
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 function relTime(ms: number | null): string {
   if (!ms) return "jamais";
   const diff = Date.now() - ms;
@@ -103,6 +123,8 @@ function relTime(ms: number | null): string {
 export function ConnectorsManager() {
   const { data: session } = useSession();
   const isAdmin = (session?.user as { isAdmin?: boolean })?.isAdmin || false;
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -138,6 +160,39 @@ export function ConnectorsManager() {
       setLoading(false);
     }
   }, []);
+
+  // Deep-link `/connectors?open=<slug>` : ouvre directement la modale du
+  // connecteur ciblé (utilisé par la sidebar « CONNECTEURS »). On scrolle
+  // aussi dans la bonne catégorie pour que l'admin voie le contexte si
+  // ferme la modale. Effect ne s'exécute qu'une fois data chargé et seulement
+  // au premier render avec le param présent (deepLinkOpenedRef évite de
+  // rouvrir si l'admin ferme et navigue dans l'app).
+  const deepLinkOpenedRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkOpenedRef.current) return;
+    if (!data) return;
+    const slugToOpen = searchParams.get("open");
+    if (!slugToOpen) return;
+    const target = data.connectors.find((c) => c.slug === slugToOpen);
+    if (!target) return;
+    deepLinkOpenedRef.current = true;
+    // Scroll dans la bonne catégorie pour le contexte derrière la modale
+    for (const [hub, def] of Object.entries(HUBS)) {
+      if (def.categories.includes(target.category)) {
+        setCurrentHub(hub as ConnectorHub);
+        break;
+      }
+    }
+    // Pré-remplit + ouvre la modale (équivalent à openActivate sans
+    // dépendance circulaire avec le state)
+    setEditing(target);
+    const initial: Record<string, string> = {};
+    for (const f of target.fields) initial[f.key] = "";
+    setEditConfig(initial);
+    setError(null);
+    // Nettoie le query param pour ne pas rouvrir au refresh
+    router.replace("/connectors", { scroll: false });
+  }, [data, searchParams, router]);
 
   function openPermissions(c: ConnectorItem) {
     setPermsTarget(c);
@@ -359,11 +414,19 @@ export function ConnectorsManager() {
       {loading ? (
         <div className="text-center text-sm text-muted py-12">Chargement…</div>
       ) : !isFlatView ? (
-        /* ---------- VUE HUB (grille de grandes tuiles métier) ---------- */
-        <HubGrid
-          stats={hubStats}
-          onPick={(h) => setCurrentHub(h)}
-        />
+        /* ---------- VUE HUB (vue d'accueil) ---------- */
+        <>
+          {/* Section "Comptes connectés" : 1 tuile par provider OAuth.
+              Une connexion broad-scope active d'un coup tous les frères
+              (Microsoft = Outlook+OneDrive+SharePoint+Calendar+Teams). */}
+          <ProviderAccountsBar onChange={refresh} />
+
+          {/* Grille de grandes tuiles par hub métier */}
+          <HubGrid
+            stats={hubStats}
+            onPick={(h) => setCurrentHub(h)}
+          />
+        </>
       ) : (
         <>
           {/* Breadcrumb : si on est dans un hub précis, montre le chemin de retour. */}
@@ -487,12 +550,41 @@ export function ConnectorsManager() {
             {/* Bouton OAuth Device Flow si le connecteur le supporte. Le form
              *  ci-dessous reste visible pour les options non-OAuth (ex: shared
              *  drive ID). La connexion OAuth est complémentaire, pas exclusive. */}
+            {/* Panneau de statut détaillé : compte connecté, périmètre,
+             *  indexation RAG, count emails/events. Visible avant la
+             *  config (la modale devient un écran de monitoring + gestion
+             *  plutôt que juste un form). */}
+            <div className="mb-4">
+              <ConnectorStatusPanel slug={editing.slug} />
+            </div>
+
             {(editing.authMethod === "google_oauth" || editing.authMethod === "azure_ad") && (
               <div className="mb-4">
                 <OAuthConnectButton
                   provider={editing.authMethod === "google_oauth" ? "google" : "microsoft"}
                   connectorSlug={editing.slug}
                 />
+              </div>
+            )}
+
+            {/* SharePoint : picker visuel des bibliothèques. La sélection
+             *  est sérialisée dans config.drive_ids (JSON) que le worker
+             *  rag-msgraph lira pour indexer les bons drives. */}
+            {editing.slug === "sharepoint" && (
+              <div className="mb-4">
+                <label className="text-xs font-medium block mb-2">
+                  Bibliothèques à indexer
+                </label>
+                <SharePointPicker
+                  selected={parseSelectedDrives(editConfig.drive_ids)}
+                  onChange={(sel) =>
+                    setEditConfig({ ...editConfig, drive_ids: JSON.stringify(sel) })
+                  }
+                />
+                <p className="text-[11px] text-muted mt-2">
+                  Cherche un site puis coche les bibliothèques à indexer.
+                  Vous pouvez en sélectionner plusieurs (de différents sites).
+                </p>
               </div>
             )}
 

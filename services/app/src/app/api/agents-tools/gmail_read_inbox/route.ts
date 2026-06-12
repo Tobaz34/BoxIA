@@ -10,7 +10,7 @@
  *     ]}
  *
  * Auth : Bearer AGENTS_API_KEY (cf lib/agents-tools-auth.ts).
- * OAuth : token OAuth utilisateur récupéré via getAccessToken("google:gmail-workspace").
+ * OAuth : token OAuth utilisateur récupéré via getAccessToken("google:gmail").
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
   const max = Math.min(50, Math.max(1, Number(url.searchParams.get("max") ?? 20)));
   const unreadOnly = url.searchParams.get("unread") === "1";
 
-  const tok = await getToolToken("google", "gmail-workspace");
+  const tok = await getToolToken("google", "gmail");
   if (!tok.ok) return NextResponse.json(tok.body, { status: tok.status });
 
   // 1. Liste des IDs de message

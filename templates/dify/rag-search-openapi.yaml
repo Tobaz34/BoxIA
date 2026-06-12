@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: BoxIA RAG Search Tool
+  description: |
+    Recherche sémantique dans les documents indexés par les workers RAG
+    (Google Drive + Microsoft 365 / OneDrive / SharePoint). Permet à
+    l'agent IA d'aller chercher des passages précis dans les documents
+    de l'utilisateur pour fonder ses réponses.
+
+    À utiliser quand l'utilisateur pose une question dont la réponse
+    pourrait se trouver dans un document interne (devis, contrat, fiche
+    client, procédure, email archivé converti en doc, etc.).
+  version: 1.0.0
+
+servers:
+  - url: http://host.docker.internal:3100/api/agents-tools
+
+paths:
+  /rag_search:
+    get:
+      operationId: rag_search
+      summary: Cherche dans les documents indexés (Drive + SharePoint + OneDrive)
+      description: |
+        Lance une recherche sémantique vector-search (cosine similarity)
+        sur les chunks de documents indexés. Retourne les N passages les
+        plus pertinents avec leur score, le nom du fichier source et un
+        lien web pour citer la source dans la réponse.
+
+        Stratégie : appeler ce tool dès qu'une question concerne le
+        contenu de documents internes (procédures, contrats, factures,
+        comptes-rendus, fiches…). Reformuler la question en mots-clés
+        sémantiquement riches (pas en question complète).
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Requête de recherche (mots-clés sémantiques, en français).
+          schema:
+            type: string
+          example: "facture impayée client Pinacle 2025"
+        - name: limit
+          in: query
+          required: false
+          description: Nombre maximum de chunks à retourner (1 à 15, défaut 5).
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 15
+        - name: source
+          in: query
+          required: false
+          description: |
+            Source à interroger : `gdrive` (Google Drive), `msgraph` /
+            `sharepoint` / `onedrive` (Microsoft 365), ou `all` (défaut,
+            les deux).
+          schema:
+            type: string
+            enum: [gdrive, msgraph, sharepoint, onedrive, drive, all]
+            default: all
+      responses:
+        "200":
+          description: Résultats de la recherche.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query:
+                    type: string
+                  count:
+                    type: integer
+                  hits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        score:
+                          type: number
+                          description: Score cosine 0..1, plus c'est haut, plus c'est pertinent.
+                        name:
+                          type: string
+                          description: Nom du fichier source.
+                        source:
+                          type: string
+                          description: Provider d'origine (gdrive, msgraph...).
+                        web_url:
+                          type: string
+                          description: URL pour ouvrir le doc dans son provider (à citer).
+                        text:
+                          type: string
+                          description: Extrait du chunk (~800 chars max).
+                        chunk_idx:
+                          type: integer
+                          description: Index du chunk dans le doc (utile pour debug).
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: AGENTS_API_KEY
+
+security:
+  - BearerAuth: []

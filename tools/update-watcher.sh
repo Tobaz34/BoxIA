@@ -33,6 +33,13 @@ FLAG_PATH_IN_CONTAINER="/data/.update-requested"
 STATUS_PATH_IN_CONTAINER="/data/.update-status"
 RUNTIME_TOKEN_PATH_IN_CONTAINER="/data/.github-token-runtime"
 
+# Flag pour les MAJ de versions de services tiers (Dify, Qdrant, n8n…)
+# Écrit par /api/system/services-versions/update. Format :
+# {slug, target_version, requested_at, requested_by}
+SVC_FLAG_PATH_IN_CONTAINER="/data/.service-update-requested"
+SVC_STATUS_PATH_IN_CONTAINER="/data/.service-update-status"
+SVC_LOG="${HOME:-/home/clikinfo}/.aibox-svcupdate.log"
+
 # Pour le DEPLOY_LOG on garde un fichier disque côté host (clikinfo home),
 # car deploy-to-xefia.sh doit pouvoir y rediriger sa sortie sans passer par
 # docker exec (sinon on perd le streaming).
@@ -165,6 +172,71 @@ while ! docker exec "$APP_CONTAINER" true 2>/dev/null; do
   sleep 5
 done
 
+write_svc_status() {
+  local state="$1" message="$2" extra_json="${3:-{}}"
+  local tail_json="[]"
+  if [[ -f "$SVC_LOG" ]]; then
+    tail_json=$(tail -n 80 "$SVC_LOG" \
+      | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g' \
+      | python3 -c 'import json,sys; print(json.dumps([l.rstrip() for l in sys.stdin if l.strip()]))' 2>/dev/null \
+      || echo "[]")
+  fi
+  local content
+  content=$(python3 - "$state" "$message" "$tail_json" "$extra_json" <<'PY'
+import json, sys, datetime
+state, message, tail, extra = sys.argv[1:5]
+out = {"state": state, "message": message}
+try: out["log_tail"] = json.loads(tail)
+except Exception: out["log_tail"] = []
+try: out.update(json.loads(extra))
+except Exception: pass
+out["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+print(json.dumps(out, ensure_ascii=False, indent=2))
+PY
+)
+  docker_write_file "$SVC_STATUS_PATH_IN_CONTAINER" "$content"
+}
+
+run_service_update() {
+  local slug="$1" target="$2" requested_at="$3" requested_by="$4"
+  local extra
+  extra=$(printf '{"slug":"%s","target":"%s","requested_at":"%s","requested_by":"%s","started_at":"%s"}' \
+    "$slug" "$target" "$requested_at" "$requested_by" "$(date -Iseconds)")
+
+  write_svc_status "running" "MAJ $slug → $target en cours…" "$extra"
+
+  : >"$SVC_LOG"
+  bash "$REPO/tools/update-service-version.sh" "$slug" "$target" >>"$SVC_LOG" 2>&1 &
+  local pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ -f "$SVC_LOG" ]]; then
+      local last_line
+      last_line=$(tail -n 1 "$SVC_LOG" 2>/dev/null | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g' || echo "")
+      if [[ -n "$last_line" ]]; then
+        write_svc_status "running" "$last_line" "$extra"
+      fi
+    fi
+    sleep 2
+  done
+  wait "$pid" || true
+  local rc=$?
+
+  local finished_at
+  finished_at=$(date -Iseconds)
+  local extra_done="${extra%\}},\"finished_at\":\"$finished_at\",\"exit_code\":$rc}"
+  case "$rc" in
+    0) write_svc_status "done" "MAJ $slug → $target réussie" "$extra_done"
+       log "svcupdate OK $slug → $target" ;;
+    3) write_svc_status "rolled_back" "Pull/recreate KO — rollback effectué" "$extra_done"
+       log "svcupdate ROLLBACK pull/recreate $slug" ;;
+    4) write_svc_status "rolled_back" "Smoke test KO après MAJ — rollback effectué" "$extra_done"
+       log "svcupdate ROLLBACK smoke $slug" ;;
+    *) write_svc_status "failed" "Échec inattendu (code $rc), .env peut être incohérent — vérifier manuellement" "$extra_done"
+       log "svcupdate FAIL rc=$rc $slug" ;;
+  esac
+}
+
 while true; do
   if docker_test_file "$FLAG_PATH_IN_CONTAINER"; then
     log "flag detected: $FLAG_PATH_IN_CONTAINER"
@@ -175,5 +247,21 @@ while true; do
     docker_remove_file "$FLAG_PATH_IN_CONTAINER"
     run_deploy "$local_branch" "$local_req_at" "$local_req_by"
   fi
+
+  if docker_test_file "$SVC_FLAG_PATH_IN_CONTAINER"; then
+    log "service-update flag detected: $SVC_FLAG_PATH_IN_CONTAINER"
+    svc_flag=$(docker_read_file "$SVC_FLAG_PATH_IN_CONTAINER")
+    svc_slug=$(printf '%s' "$svc_flag" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("slug",""))' 2>/dev/null || echo "")
+    svc_target=$(printf '%s' "$svc_flag" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("target_version",""))' 2>/dev/null || echo "")
+    svc_req_at=$(printf '%s' "$svc_flag" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("requested_at",""))' 2>/dev/null || echo "")
+    svc_req_by=$(printf '%s' "$svc_flag" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("requested_by",""))' 2>/dev/null || echo "")
+    docker_remove_file "$SVC_FLAG_PATH_IN_CONTAINER"
+    if [[ -n "$svc_slug" && -n "$svc_target" ]]; then
+      run_service_update "$svc_slug" "$svc_target" "$svc_req_at" "$svc_req_by"
+    else
+      log "✗ flag service-update mal formé (slug='$svc_slug' target='$svc_target')"
+    fi
+  fi
+
   sleep "$POLL_SEC"
 done

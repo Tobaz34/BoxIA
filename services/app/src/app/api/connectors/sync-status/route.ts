@@ -37,7 +37,7 @@ const SLUG_MAP: Record<
     collection_prefix: "rag_msgraph_",
     provider: "microsoft",
   },
-  "sharepoint-online": {
+  "sharepoint": {
     container: "aibox-conn-rag-msgraph",
     collection_prefix: "rag_msgraph_",
     provider: "microsoft",

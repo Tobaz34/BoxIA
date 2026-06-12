@@ -21,6 +21,14 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createWorkflow, listWorkflows } from "@/lib/n8n";
 import type { N8nWorkflow } from "@/lib/n8n";
+import { getState } from "@/lib/connectors-state";
+import { getConnector } from "@/lib/connectors";
+import {
+  pushCredentialFromConnector,
+  getCredentialRefForSlug,
+  bridgedConnectorSlugs,
+  type N8nCredentialRef,
+} from "@/lib/n8n-credentials";
 
 const MARKETPLACE_DIR =
   process.env.N8N_MARKETPLACE_DIR || "/templates/n8n/marketplace";
@@ -43,6 +51,21 @@ export interface MarketplaceCategoryDef {
   icon: string;
 }
 
+/**
+ * Mapping d'un node n8n du template vers un connecteur BoxIA.
+ *
+ * Au moment de l'install marketplace, on injecte dans le node nommé
+ * `node_name` la credential n8n associée au connecteur BoxIA `connector_slug`
+ * (poussée par lib/n8n-credentials.ts). La clé `n8n_credential_key` est
+ * la propriété sous `node.credentials` attendue par n8n (ex. "imap" pour
+ * `emailReadImap`, "smtp" pour `emailSend`, "slackApi" pour `slack`).
+ */
+export interface N8nCredentialsMapping {
+  node_name: string;
+  connector_slug: string;
+  n8n_credential_key: string;
+}
+
 export interface MarketplaceWorkflow {
   /** Nom du fichier JSON (clé canonique). */
   file: string;
@@ -56,12 +79,29 @@ export interface MarketplaceWorkflow {
   description: string;
   /** Niveau de complexité. */
   difficulty: MarketplaceDifficulty;
-  /** Liste de credentials externes à configurer dans n8n après import. */
+  /**
+   * Liste de credentials externes à configurer dans n8n après import.
+   * Préférer désormais `n8n_credentials_mapping` qui automatise.
+   * Conservé pour rétro-compat sur les workflows community.
+   */
   credentials_required: string[];
   /** Services BoxIA requis (filtrage côté UI selon la config client). */
   boxia_services: string[];
   /** Si true, importé + activé automatiquement au first-run. */
   default_active: boolean;
+  /**
+   * Mapping nodes ↔ connecteurs BoxIA pour résolution auto au moment de
+   * l'install (cf. installMarketplaceWorkflow). Si vide, comportement
+   * legacy (l'admin doit configurer les creds dans la console n8n).
+   */
+  n8n_credentials_mapping?: N8nCredentialsMapping[];
+  /**
+   * Liste de slugs de connecteurs BoxIA dont le statut doit être `active`
+   * pour que ce workflow puisse fonctionner (vérifié au préflight install).
+   * Couvre à la fois les connecteurs nécessaires pour les credentials n8n
+   * ET les workers BoxIA appelés par le workflow (ex. Pennylane).
+   */
+  required_connectors?: string[];
   /**
    * Origine du template :
    *   - "boxia"     : workflow officiel BoxIA (taillé pour notre stack,
@@ -88,6 +128,28 @@ interface RawCatalog {
   version?: number;
   categories?: unknown;
   workflows?: unknown;
+}
+
+/** Valide et parse le champ `n8n_credentials_mapping` du catalogue. */
+function parseCredentialsMapping(raw: unknown): N8nCredentialsMapping[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: N8nCredentialsMapping[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const m = item as Record<string, unknown>;
+    if (
+      typeof m.node_name === "string" &&
+      typeof m.connector_slug === "string" &&
+      typeof m.n8n_credential_key === "string"
+    ) {
+      out.push({
+        node_name: m.node_name,
+        connector_slug: m.connector_slug,
+        n8n_credential_key: m.n8n_credential_key,
+      });
+    }
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /** Lit `_catalog.json` et le valide a minima. */
@@ -144,6 +206,12 @@ export async function readCatalog(): Promise<MarketplaceCatalog> {
               )
             : [],
           default_active: w.default_active === true,
+          n8n_credentials_mapping: parseCredentialsMapping(w.n8n_credentials_mapping),
+          required_connectors: Array.isArray(w.required_connectors)
+            ? (w.required_connectors as unknown[]).filter(
+                (x): x is string => typeof x === "string",
+              )
+            : [],
           source: "boxia" as const,
         }))
     : [];
@@ -245,40 +313,186 @@ export interface InstallMarketplaceResult {
   name: string;
   /** UUID du workflow n8n nouvellement créé. */
   workflow_id: string;
+  /** Slugs des connecteurs BoxIA dont les creds ont été poussées dans n8n. */
+  credentials_pushed?: string[];
+  /** Nodes du workflow qui ont été patchés avec une credential. */
+  nodes_credentialed?: string[];
+}
+
+/**
+ * Statut "prêt à installer" pour un workflow marketplace : indique si
+ * tous les `required_connectors` sont actifs côté BoxIA. Calculé par
+ * GET /api/workflows/marketplace pour permettre à l'UI d'afficher
+ * "Installer en 1 clic" vs "Connecte d'abord X".
+ */
+export interface PrerequisitesStatus {
+  ready: boolean;
+  missing: string[]; // slugs manquants
+  missing_labels: string[]; // noms lisibles
+}
+
+/**
+ * Calcule le statut des connecteurs requis pour un workflow.
+ * Retourne `ready: true` si pas de pré-requis (workflows community ou
+ * BoxIA-aware sans dépendance).
+ */
+export async function checkPrerequisites(
+  w: MarketplaceWorkflow,
+): Promise<PrerequisitesStatus> {
+  const required = w.required_connectors || [];
+  if (required.length === 0) {
+    return { ready: true, missing: [], missing_labels: [] };
+  }
+  const missing: string[] = [];
+  const labels: string[] = [];
+  for (const slug of required) {
+    const st = await getState(slug);
+    if (!st || st.status !== "active") {
+      missing.push(slug);
+      const spec = getConnector(slug);
+      labels.push(spec ? spec.name : slug);
+    }
+  }
+  return {
+    ready: missing.length === 0,
+    missing,
+    missing_labels: labels,
+  };
+}
+
+/**
+ * Patche un template de workflow JSON pour injecter les credentials n8n
+ * référencées par leur slug BoxIA. Mute une copie de `tpl`, ne touche pas
+ * l'original.
+ *
+ * Pour chaque entrée du `mapping`, cherche le node par `node_name` et
+ * pose `node.credentials[n8n_credential_key] = { id, name }`. Si le node
+ * n'est pas trouvé ou si la credential n8n n'existe pas (push raté),
+ * skippe silencieusement (on retourne le template tel quel ; l'install
+ * réussit mais le node erre au runtime — l'admin verra dans les logs n8n).
+ *
+ * Retourne le template modifié et la liste des nodes effectivement patchés.
+ */
+async function patchTemplateWithCredentials(
+  tpl: Record<string, unknown>,
+  mapping: N8nCredentialsMapping[],
+): Promise<{ patched: Record<string, unknown>; nodes_credentialed: string[] }> {
+  const cloned = JSON.parse(JSON.stringify(tpl)) as Record<string, unknown>;
+  const nodes = Array.isArray(cloned.nodes) ? (cloned.nodes as Record<string, unknown>[]) : [];
+  const credentialed: string[] = [];
+
+  // Cache local pour éviter de re-fetcher la même cred plusieurs fois.
+  const refCache = new Map<string, N8nCredentialRef | null>();
+  const getRef = async (slug: string): Promise<N8nCredentialRef | null> => {
+    if (refCache.has(slug)) return refCache.get(slug) || null;
+    let ref = await getCredentialRefForSlug(slug);
+    // Cred pas encore créée ? Tente un push à la volée (le connecteur peut
+    // avoir été activé avant que le bridge soit en place).
+    if (!ref) ref = await pushCredentialFromConnector(slug);
+    refCache.set(slug, ref);
+    return ref;
+  };
+
+  for (const m of mapping) {
+    const node = nodes.find((n) => n.name === m.node_name);
+    if (!node) continue;
+    const ref = await getRef(m.connector_slug);
+    if (!ref) continue;
+    const creds = (typeof node.credentials === "object" && node.credentials)
+      ? (node.credentials as Record<string, unknown>)
+      : {};
+    creds[m.n8n_credential_key] = { id: ref.id, name: ref.name };
+    node.credentials = creds;
+    credentialed.push(m.node_name);
+  }
+
+  return { patched: cloned, nodes_credentialed: credentialed };
 }
 
 /**
  * Installe un workflow marketplace dans n8n.
  *
- * - Lit le JSON depuis `templates/n8n/marketplace/<file>`
- * - Strip les champs server-side (cf. createWorkflow) puis POST `/rest/workflows`
- * - Toujours créé avec `active: false` (l'admin doit configurer les
- *   credentials_required avant d'activer).
+ * Pipeline :
+ *   1. Lit le JSON depuis `templates/n8n/marketplace/<file>`
+ *   2. Préflight : vérifie que les `required_connectors` sont actifs.
+ *      Si non → throw avec la liste des manquants (l'API renvoie 422).
+ *   3. Pour chaque entrée du `n8n_credentials_mapping`, push la
+ *      credential n8n si pas déjà fait, puis patche le node correspondant
+ *      du JSON pour injecter `node.credentials[key] = { id, name }`.
+ *   4. POST `/rest/workflows` (toujours `active: false`).
  *
- * Si un workflow du même nom existe déjà côté n8n, on renvoie
- * `already_installed` au lieu de dupliquer.
+ * Idempotent : si un workflow du même nom existe déjà côté n8n, on
+ * renvoie `already_installed` au lieu de dupliquer.
  */
+export class PrerequisitesError extends Error {
+  status: PrerequisitesStatus;
+  constructor(status: PrerequisitesStatus) {
+    super(`Connecteurs manquants : ${status.missing_labels.join(", ")}`);
+    this.name = "PrerequisitesError";
+    this.status = status;
+  }
+}
+
 export async function installMarketplaceWorkflow(
   file: string,
 ): Promise<InstallMarketplaceResult | { already_installed: true; name: string }> {
+  // 1. Lecture du JSON brut
   const tpl = await readWorkflowTemplate(file);
-  // C'est `tpl.name` (JSON interne du template) qui est utilisé par n8n
-  // comme nom du workflow — pas le `name` user-friendly du catalogue.
-  // L'idempotence et la détection « déjà installé » se font sur cette base.
   const name = typeof tpl.name === "string" ? tpl.name : file.replace(/\.json$/, "");
 
-  // Idempotent : si déjà présent côté n8n on ne re-crée pas.
+  // 2. Idempotence : si déjà présent côté n8n on ne re-crée pas.
   const existing = await listWorkflows();
   const dup = existing.find((w) => w.name === name);
   if (dup) {
     return { already_installed: true, name };
   }
 
-  const wf = await createWorkflow(tpl);
+  // 3. Récupère la fiche catalogue pour le préflight et le mapping.
+  // (Si pas dans le catalogue — appel direct par autre chemin — on skippe.)
+  const catalog = await readCatalog();
+  const entry = catalog.workflows.find((w) => w.file === file);
+
+  // 4. Préflight : connecteurs requis actifs ?
+  if (entry) {
+    const status = await checkPrerequisites(entry);
+    if (!status.ready) {
+      throw new PrerequisitesError(status);
+    }
+  }
+
+  // 5. Patch des credentials sur le JSON avant POST n8n
+  let toCreate = tpl;
+  const credentialed: string[] = [];
+  const credsPushed: string[] = [];
+  if (entry?.n8n_credentials_mapping?.length) {
+    const r = await patchTemplateWithCredentials(tpl, entry.n8n_credentials_mapping);
+    toCreate = r.patched;
+    credentialed.push(...r.nodes_credentialed);
+    // Liste les slugs effectivement résolus
+    for (const m of entry.n8n_credentials_mapping) {
+      if (
+        bridgedConnectorSlugs().includes(m.connector_slug) &&
+        r.nodes_credentialed.includes(m.node_name)
+      ) {
+        if (!credsPushed.includes(m.connector_slug)) {
+          credsPushed.push(m.connector_slug);
+        }
+      }
+    }
+  }
+
+  // 6. POST n8n
+  const wf = await createWorkflow(toCreate);
   if (!wf) {
     throw new Error(`n8n createWorkflow a renvoyé null pour ${file}`);
   }
-  return { file, name, workflow_id: wf.id };
+  return {
+    file,
+    name,
+    workflow_id: wf.id,
+    credentials_pushed: credsPushed,
+    nodes_credentialed: credentialed,
+  };
 }
 
 /**

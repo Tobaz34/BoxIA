@@ -25,7 +25,7 @@ export async function GET(req: Request) {
   }
   const max = Math.min(50, Math.max(1, Number(url.searchParams.get("max") ?? 20)));
 
-  const tok = await getToolToken("google", "gmail-workspace");
+  const tok = await getToolToken("google", "gmail");
   if (!tok.ok) return NextResponse.json(tok.body, { status: tok.status });
 
   const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}&q=${encodeURIComponent(q)}`;

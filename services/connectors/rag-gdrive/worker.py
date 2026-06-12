@@ -42,6 +42,18 @@ import traceback
 from pathlib import Path
 
 import httpx
+# --- Monkey-patch pdfminer.six avant l'import d'unstructured -------------
+# pdfminer.six ≥ ~20250324 a renommé PSSyntaxError → PDFSyntaxError.
+# unstructured 0.16.13 utilise encore l'ancien nom → ImportError sur les
+# PDFs. Cf services/connectors/rag-msgraph/worker.py pour le contexte.
+try:
+    from pdfminer.pdfparser import PSSyntaxError  # noqa: F401
+except ImportError:
+    import pdfminer.pdfparser as _pp
+    if hasattr(_pp, "PDFSyntaxError"):
+        _pp.PSSyntaxError = _pp.PDFSyntaxError
+# ------------------------------------------------------------------------
+
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from qdrant_client import QdrantClient

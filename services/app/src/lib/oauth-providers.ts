@@ -73,7 +73,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
         "profile",
         "https://www.googleapis.com/auth/drive.readonly",
       ],
-      "gmail-workspace": [
+      "gmail": [
         "openid",
         "email",
         "profile",
@@ -100,26 +100,34 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
     client_id: process.env.MICROSOFT_OAUTH_CLIENT_ID,
     // Public client → pas de secret côté Azure AD si "Allow public client flows" activé
     client_secret: process.env.MICROSOFT_OAUTH_CLIENT_SECRET,
-    default_scopes: ["openid", "email", "profile", "offline_access"],
+    // User.Read est requis pour /v1.0/me (userinfo) — sans ça l'email
+    // du compte n'est jamais renseigné, et l'UI affiche juste "Connecté"
+    // sans préciser quel compte. Vérifié 2026-05-04 : 5 connexions
+    // existantes sans account_email à cause de cet oubli.
+    default_scopes: ["openid", "email", "profile", "offline_access", "User.Read"],
     connector_scopes: {
       "onedrive": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Files.Read", "Files.Read.All",
       ],
       "outlook-graph": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Mail.Read",
+        // Mail.Send permet aux workflows n8n d'envoyer des emails via le
+        // node microsoftOutlook (digest matin, briefing agenda, etc.) sans
+        // dépendre d'un SMTP séparé.
+        "Mail.Send",
       ],
       "outlook-calendar": [
-        "openid", "email", "profile", "offline_access",
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Calendars.Read",
       ],
-      "sharepoint-online": [
-        "openid", "email", "profile", "offline_access",
+      "sharepoint": [
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Sites.Read.All",
       ],
-      "microsoft-teams": [
-        "openid", "email", "profile", "offline_access",
+      "teams": [
+        "openid", "email", "profile", "offline_access", "User.Read",
         "Channel.ReadBasic.All", "ChannelMessage.Read.All",
       ],
     },
@@ -132,4 +140,84 @@ export function providerForAuthMethod(authMethod: string | undefined): OAuthProv
   if (authMethod === "google_oauth") return "google";
   if (authMethod === "azure_ad") return "microsoft";
   return null;
+}
+
+/**
+ * Convertit un scope OAuth verbeux ("Files.Read", "https://www.googleapis
+ * .com/auth/drive.readonly") en label humain pour l'UI ("OneDrive — lecture").
+ *
+ * Renvoie `null` pour les scopes "infrastructure" (openid, email, profile,
+ * offline_access, User.Read) qui n'apportent pas d'info à l'utilisateur.
+ */
+export function humanizeScope(scope: string): string | null {
+  // Infrastructure → on les masque
+  if (
+    scope === "openid" || scope === "email" || scope === "profile" ||
+    scope === "offline_access" || scope === "User.Read"
+  ) return null;
+
+  // Google
+  if (scope === "https://www.googleapis.com/auth/drive.readonly") return "Google Drive — lecture";
+  if (scope === "https://www.googleapis.com/auth/gmail.readonly") return "Gmail — lecture";
+  if (scope === "https://www.googleapis.com/auth/calendar.readonly") return "Google Calendar — lecture";
+  if (scope === "https://www.googleapis.com/auth/contacts.readonly") return "Contacts — lecture";
+
+  // Microsoft Graph
+  if (scope === "Files.Read" || scope === "Files.Read.All") return "OneDrive / Drive — lecture";
+  if (scope === "Mail.Read") return "Outlook Mail — lecture";
+  if (scope === "Calendars.Read") return "Outlook Calendar — lecture";
+  if (scope === "Sites.Read.All") return "SharePoint — lecture";
+  if (scope.startsWith("Channel")) return "Teams — lecture canaux";
+  if (scope.startsWith("ChannelMessage")) return "Teams — lecture messages";
+
+  // Inconnu : on retourne tel quel pour ne pas tromper l'utilisateur
+  return scope;
+}
+
+/**
+ * Liste de scopes → liste de labels humains, sans doublons, sans nulls.
+ * Utilisée par l'UI pour afficher "Ce compte donne accès à : OneDrive…"
+ */
+export function humanizeScopes(scopes: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of scopes) {
+    const h = humanizeScope(s);
+    if (h && !seen.has(h)) {
+      seen.add(h);
+      out.push(h);
+    }
+  }
+  return out;
+}
+
+/**
+ * Slugs frères qui partagent le même compte OAuth chez un provider.
+ * Ex: connecter Google Drive autorise aussi Gmail + Calendar avec le
+ * même token (si l'utilisateur consent aux scopes union).
+ *
+ * Source : keys de `connector_scopes` du provider.
+ */
+export function siblingSlugs(providerId: OAuthProviderId): string[] {
+  const p = OAUTH_PROVIDERS[providerId];
+  return Object.keys(p.connector_scopes || {});
+}
+
+/**
+ * Union de tous les scopes des connecteurs frères chez un provider.
+ * Permet de demander en 1 seul consent l'accès à Drive+Gmail+Calendar
+ * (Google) ou OneDrive+Outlook+Calendar+SharePoint+Teams (Microsoft).
+ *
+ * Utilisé par /api/oauth/start avec ?broad=1 pour activer le mode
+ * "1 connexion couvre tous les connecteurs du provider".
+ *
+ * Inclut toujours les `default_scopes` (openid/email/profile/offline_access).
+ */
+export function unionConnectorScopes(providerId: OAuthProviderId): string[] {
+  const p = OAUTH_PROVIDERS[providerId];
+  const all = new Set<string>(p.default_scopes);
+  for (const scopes of Object.values(p.connector_scopes || {})) {
+    for (const s of scopes) all.add(s);
+  }
+  return Array.from(all);
 }

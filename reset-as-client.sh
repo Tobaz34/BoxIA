@@ -27,8 +27,21 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Si root (lancé depuis container), pas besoin de sudo
+# sudo seulement si on n'est pas root ET que l'user courant ne peut pas
+# écrire dans /srv/ai-stack/. Permet à un wrapper non-interactif (cf.
+# tools/reset-xefia.sh) de fonctionner sans demander mdp si l'user
+# clikinfo possède déjà /srv/ai-stack/.env (cas typique post-install
+# 2026-05+). Évite l'échec « sudo: a password is required » quand
+# clikinfo n'est pas dans la whitelist NOPASSWD pour `mv`.
 SUDO=""
-[[ "$EUID" -ne 0 ]] && SUDO="sudo"
+if [[ "$EUID" -ne 0 ]]; then
+    if [[ -f /srv/ai-stack/.env ]] && [[ -w /srv/ai-stack/.env ]] \
+       && [[ -w /srv/ai-stack ]]; then
+        SUDO=""  # On peut écrire — pas besoin de sudo
+    else
+        SUDO="sudo"
+    fi
+fi
 
 KEEP_OWUI=false
 ASSUME_YES=false
