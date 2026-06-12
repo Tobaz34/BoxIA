@@ -39,6 +39,14 @@ ENV_FILE = Path(os.environ.get("AIBOX_ENV_FILE", "/srv/ai-stack/.env"))
 DATASET_NAME = "Base de connaissances"
 DATASET_DESCRIPTION = "Documents partagés AI Box"
 
+# Embedding : pré-requis à la création du dataset (« Default model not
+# found for text-embedding » sinon — c'est l'erreur racine qui avait fait
+# échouer l'étape KB du wizard sur l'install fraîche).
+EMBED_MODEL = os.environ.get("LLM_EMBED", "bge-m3:latest")
+OLLAMA_PROVIDER = "langgenius/ollama/ollama"
+# URL vue PAR Dify (réseau docker interne), pas par cette migration.
+OLLAMA_INTERNAL_URL = os.environ.get("OLLAMA_INTERNAL_URL", "http://ollama:11434")
+
 # Agents qui doivent retriever depuis la KB (mêmes noms que DEFAULT_AGENTS
 # du wizard ; le Concierge et l'agent vision n'en ont pas besoin).
 TARGET_AGENT_NAMES = [
@@ -122,6 +130,81 @@ def _connect():
 # ---------------------------------------------------------------------------
 # Étapes
 # ---------------------------------------------------------------------------
+
+def _ensure_model_pulled(model: str) -> None:
+    """Télécharge le modèle dans Ollama s'il est absent (cf wizard
+    _ensure_ollama_model_pulled). Sur l'install fraîche 05-13, bge-m3
+    n'avait jamais été pull → cascade : pas d'embedding Dify → pas de
+    dataset → pas de RAG."""
+    base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    def _norm(n: str) -> str:
+        return n[:-7] if n.endswith(":latest") else n
+
+    with urllib.request.urlopen(f"{base}/api/tags", timeout=10) as r:
+        tags = json.loads(r.read())
+    present = {_norm(m.get("name", "")) for m in tags.get("models") or []}
+    if _norm(model) in present:
+        print(f"  - {model} déjà présent dans Ollama")
+        return
+    print(f"  … pull {model} dans Ollama (peut prendre quelques minutes)")
+    req = urllib.request.Request(
+        f"{base}/api/pull",
+        data=json.dumps({"model": model}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST")
+    last_status = ""
+    with urllib.request.urlopen(req, timeout=1800) as r:
+        for line in r:
+            try:
+                st = json.loads(line).get("status", "")
+            except json.JSONDecodeError:
+                continue
+            if st and st != last_status and "pulling" not in st:
+                print(f"    {st}")
+                last_status = st
+    print(f"  ✓ {model} pull terminé")
+
+
+def _ensure_embedding_model(s) -> None:
+    """Enregistre bge-m3 comme modèle text-embedding Ollama dans Dify puis
+    le définit comme défaut du workspace. Idempotent (cf wizard
+    _add_ollama_embedding / _set_default_embedding)."""
+    already = False
+    try:
+        r = s.get(f"/workspaces/current/model-providers/{OLLAMA_PROVIDER}/models")
+        for m in r.get("data") or []:
+            if m.get("model") == EMBED_MODEL and \
+               m.get("model_type") in ("text-embedding", "embeddings"):
+                already = True
+                break
+    except Exception:
+        pass
+    if not already:
+        s.post(
+            f"/workspaces/current/model-providers/{OLLAMA_PROVIDER}/models/credentials",
+            {
+                "model": EMBED_MODEL,
+                "model_type": "text-embedding",
+                "credentials": {
+                    "model": EMBED_MODEL,
+                    "context_size": "8192",
+                    "base_url": OLLAMA_INTERNAL_URL,
+                },
+            })
+        print(f"  ✓ modèle embedding {EMBED_MODEL} enregistré dans Dify")
+    else:
+        print(f"  - modèle embedding {EMBED_MODEL} déjà enregistré")
+    # Défaut workspace — sans ça, POST /datasets refuse (invalid_param).
+    s.post("/workspaces/current/default-model", {
+        "model_settings": [{
+            "model_type": "text-embedding",
+            "provider": OLLAMA_PROVIDER,
+            "model": EMBED_MODEL,
+        }],
+    })
+    print(f"  ✓ {EMBED_MODEL} défini comme text-embedding par défaut")
+
 
 def _find_dataset(s) -> str | None:
     try:
@@ -277,7 +360,9 @@ def is_applied() -> bool:
 
 
 def run() -> None:
+    _ensure_model_pulled(EMBED_MODEL)
     s = _connect()
+    _ensure_embedding_model(s)
     ds_id = _ensure_dataset(s)
     existing_key = _env_get("DIFY_KB_API_KEY")
     kb_key = existing_key or _ensure_dataset_api_key(s)
