@@ -28,6 +28,7 @@ Notes :
 from __future__ import annotations
 
 import abc
+import hmac
 import json
 import logging
 import sys
@@ -516,9 +517,9 @@ class CalDavBackend(CalendarBackend):
             f"DTSTAMP:{_dt.utcnow().strftime('%Y%m%dT%H%M%SZ')}\r\n"
             f"DTSTART:{ev.start.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}\r\n"
             f"DTEND:{ev.end.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}\r\n"
-            f"SUMMARY:{ev.title}\r\n"
-            + (f"DESCRIPTION:{ev.description}\r\n" if ev.description else "")
-            + (f"LOCATION:{ev.location}\r\n" if ev.location else "")
+            f"SUMMARY:{_ical_escape(ev.title)}\r\n"
+            + (f"DESCRIPTION:{_ical_escape(ev.description)}\r\n" if ev.description else "")
+            + (f"LOCATION:{_ical_escape(ev.location)}\r\n" if ev.location else "")
             + "END:VEVENT\r\n"
             "END:VCALENDAR\r\n"
         )
@@ -540,6 +541,21 @@ class CalDavBackend(CalendarBackend):
                 end=_ical_dt(ical.get("dtend") or ical.get("dtstart")),
             ))
         return [FreeBusyResult(attendee=self.s.caldav_username, busy=busy)]
+
+
+def _ical_escape(s: str) -> str:
+    """Échappe une valeur TEXT selon RFC 5545 §3.3.11 (anti-injection iCal).
+
+    `\\` → `\\\\`, `;` → `\\;`, `,` → `\\,`, CRLF/LF/CR → `\\n` (littéral).
+    """
+    return (
+        s.replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\r\n", "\\n")
+        .replace("\n", "\\n")
+        .replace("\r", "\\n")
+    )
 
 
 def _ical_dt(field: Any) -> datetime:
@@ -579,7 +595,8 @@ bearer = HTTPBearer(auto_error=False)
 
 def require_api_key(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
     s = get_settings()
-    if creds is None or creds.scheme.lower() != "bearer" or creds.credentials != s.tool_api_key:
+    # Comparaison constant-time (évite les timing attacks sur le token)
+    if creds is None or creds.scheme.lower() != "bearer" or not hmac.compare_digest(creds.credentials.encode(), s.tool_api_key.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key invalide ou manquante",

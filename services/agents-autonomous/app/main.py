@@ -16,6 +16,7 @@ host) de consommer les endpoints. À durcir si exposition LAN/WAN.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import sys
 import time
@@ -88,7 +89,8 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 def require_api_key(creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)):
     s = get_settings()
-    if creds is None or creds.scheme.lower() != "bearer" or creds.credentials != s.agents_api_key:
+    # Comparaison constant-time (évite les timing attacks sur le token)
+    if creds is None or creds.scheme.lower() != "bearer" or not hmac.compare_digest(creds.credentials.encode(), s.agents_api_key.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key invalide ou manquante",

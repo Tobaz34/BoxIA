@@ -39,6 +39,7 @@ Variables :
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -207,7 +208,8 @@ Règles strictes :
 # ===========================================================================
 
 DENY_PATTERNS = re.compile(
-    r"\b(insert|update|delete|drop|create|alter|truncate|grant|revoke|merge|exec|call|copy|vacuum)\b",
+    r"\b(insert|update|delete|drop|create|alter|truncate|grant|revoke|merge|exec|call|copy|vacuum"
+    r"|pg_read_file|pg_read_binary_file|pg_ls_dir|lo_import|lo_export|pg_sleep|dblink)\b",
     re.IGNORECASE,
 )
 
@@ -279,7 +281,9 @@ class QueryResponse(BaseModel):
 
 
 def auth(authorization: str | None) -> None:
-    if not authorization or authorization.removeprefix("Bearer ").strip() != TOOL_API_KEY:
+    # Comparaison constant-time (évite les timing attacks sur le token)
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(token.encode(), TOOL_API_KEY.encode()):
         raise HTTPException(401, "Auth required")
 
 
@@ -348,8 +352,19 @@ def query(req: QueryRequest, authorization: Annotated[str | None, Header()] = No
         try:
             safety = explain_safety_check(sql)
             with engine.connect() as conn:
+                # Défense principale : transaction READ ONLY inconditionnelle.
+                # Même si le rôle DB a des droits d'écriture, la transaction
+                # rejette INSERT/UPDATE/DELETE/DDL au niveau serveur.
                 if DB_TYPE == "postgres":
+                    conn.execute(text("SET TRANSACTION READ ONLY"))
                     conn.execute(text(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"))
+                elif DB_TYPE == "mysql":
+                    # MySQL refuse SET TRANSACTION en cours de transaction →
+                    # variante SESSION (s'applique à toutes les transactions
+                    # de la connexion, OK : ce service ne fait que lire).
+                    conn.execute(text("SET SESSION TRANSACTION READ ONLY"))
+                # MSSQL : pas d'équivalent transactionnel simple — la défense
+                # repose sur DENY_PATTERNS + le rôle DB en lecture seule.
                 result = conn.execute(text(sql))
                 rows = [dict(r._mapping) for r in result]
             log.info("query OK (attempt=%d, ms=%d, rows=%d)", attempt + 1, int((time.time() - started) * 1000), len(rows))

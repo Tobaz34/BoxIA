@@ -21,6 +21,7 @@ L'API REST est triviale, ~200 lignes suffisent.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import sys
@@ -86,22 +87,30 @@ def _setup_logging():
 # ===========================================================================
 
 class PennylaneError(Exception):
+    """Erreur Pennylane non-transitoire (401/404/422…) — pas de retry."""
+    pass
+
+
+class PennylaneTransientError(PennylaneError):
+    """Erreur transitoire (429 / 5xx) — retriée par tenacity."""
     pass
 
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, PennylaneError)),
+    retry=retry_if_exception_type((httpx.HTTPError, PennylaneTransientError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=8),
     reraise=True,
 )
 def _pennylane_get(path: str, params: dict | None = None) -> dict:
-    """Appel REST Pennylane avec retry + auth bearer."""
+    """Appel REST Pennylane avec retry (transitoire uniquement) + auth bearer."""
     s = get_settings()
     url = f"{s.pennylane_base_url}{path}"
     headers = {"Authorization": f"Bearer {s.pennylane_token}", "Accept": "application/json"}
     with httpx.Client(timeout=s.http_timeout_seconds) as c:
         r = c.get(url, headers=headers, params=params or {})
+        if r.status_code == 429 or r.status_code >= 500:
+            raise PennylaneTransientError(f"Pennylane {r.status_code}: {r.text[:300]}")
         if r.status_code >= 400:
             raise PennylaneError(f"Pennylane {r.status_code}: {r.text[:300]}")
         return r.json()
@@ -253,7 +262,8 @@ bearer = HTTPBearer(auto_error=False)
 
 def require_api_key(creds: HTTPAuthorizationCredentials | None = Depends(bearer)):
     s = get_settings()
-    if creds is None or creds.scheme.lower() != "bearer" or creds.credentials != s.pennylane_tool_api_key:
+    # Comparaison constant-time (évite les timing attacks sur le token)
+    if creds is None or creds.scheme.lower() != "bearer" or not hmac.compare_digest(creds.credentials.encode(), s.pennylane_tool_api_key.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key invalide ou manquante",

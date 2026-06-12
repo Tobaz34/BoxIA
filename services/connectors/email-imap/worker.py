@@ -101,6 +101,11 @@ def fetch_new_messages(imap: imaplib.IMAP4) -> list[tuple[int, dict]]:
     out: list[tuple[int, dict]] = []
     for uid_b in uids:
         uid = int(uid_b)
+        # Quirk IMAP : "UID N:*" renvoie TOUJOURS le dernier message de la
+        # boîte même s'il n'y a aucun nouveau mail → filtrage côté client
+        # pour ne pas re-traiter le dernier mail à chaque cycle.
+        if last > 0 and uid <= last:
+            continue
         typ, msg_data = imap.uid("FETCH", uid_b, "(RFC822)")
         if typ != "OK" or not msg_data or not msg_data[0]:
             continue
@@ -285,16 +290,26 @@ def sync_once() -> dict:
         msgs = fetch_new_messages(imap)
         if not msgs:
             return {"processed": 0}
-        max_uid = get_last_uid()
-        for uid, m in msgs:
+        ok_uids: set[int] = set()
+        failed = 0
+        for uid, m in sorted(msgs, key=lambda x: x[0]):
             try:
                 process(uid, m)
-                if uid > max_uid:
-                    max_uid = uid
+                ok_uids.add(uid)
             except Exception as e:
+                failed += 1
                 log.error("process uid=%d: %s", uid, e)
-        set_last_uid(max_uid)
-        return {"processed": len(msgs), "last_uid": max_uid}
+        # N'avance le curseur que jusqu'au plus grand UID contigu traité avec
+        # succès : on s'arrête au premier échec pour que le mail en erreur
+        # soit retenté au prochain cycle.
+        last_uid = get_last_uid()
+        for uid, _m in sorted(msgs, key=lambda x: x[0]):
+            if uid not in ok_uids:
+                break
+            if uid > last_uid:
+                last_uid = uid
+        set_last_uid(last_uid)
+        return {"processed": len(ok_uids), "failed": failed, "last_uid": last_uid}
     finally:
         try:
             imap.close()

@@ -55,18 +55,21 @@ def webdav_client() -> WebDAVClient:
     })
 
 
-def walk_files(client: WebDAVClient, path: str = "/"):
+def walk_files(client: WebDAVClient, path: str = "/", walk_errors: list[str] | None = None):
     try:
         items = client.list(path, get_info=True)
     except Exception as e:
         log.warning("list %s: %s", path, e)
+        # Listing partiel → on le signale au caller (bloque la réconciliation)
+        if walk_errors is not None:
+            walk_errors.append(path)
         return
     for it in items:
         rel = it.get("path", "")
         if rel in (path, path + "/", ""):
             continue
         if it.get("isdir"):
-            yield from walk_files(client, rel)
+            yield from walk_files(client, rel, walk_errors)
         else:
             ext = Path(rel).suffix.lower()
             if ext not in INCLUDE_EXT:
@@ -156,19 +159,66 @@ def index_one(qd: QdrantClient, client: WebDAVClient, item: dict) -> int:
     return len(points)
 
 
+def reconcile_deletions(qd: QdrantClient, current_paths: set[str]) -> int:
+    """Supprime de Qdrant les chunks des fichiers qui n'existent plus côté Nextcloud.
+
+    À n'appeler QUE si le walk WebDAV s'est terminé sans erreur de listing —
+    sinon on risquerait de purger des fichiers juste temporairement inaccessibles.
+    """
+    if not qd.collection_exists(COLLECTION):
+        return 0
+    indexed_paths: set[str] = set()
+    offset = None
+    while True:
+        records, offset = qd.scroll(
+            collection_name=COLLECTION,
+            limit=256,
+            offset=offset,
+            with_payload=["path"],
+            with_vectors=False,
+        )
+        for r in records:
+            p = (r.payload or {}).get("path")
+            if p:
+                indexed_paths.add(p)
+        if offset is None:
+            break
+    gone = indexed_paths - current_paths
+    for p in gone:
+        qd.delete(collection_name=COLLECTION, points_selector=qm.FilterSelector(
+            filter=qm.Filter(must=[qm.FieldCondition(key="path", match=qm.MatchValue(value=p))])
+        ))
+        log.info("désindexé (supprimé de Nextcloud): %s", p)
+    return len(gone)
+
+
 def sync_once() -> dict:
     log.info("=== Sync Nextcloud start ===")
     qd = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
     client = webdav_client()
     added, errors = 0, 0
-    for item in walk_files(client, NC_PATH):
+    walk_errors: list[str] = []
+    current_paths: set[str] = set()
+    for item in walk_files(client, NC_PATH, walk_errors):
+        current_paths.add(item.get("path", ""))
         try:
             added += index_one(qd, client, item)
         except Exception as e:
             errors += 1
             log.error("err %s : %s", item.get("path"), e)
             log.debug(traceback.format_exc())
-    return {"chunks_added": added, "errors": errors}
+    # Réconciliation : uniquement si le listing est complet (aucune erreur de
+    # walk), pour ne pas supprimer des fichiers temporairement inaccessibles.
+    deleted = 0
+    if not walk_errors:
+        try:
+            deleted = reconcile_deletions(qd, current_paths)
+        except Exception as e:
+            log.error("Réconciliation Qdrant échouée : %s", e)
+            log.debug(traceback.format_exc())
+    else:
+        log.warning("Walk incomplet (%d dossiers en erreur) — réconciliation sautée", len(walk_errors))
+    return {"chunks_added": added, "errors": errors, "deleted_paths": deleted}
 
 
 def main() -> None:

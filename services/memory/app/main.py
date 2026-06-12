@@ -16,6 +16,7 @@ Architecture interne :
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import sys
@@ -217,7 +218,8 @@ bearer = HTTPBearer(auto_error=False)
 
 def require_api_key(creds: HTTPAuthorizationCredentials | None = Depends(bearer)):
     s = get_settings()
-    if creds is None or creds.scheme.lower() != "bearer" or creds.credentials != s.mem0_api_key:
+    # Comparaison constant-time (évite les timing attacks sur le token)
+    if creds is None or creds.scheme.lower() != "bearer" or not hmac.compare_digest(creds.credentials.encode(), s.mem0_api_key.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key invalide ou manquante",
