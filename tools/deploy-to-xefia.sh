@@ -310,8 +310,17 @@ smoke_test() {
 }
 
 log_deploy() {
+  # Best-effort : l'audit ne doit JAMAIS faire échouer un déploiement.
+  # /srv/ai-stack/data appartient à l'uid 1001 (chown du data-init de
+  # aibox-app) → clikinfo ne peut pas toujours y écrire. Fallback sur
+  # $SERVER_REPO/deploys.log (dir clikinfo-writable), sinon warn.
   local kind="$1" target="$2" result="$3"
-  ssh_cmd "mkdir -p $(dirname $DEPLOY_LOG) && echo '$(date -Iseconds) kind=$kind target=$target session=$SESSION_ID result=$result' >> $DEPLOY_LOG"
+  local line
+  line="$(date -Iseconds) kind=$kind target=$target session=$SESSION_ID result=$result"
+  ssh_cmd "mkdir -p $(dirname $DEPLOY_LOG) 2>/dev/null
+{ echo '$line' >> $DEPLOY_LOG; } 2>/dev/null \
+  || { echo '$line' >> $SERVER_REPO/deploys.log; } 2>/dev/null \
+  || true" || warn "deploys.log non écrit (permissions) — déploiement non affecté"
 }
 
 # ---- Main -----------------------------------------------------------------
