@@ -1,32 +1,23 @@
 /**
  * GET /api/agents-tools/system_health
  *
- * Proxy autour de /api/system/health pour le concierge. Renvoie l'état
- * compact des services BoxIA. Utile quand un user demande
- * "tout fonctionne ?" ou "qu'est-ce qui est down ?".
+ * État compact des services BoxIA pour le concierge. Utile quand un user
+ * demande "tout fonctionne ?" ou "qu'est-ce qui est down ?".
+ *
+ * Appelle directement lib/system-health.ts : l'ancien fetch loopback vers
+ * /api/system/health (route protégée par session NextAuth) partait sans
+ * cookie et renvoyait systématiquement 401 — le tool était inutilisable.
  */
 import { NextResponse } from "next/server";
 import { checkAgentsToolsAuth, unauthorized } from "@/lib/agents-tools-auth";
+import { runHealthProbes } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   if (!checkAgentsToolsAuth(req)) return unauthorized();
   try {
-    // Appel interne — on accepte les redirects et bypass NextAuth via header
-    // spécial. Note : /api/system/health est public côté NextAuth (utilisé
-    // par les tests de healthcheck), donc cet appel passe.
-    const r = await fetch("http://127.0.0.1:3100/api/system/health", {
-      cache: "no-store",
-    });
-    if (!r.ok) {
-      return NextResponse.json(
-        { error: "health_check_failed", status: r.status },
-        { status: 502 },
-      );
-    }
-    const data = await r.json();
-    return NextResponse.json(data);
+    return NextResponse.json(await runHealthProbes());
   } catch (e) {
     return NextResponse.json(
       { error: "health_check_failed", detail: String(e).slice(0, 200) },

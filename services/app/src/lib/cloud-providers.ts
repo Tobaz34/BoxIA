@@ -249,10 +249,15 @@ export async function setPiiScrub(enabled: boolean): Promise<void> {
 // change, les clés deviennent illisibles → l'admin doit les ressaisir.
 
 function getEncryptionKey(): Buffer {
-  const secret = process.env.NEXTAUTH_SECRET
-    || process.env.DIFY_SECRET_KEY
-    || "boxia-default-secret-CHANGE-ME-IN-ENV";
-  // HKDF simple : sha256(secret + "cloud-providers-v1") → 32 bytes
+  const secret = process.env.NEXTAUTH_SECRET || process.env.DIFY_SECRET_KEY;
+  if (!secret) {
+    // Fail-hard plutôt que de chiffrer avec une clé de repli connue
+    // (présente dans le repo = équivalent à du clair).
+    throw new Error(
+      "NEXTAUTH_SECRET (ou DIFY_SECRET_KEY) manquant : impossible de "
+      + "chiffrer/déchiffrer les clés API cloud.");
+  }
+  // Dérivation : sha256(secret + "cloud-providers-v1") → 32 bytes
   return crypto.createHash("sha256")
     .update(secret + "cloud-providers-v1")
     .digest();

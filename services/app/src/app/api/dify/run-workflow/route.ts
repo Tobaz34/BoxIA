@@ -15,6 +15,7 @@ import { authOptions } from "@/lib/auth";
 import { getInstalledAgent } from "@/lib/installed-agents";
 import { roleFromGroups } from "@/lib/agents";
 import { DIFY_BASE_URL } from "@/lib/dify";
+import { stripThinkFromSSE } from "@/lib/strip-think";
 
 export const dynamic = "force-dynamic";
 
@@ -80,7 +81,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return new Response(upstream.body, {
+  // Filtre proxy : strip <think>...</think> exposés par qwen3 (même
+  // defense-in-depth que /api/chat — l'utilisateur ne voit jamais le
+  // raisonnement intermédiaire du modèle).
+  const stripped = stripThinkFromSSE(upstream.body);
+
+  return new Response(stripped, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",

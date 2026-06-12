@@ -39,9 +39,14 @@ interface StoredToken {
 }
 
 function getEncryptionKey(): Buffer {
-  const secret = process.env.NEXTAUTH_SECRET
-    || process.env.DIFY_SECRET_KEY
-    || "boxia-default-secret-CHANGE-ME-IN-ENV";
+  const secret = process.env.NEXTAUTH_SECRET || process.env.DIFY_SECRET_KEY;
+  if (!secret) {
+    // Fail-hard plutôt que de chiffrer avec une clé de repli connue
+    // (présente dans le repo = équivalent à du clair).
+    throw new Error(
+      "NEXTAUTH_SECRET (ou DIFY_SECRET_KEY) manquant : impossible de "
+      + "chiffrer/déchiffrer le token GitHub.");
+  }
   return crypto.createHash("sha256")
     .update(secret + "github-token-v1")
     .digest();

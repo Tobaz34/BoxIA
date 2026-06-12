@@ -245,10 +245,10 @@ export async function GET(
 
 <script>
 (function() {
-  const useJson = ${JSON.stringify(useJson)};
-  const loginUrl = ${JSON.stringify(loginUrl)};
-  const payload = ${JSON.stringify(payload)};
-  const redirectUrl = ${JSON.stringify(redirectUrl)};
+  const useJson = ${escapeJsonForScript(JSON.stringify(useJson))};
+  const loginUrl = ${escapeJsonForScript(JSON.stringify(loginUrl))};
+  const payload = ${escapeJsonForScript(JSON.stringify(payload))};
+  const redirectUrl = ${escapeJsonForScript(JSON.stringify(redirectUrl))};
   let done = false;
 
   function finish() {

@@ -54,9 +54,15 @@ export interface OAuthStore {
 // =========================================================================
 
 function getEncryptionKey(): Buffer {
-  const secret = process.env.NEXTAUTH_SECRET
-    || process.env.DIFY_SECRET_KEY
-    || "boxia-default-secret-CHANGE-ME-IN-ENV";
+  const secret = process.env.NEXTAUTH_SECRET || process.env.DIFY_SECRET_KEY;
+  if (!secret) {
+    // Fail-hard plutôt que de chiffrer avec une clé de repli connue
+    // (présente dans le repo = équivalent à du clair). NEXTAUTH_SECRET
+    // est de toute façon requis par NextAuth pour démarrer.
+    throw new Error(
+      "NEXTAUTH_SECRET (ou DIFY_SECRET_KEY) manquant : impossible de "
+      + "chiffrer/déchiffrer les tokens OAuth.");
+  }
   return crypto.createHash("sha256")
     .update(secret + "oauth-tokens-v1")
     .digest();

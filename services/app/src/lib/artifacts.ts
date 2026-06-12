@@ -7,9 +7,13 @@
  * un panneau preview side-by-side.
  *
  * Sécurité :
- *  - HTML : rendu dans un <iframe sandbox> (pas d'accès au parent).
- *  - SVG : sanitize basique (strip <script> et handlers `on*`).
- *  - Mermaid : on délègue à mermaid.js qui parse dans son propre scope.
+ *  - HTML : rendu dans un <iframe sandbox> SANS allow-same-origin — le
+ *    contenu (généré par le LLM, donc influençable par prompt injection)
+ *    n'a accès ni aux cookies ni aux routes /api/* de l'app.
+ *  - SVG : rendu dans un <iframe sandbox> sans allow-scripts du tout
+ *    (un SVG n'a jamais besoin de JS pour s'afficher).
+ *  - Mermaid : on délègue à mermaid.js qui parse dans son propre scope,
+ *    dans une iframe sandbox allow-scripts (sans same-origin).
  *
  * Limites connues V1 :
  *  - Pas de React / JSX live (nécessiterait sandpack ou esbuild-wasm,
@@ -64,14 +68,41 @@ export function deriveArtifactTitle(kind: ArtifactKind, code: string): string {
 /**
  * Sanitize basique d'un fragment SVG / HTML : enlève les `<script>` et les
  * attributs `on*` (onclick, onerror, etc.). Pas une protection complète
- * contre XSS — on s'appuie surtout sur l'iframe sandbox pour HTML.
+ * contre XSS — la vraie barrière est l'iframe sandbox (sans allow-scripts
+ * pour le SVG, sans allow-same-origin pour le HTML). Ceci n'est que de la
+ * défense en profondeur.
  */
 export function basicSanitize(html: string): string {
   return html
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<script\b[^>]*\/>/gi, "")
     .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "");
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "");
+}
+
+/**
+ * Construit le srcDoc d'iframe pour un artifact SVG. Le SVG est rendu dans
+ * une iframe `sandbox=""` (aucun token) : scripts, formulaires et accès à
+ * l'origine sont tous bloqués par le navigateur — même un SVG malveillant
+ * (`onload=`, `<script>`, `javascript:`, `<foreignObject>`) ne peut rien
+ * exécuter. Ne jamais injecter ce contenu via dangerouslySetInnerHTML dans
+ * le document principal.
+ */
+export function buildSvgSrcDoc(code: string): string {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;padding:16px;background:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;}
+  svg{max-width:100%;height:auto;}
+</style>
+</head>
+<body>
+${basicSanitize(code)}
+</body>
+</html>`;
 }
 
 /**

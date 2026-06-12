@@ -1,7 +1,10 @@
 /**
  * GET /api/system/github-status — état de la connexion GitHub.
  *
- * Pas d'auth requise (info légère, le token n'est jamais retourné).
+ * Admin only : la réponse expose le login GitHub du propriétaire, les
+ * scopes et l'email de l'admin (saved_by), et ?revalidate=1 déclenche un
+ * appel GitHub avec le token stocké (un anonyme pouvait cramer le
+ * rate-limit). Le token lui-même n'est jamais retourné.
  * Réponse :
  *   { connected: bool,
  *     source: "env" | "file" | null,
@@ -16,6 +19,8 @@
  * lieu de servir un cache obsolète).
  */
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import {
   getActiveGitHubToken,
   getStoredMetadata,
@@ -26,6 +31,13 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!(session.user as { isAdmin?: boolean }).isAdmin) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
   const url = new URL(req.url);
   const revalidate = url.searchParams.get("revalidate") === "1";
 

@@ -2,8 +2,10 @@
  * GET /api/system/check-updates — compare le commit local au tip de main
  *                                  via l'API GitHub publique.
  *
- * Public (info utile au support) mais cap à 1 appel / 30s côté serveur pour
- * éviter de cramer le rate-limit GitHub (60/h sans auth).
+ * Admin only : la réponse liste les commits (sha/auteur/message) du repo
+ * GitHub privé via le token stocké — pas pour un appelant anonyme.
+ * Cap à 1 appel / 30s côté serveur pour éviter de cramer le rate-limit
+ * GitHub.
  *
  * Réponse :
  *   { up_to_date: boolean,
@@ -16,6 +18,8 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { getActiveGitHubToken } from "@/lib/github-token";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +71,14 @@ async function fetchGithubCommits(branch: string, token: string | null): Promise
 }
 
 export async function GET() {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!(session.user as { isAdmin?: boolean }).isAdmin) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   if (cache && Date.now() - cache.fetched_at < CACHE_MS) {
     return NextResponse.json(cache.payload);
   }

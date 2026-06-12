@@ -114,10 +114,14 @@ export function addUserMemory(
 export async function deleteUserMemory(userId: string): Promise<{ ok: boolean; facts_deleted?: number; error?: string }> {
   if (!isMemoryEnabled()) return { ok: true, facts_deleted: 0 };
   try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), MEMORY_TIMEOUT_MS);
     const r = await fetch(`${MEMORY_BASE_URL}/memory/user/${encodeURIComponent(userId)}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${MEMORY_API_KEY}` },
+      signal: ctrl.signal,
     });
+    clearTimeout(timer);
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     const data = await r.json();
     return { ok: true, facts_deleted: data?.facts_deleted };

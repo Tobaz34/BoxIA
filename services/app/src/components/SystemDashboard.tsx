@@ -215,7 +215,7 @@ export function SystemDashboard() {
               icon={MessageSquare}
               label="Conversations"
               value={fmt(stats.summary.conversations_total)}
-              hint="total (admin)"
+              hint="du compte admin (l'API Dify ne permet pas d'agréger tous les comptes)"
             />
             <KpiCard
               icon={FileText}

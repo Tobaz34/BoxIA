@@ -20,6 +20,7 @@
  *   ou 404 si pas de connection, 401 si token invalide.
  */
 import { NextResponse } from "next/server";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { getAccessToken } from "@/lib/oauth-device-flow";
 import { _readStore } from "@/lib/oauth-storage";
 
@@ -36,8 +37,12 @@ export async function GET(req: Request) {
     // Pas de token configuré : on refuse plutôt que d'exposer
     return NextResponse.json({ error: "internal_token_not_configured" }, { status: 503 });
   }
-  const got = req.headers.get("x-connector-token");
-  if (got !== expected) {
+  const got = req.headers.get("x-connector-token") || "";
+  // Comparaison constant-time via hash sha256 (buffers de même longueur)
+  // pour ne pas fuiter le secret octet par octet via timing.
+  const gotHash = createHash("sha256").update(got).digest();
+  const expectedHash = createHash("sha256").update(expected).digest();
+  if (!timingSafeEqual(gotHash, expectedHash)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

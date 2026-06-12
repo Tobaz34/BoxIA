@@ -148,43 +148,53 @@ export async function POST(req: Request) {
   if (body.skip_cloud) args.push("--skip-cloud");
   if (body.skip_local) args.push("--skip-local");
 
-  // 6. Spawn detached pour ne pas bloquer la réponse
-  const child = spawn("python3", args, {
-    detached: true,
-    stdio: ["ignore",
-      // Redirige stdout/stderr dans le run dir pour debug
-      await fs.open(path.join(outDir, "stdout.log"), "a").then((h) => h.fd).catch(() => "ignore" as const),
-      await fs.open(path.join(outDir, "stderr.log"), "a").then((h) => h.fd).catch(() => "ignore" as const),
-    ],
-    env: {
-      ...process.env,
-      BENCH_COOKIE: cookie,
-      PYTHONIOENCODING: "utf-8",
-    },
-  });
-  child.unref();
+  // 6. Spawn detached pour ne pas bloquer la réponse.
+  //    On garde les FileHandle pour les fermer après le spawn (le child
+  //    reçoit un dup du fd — fermer côté parent ne coupe pas ses logs).
+  const stdoutHandle = await fs.open(path.join(outDir, "stdout.log"), "a").catch(() => null);
+  const stderrHandle = await fs.open(path.join(outDir, "stderr.log"), "a").catch(() => null);
+  try {
+    const child = spawn("python3", args, {
+      detached: true,
+      stdio: ["ignore",
+        // Redirige stdout/stderr dans le run dir pour debug
+        stdoutHandle ? stdoutHandle.fd : ("ignore" as const),
+        stderrHandle ? stderrHandle.fd : ("ignore" as const),
+      ],
+      env: {
+        ...process.env,
+        BENCH_COOKIE: cookie,
+        PYTHONIOENCODING: "utf-8",
+      },
+    });
+    child.unref();
 
-  // 7. Marquer comme started
-  await fs.writeFile(
-    path.join(outDir, "started_at"),
-    JSON.stringify({
+    // 7. Marquer comme started
+    await fs.writeFile(
+      path.join(outDir, "started_at"),
+      JSON.stringify({
+        run_id: runId,
+        started_at: new Date().toISOString(),
+        started_by: session?.user?.email,
+        pid: child.pid,
+        args: { ...body, base_url: baseUrl },
+      }),
+      "utf8",
+    );
+
+    // 8. Audit
+    await logAction("bench.start", runId, body as Record<string, unknown>);
+
+    return NextResponse.json({
+      ok: true,
       run_id: runId,
-      started_at: new Date().toISOString(),
-      started_by: session?.user?.email,
       pid: child.pid,
-      args: { ...body, base_url: baseUrl },
-    }),
-    "utf8",
-  );
-
-  // 8. Audit
-  await logAction("bench.start", runId, body as Record<string, unknown>);
-
-  return NextResponse.json({
-    ok: true,
-    run_id: runId,
-    pid: child.pid,
-    out_dir: outDir,
-    message: "Bench démarré en background. Recharger /api/bench/history pour voir le résultat (typiquement 1-30 min selon scope).",
-  });
+      out_dir: outDir,
+      message: "Bench démarré en background. Recharger /api/bench/history pour voir le résultat (typiquement 1-30 min selon scope).",
+    });
+  } finally {
+    // Évite la fuite de FileHandle côté Next.js (le subprocess garde les siens)
+    await stdoutHandle?.close().catch(() => {});
+    await stderrHandle?.close().catch(() => {});
+  }
 }

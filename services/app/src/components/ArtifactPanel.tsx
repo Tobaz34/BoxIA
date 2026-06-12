@@ -13,8 +13,8 @@
 import { useEffect, useRef } from "react";
 import { X, Code2, Eye, Download } from "lucide-react";
 import {
-  basicSanitize,
   buildHtmlSrcDoc,
+  buildSvgSrcDoc,
   type ArtifactKind,
 } from "@/lib/artifacts";
 
@@ -115,15 +115,23 @@ export function ArtifactPanel({ open, kind, code, title, onClose }: Props) {
             <iframe
               key={code.slice(0, 100)}
               srcDoc={buildHtmlSrcDoc(code)}
-              sandbox="allow-scripts allow-forms allow-same-origin"
+              // Jamais allow-same-origin ici : le contenu vient du LLM
+              // (prompt-injectable) et ne doit pas pouvoir appeler /api/*
+              // avec les cookies de session.
+              sandbox="allow-scripts allow-forms"
               className="w-full h-full border-0"
               title={title}
             />
           )}
           {kind === "svg" && (
-            <div
-              className="w-full h-full overflow-auto p-4 flex items-center justify-center"
-              dangerouslySetInnerHTML={{ __html: basicSanitize(code) }}
+            <iframe
+              key={code.slice(0, 100)}
+              srcDoc={buildSvgSrcDoc(code)}
+              // sandbox vide = tout est bloqué (scripts, forms, origine) :
+              // un SVG s'affiche sans JS, inutile d'en autoriser.
+              sandbox=""
+              className="w-full h-full border-0"
+              title={title}
             />
           )}
           {kind === "mermaid" && (

@@ -8,11 +8,14 @@
  * pattern) — suffisant tant qu'on a 1 seul process Next.js.
  *
  * IMPORTANT : Les valeurs de champs marqués `secret: true` ne sortent
- * jamais de cette couche vers le client. Ils sont stockés en clair sur
- * le disque (à durcir avec une clé d'encryption dans une V2).
+ * jamais de cette couche vers le client, et sont chiffrées at-rest
+ * (AES-256-GCM, préfixe `enc:v1:`, même dérivation de clé que
+ * oauth-storage). Les valeurs en clair héritées d'avant ce durcissement
+ * sont migrées automatiquement à la première écriture du fichier.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { CONNECTORS, getConnector } from "@/lib/connectors";
 
 const STATE_DIR = process.env.CONNECTORS_STATE_DIR || "/data";
@@ -71,6 +74,91 @@ interface StateFile {
 
 const EMPTY_STATE: StateFile = { version: 1, updated_at: 0, states: {} };
 
+// =========================================================================
+// Chiffrement at-rest des champs secret:true
+// =========================================================================
+
+const ENC_PREFIX = "enc:v1:";
+
+function getEncryptionKey(): Buffer {
+  const secret = process.env.NEXTAUTH_SECRET || process.env.DIFY_SECRET_KEY;
+  if (!secret) {
+    // Fail-hard plutôt que de stocker des credentials en clair ou de les
+    // chiffrer avec une clé de repli connue.
+    throw new Error(
+      "NEXTAUTH_SECRET (ou DIFY_SECRET_KEY) manquant : impossible de "
+      + "chiffrer/déchiffrer les secrets connecteurs.");
+  }
+  return crypto.createHash("sha256")
+    .update(secret + "connectors-state-v1")
+    .digest();
+}
+
+function isEncrypted(value: string): boolean {
+  return value.startsWith(ENC_PREFIX);
+}
+
+function encryptSecretValue(plaintext: string): string {
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${ENC_PREFIX}${iv.toString("hex")}:${tag.toString("hex")}:${ct.toString("hex")}`;
+}
+
+/** Déchiffre une valeur `enc:v1:` ; renvoie la valeur telle quelle si elle
+ *  est en clair (legacy), null si le blob est corrompu/clé changée. */
+export function decryptSecretValue(value: string): string | null {
+  if (!isEncrypted(value)) return value;
+  try {
+    const [ivHex, tagHex, ctHex] = value.slice(ENC_PREFIX.length).split(":");
+    if (!ivHex || !tagHex || !ctHex) return null;
+    const key = getEncryptionKey();
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm", key, Buffer.from(ivHex, "hex"));
+    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+    const pt = Buffer.concat([
+      decipher.update(Buffer.from(ctHex, "hex")),
+      decipher.final(),
+    ]);
+    return pt.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Clés des champs secret:true d'un connecteur (d'après son spec). */
+function secretKeysFor(slug: string): Set<string> {
+  const spec = getConnector(slug);
+  return new Set(
+    (spec?.fields || []).filter((f) => f.secret).map((f) => f.key));
+}
+
+/** Chiffre en place les secrets encore en clair d'un état (idempotent). */
+function encryptStateSecrets(st: ConnectorState): void {
+  const keys = secretKeysFor(st.slug);
+  for (const k of Object.keys(st.config)) {
+    const v = st.config[k];
+    if (keys.has(k) && v && !isEncrypted(v)) {
+      st.config[k] = encryptSecretValue(v);
+    }
+  }
+}
+
+/**
+ * Config d'un connecteur avec les secrets déchiffrés — réservé aux
+ * consommateurs server-side qui doivent transmettre les credentials à un
+ * worker. Ne JAMAIS renvoyer ce résultat au client.
+ */
+export function getDecryptedConfig(st: ConnectorState): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(st.config)) {
+    out[k] = decryptSecretValue(v) ?? "";
+  }
+  return out;
+}
+
 let writeLock: Promise<unknown> = Promise.resolve();
 
 async function ensureDir(): Promise<void> {
@@ -115,6 +203,11 @@ async function mutate(fn: (s: StateFile) => Promise<StateFile> | StateFile): Pro
   try {
     const cur = await readState();
     const updated = await fn(cur);
+    // Migration at-rest : chiffre tout secret encore en clair (valeurs
+    // héritées d'avant le chiffrement, ou fraîchement saisies). Idempotent.
+    for (const st of Object.values(updated.states)) {
+      encryptStateSecrets(st);
+    }
     await writeStateUnsafe(updated);
     return updated;
   } finally {
