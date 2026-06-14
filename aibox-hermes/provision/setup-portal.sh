@@ -86,6 +86,9 @@ https://$AIBOX_HOST {
 				header_up X-Forwarded-Proto https
 				trusted_proxies private_ranges
 			}
+			# Page d'accueil = le chat épuré (override /chat) plutôt que /sessions
+			@root path /
+			redir @root /chat
 			# --- AIBOX-CHAT-BEGIN ---
 			handle /aibox-chat/session {
 				root * $WEB_ROOT/chat-tokens
