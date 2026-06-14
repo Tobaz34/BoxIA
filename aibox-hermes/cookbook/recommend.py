@@ -13,7 +13,7 @@ from __future__ import annotations
 CATALOG = [
     {"id": "qwen3:1.7b", "params_b": 1.7, "min_ram_gb": 5,  "min_vram_gb": 0,  "fr": 3, "tier": 1, "note": "ultra-léger, CPU"},
     {"id": "qwen3:4b",   "params_b": 4,   "min_ram_gb": 8,  "min_vram_gb": 0,  "fr": 4, "tier": 2, "note": "léger, CPU OK"},
-    {"id": "qwen3:8b",   "params_b": 8,   "min_ram_gb": 16, "min_vram_gb": 12, "fr": 4, "tier": 3, "note": "GPU 12 Go — tient à 64K, 100% GPU (~9s)"},
+    {"id": "qwen3:8b",   "params_b": 8,   "min_ram_gb": 16, "min_vram_gb": 11, "fr": 4, "tier": 3, "note": "GPU 12 Go — tient à 64K, 100% GPU (~9s)"},
     {"id": "qwen3:14b",  "params_b": 14,  "min_ram_gb": 28, "min_vram_gb": 18, "fr": 5, "tier": 4, "note": "GPU 16-24 Go à 64K"},
     {"id": "qwen3:32b",  "params_b": 32,  "min_ram_gb": 48, "min_vram_gb": 30, "fr": 5, "tier": 5, "note": "GPU 32 Go+ à 64K"},
 ]

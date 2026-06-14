@@ -22,6 +22,11 @@ def test_gpu_12gb_speed_steps_down():
     assert r["recommended"] == "qwen3:4b"   # un cran sous le meilleur (8b)
 
 
+def test_gpu_12gb_card_reports_1199():
+    # Un GPU 12 Go rapporte ~11,99 Go (12282 MiB) → le 8b doit quand même passer.
+    assert rec.recommend(ram_gb=31, vram_gb=11.99, prefer="quality")["recommended"] == "qwen3:8b"
+
+
 def test_gpu_24gb_picks_14b():
     # À 64K, le 32b exige ~30 Go → sur 24 Go, le meilleur qui tient est le 14b.
     assert rec.recommend(ram_gb=64, vram_gb=24)["recommended"] == "qwen3:14b"
