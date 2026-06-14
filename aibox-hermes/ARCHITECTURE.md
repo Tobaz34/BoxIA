@@ -8,9 +8,9 @@
 |---|---|---|
 | D1 | Socle | **Hermes Agent**, installé vierge (`pip`/clone), jamais modifié dans ses entrailles. MAJ via `hermes update`. |
 | D2 | Connecteurs | Exposés en **serveurs MCP** (`mcp_servers:` config), chacun un shim qui proxy le microservice FastAPI existant. **aibox-app sort du chemin runtime.** |
-| D3 | Sécurité tools | **Hooks Hermes** : `pre_tool_call` pour l'approval-gate (anti prompt-injection), `pre_api_request` pour le scrub RGPD avant envoi cloud. |
+| D3 | Sécurité tools | **Plugins Hermes** : `pre_tool_call` (approval-gate anti prompt-injection), `transform_tool_result` (scrub RGPD avant cloud), `post_tool_call` (audit). Vérifié : `pre_api_request` est observer-only. |
 | D4 | LLM | **IA locale par défaut** (Ollama, `provider: custom`). Fallback cloud (Claude Haiku BYOK) pour la latence messagerie, via `hermes fallback`. Scrub RGPD obligatoire avant tout appel cloud. |
-| D5 | Multi-utilisateur | **1 instance Hermes par entreprise** (`HERMES_HOME` dédié). N employés isolés via `group_sessions_per_user: true` + pairing Telegram. |
+| D5 | Multi-utilisateur | **1 Hermes PAR UTILISATEUR** (`HERMES_HOME` dédié = isolation process : mémoire/credentials/RBAC propres), regroupés sous une entreprise dont la config est **héritée** (`company.env`). Wizards : `wizard-company.sh` (config partagée) + `wizard-user.sh` (Hermes du user). Coût : N instances ~200-300 Mo (OK pour 2-10 employés/PC ; Ollama partagé). |
 | D6 | Branding | `display.skin` custom (`agent_name: AI Box`) + `SOUL.md` personnalisable par tenant. |
 | D7 | Admin | Pas de gros front Next.js. Admin = fichiers de config versionnés + provisioning scripté. Un mini-dashboard viendra plus tard si besoin (Hermes a déjà `hermes dashboard`). |
 
@@ -21,14 +21,14 @@ Employé (Telegram / WhatsApp / Web)
         │
         ▼
 ┌─────────────────────────────────────────────┐
-│  Hermes Agent  (1 instance / entreprise)     │
-│  HERMES_HOME=/data/tenants/<slug>            │
+│  Hermes Agent  (1 instance PAR EMPLOYÉ)      │
+│  HERMES_HOME=.../companies/<co>/users/<user> │
 │                                              │
 │  model: Ollama local  ──fallback──▶ cloud    │
 │                                              │
-│  hooks:                                      │
-│    pre_tool_call   → approval_gate.sh  ──────┼──▶ bloque les tools mutatifs
-│    pre_api_request → rgpd_scrub.sh     ──────┼──▶ caviarde PII avant cloud
+│  plugins (sécurité) :                        │
+│    pre_tool_call (approval)            ──────┼──▶ bloque les tools mutatifs
+│    transform_tool_result (rgpd)        ──────┼──▶ caviarde PII avant cloud
 │                                              │
 │  mcp_servers:                                │
 │    pennylane → shim ──▶ FastAPI Pennylane    │

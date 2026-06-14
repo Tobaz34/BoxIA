@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# AI Box — provisionne un tenant (1 entreprise) sur Hermes. IDEMPOTENT.
+# AI Box — provisionne UN Hermes (variante single-instance, POC). IDEMPOTENT.
+# NB : le modèle produit est multi-user (1 Hermes/employé) — voir
+#      wizard-company.sh + wizard-user.sh. Ce script reste utile pour un POC mono-user.
 # Codifie aibox-hermes/QUICKSTART-POC.md en une commande.
 #
 # Usage :

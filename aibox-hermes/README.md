@@ -41,7 +41,7 @@ aibox-hermes/
 ├── skills/              # skills FR : aibox-cookbook, aibox-email-triage, aibox-deep-research
 ├── cookbook/            # reco modèle local selon le hardware (idée Odysseus)
 ├── pwa/                 # app mobile installable vers l'API Hermes (idée Odysseus)
-├── provision/           # provisioning par tenant (provision-tenant.sh)
+├── provision/           # wizards : wizard-company.sh + wizard-user.sh (1 Hermes/user)
 └── tests/               # 32 tests unitaires
 ```
 

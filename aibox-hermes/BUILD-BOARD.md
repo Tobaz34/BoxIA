@@ -32,10 +32,13 @@ Statut : ⬜ à faire · 🟦 en cours · ✅ fait
 - [x] Audit en plugin `post_tool_call` → JSONL (`plugins/aibox-audit/`, 5 tests)
 - [ ] Branding `config/skins/aibox.yaml` + `SOUL.md`
 
-## Phase 3 — Multi-utilisateur / multi-tenant  🟦
-- [x] 1 instance/entreprise : `provision/provision-tenant.sh` (idempotent + `--check`, HERMES_HOME dédié) — dry-run validé
-- [ ] N employés isolés (`group_sessions_per_user`, pairing Telegram) — config en place, à valider live
-- [ ] RBAC par employé (visibilité tools / connecteurs)
+## Phase 3 — Multi-utilisateur (1 Hermes / employé)  🟦
+- [x] **Modèle révisé** : 1 Hermes PAR utilisateur (isolation process) ; entreprise = config partagée héritée
+- [x] `provision/wizard-company.sh` — config partagée entreprise (modèle auto via cookbook, cloud, connecteurs, RGPD) — dry-run validé
+- [x] `provision/wizard-user.sh` — Hermes du user, **hérite** `company.env` (modèle/connecteurs/clés) + delta user (Telegram, SOUL) — héritage validé en dry-run
+- [ ] RBAC par employé : enforcement connecteur/tool (USER_CONNECTORS enregistré ; blocage effectif à finaliser)
+- [ ] Pairing Telegram par user — à valider live
+- [x] `provision/provision-tenant.sh` conservé (variante single-instance POC)
 
 ## Phase 4 — Install clé-en-main  ⬜
 - [ ] `aibox-install.sh` Hermes-first (absorbe `../aibox-host/`)
@@ -57,6 +60,7 @@ Reprises comme **idées** (Odysseus = AGPL → jamais de code copié), greffées
 - [x] **PWA mobile** (`pwa/`) — app installable vers l'API Hermes (6 fichiers, JS validé `node --check`). E2E à valider live.
 
 ### Journal
+- **2026-06-14 (nuit, wizards)** — Révision archi : **1 Hermes par utilisateur** (au lieu de 1/entreprise, à la demande). `wizard-company.sh` (config partagée + modèle auto cookbook) + `wizard-user.sh` (Hermes du user qui **hérite** `company.env`). Héritage validé en dry-run (user reprend modèle qwen3:14b / connecteurs / cloud de l'entreprise). ARCHITECTURE D3/D5 + flux mis à jour.
 - **2026-06-14 (nuit, suite)** — 4 features Odysseus greffées : Cookbook (7 tests + démo + auto-détection ce poste = qwen3:8b), Email triage (skill + 6 tests urgence, bug « huissier→haute » corrigé), Deep research (skill), PWA (6 fichiers statiques, JS valide). **Total 32/32 tests.** Tout sur `claude/hermes-pivot`.
 - **2026-06-14 (nuit)** — Phase 0 + Phase 1 en autonomie.
   - Phase 0 : décision actée, dossier `aibox-hermes/` + docs + template, commit sur branche `claude/hermes-pivot`. Analyse Git → `BRANCH-AUDIT.md` (origin/main inclut déjà le hardening ; 6 branches fusionnées supprimables, 2 à examiner).
