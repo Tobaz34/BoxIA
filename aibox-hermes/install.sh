@@ -34,8 +34,12 @@ run "apt-get update -qq"
 run "apt-get install -y -qq python3 python3-venv python3-pip git curl jq"
 
 step "2/6  Hermes Agent (installé vierge, jamais modifié)"
+# Vraie méthode (vérifiée live) : clone + setup-hermes.sh via uv (non-interactif).
 if ! command -v hermes >/dev/null 2>&1; then
-  run "curl -fsSL https://hermes-agent.org/install.sh | bash"
+  run "command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh"
+  run "[ -d \$HOME/hermes-agent/.git ] || git clone --depth 1 https://github.com/nousresearch/hermes-agent.git \$HOME/hermes-agent"
+  run "cd \$HOME/hermes-agent && yes n | ./setup-hermes.sh"
+  export PATH="$HOME/.local/bin:$PATH"
 else
   echo "  hermes déjà présent."
 fi
@@ -43,6 +47,7 @@ fi
 step "3/6  Modèle IA"
 if [ "${WITH_LOCAL_MODEL:-0}" = 1 ]; then
   command -v ollama >/dev/null 2>&1 || run "curl -fsSL https://ollama.com/install.sh | sh"
+  run "sudo systemctl enable --now ollama 2>/dev/null || true"   # l'install laisse le service désactivé
   MODEL="$(python3 "$SCRIPT_DIR/cookbook/cookbook.py" --json 2>/dev/null | sed -n 's/.*"recommended": *"\([^"]*\)".*/\1/p')"
   MODEL="${MODEL:-qwen3:4b}"
   echo "  Cookbook recommande : $MODEL"

@@ -56,6 +56,18 @@ if [ -z "${OLLAMA_MODEL:-}" ]; then
   say "modèle local auto (cookbook) -> $OLLAMA_MODEL"
 fi
 
+# Hermes exige >=64K de contexte → dériver un modèle 64K (num_ctx 65536) si le
+# modèle de base est présent dans Ollama (qwen3 natif = 40K → refusé sinon).
+if command -v ollama >/dev/null 2>&1 && ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$OLLAMA_MODEL"; then
+  CTX_MODEL="${OLLAMA_MODEL%-64k}-64k"
+  if ! ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$CTX_MODEL"; then
+    printf 'FROM %s\nPARAMETER num_ctx 65536\n' "$OLLAMA_MODEL" > "/tmp/aibox-mf.$$"
+    run "ollama create '$CTX_MODEL' -f '/tmp/aibox-mf.$$'"
+  fi
+  OLLAMA_MODEL="$CTX_MODEL"
+  say "modèle 64K dérivé -> $OLLAMA_MODEL"
+fi
+
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then RGPD="${AIBOX_RGPD_SCRUB:-1}"; else RGPD="${AIBOX_RGPD_SCRUB:-0}"; fi
 
 run "mkdir -p '$COMP_DIR/users'"

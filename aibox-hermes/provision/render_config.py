@@ -42,7 +42,8 @@ def render(
         "model:\n"
         '  provider: "custom"\n'
         f'  base_url: "{base_url}"\n'
-        f'  default: "{model}"\n\n'
+        f'  default: "{model}"\n'
+        "  context_length: 65536   # Hermes exige >=64K ; qwen3 natif=40K → override obligatoire\n\n"
         "mcp_servers:\n"
         f"{mcp}\n\n"
         "skills:\n"

@@ -30,3 +30,9 @@ def test_unknown_connector_ignored():
 def test_skills_dir_always_present():
     out = rc.render("m", "u", [], "/repo")
     assert '/repo/skills' in out
+
+
+def test_context_length_override_present():
+    # Hermes refuse un modèle < 64K → la config DOIT forcer context_length.
+    out = rc.render("qwen3:14b", "u", [], "/repo")
+    assert "context_length: 65536" in out

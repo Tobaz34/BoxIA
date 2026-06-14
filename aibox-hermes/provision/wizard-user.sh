@@ -119,6 +119,14 @@ EOF
 fi
 say "SOUL -> $HERMES_HOME/SOUL.md"
 
+# Activer les plugins sécurité (Hermes les détecte mais ne les charge PAS par défaut)
+if command -v hermes >/dev/null 2>&1; then
+  for p in aibox-approval aibox-rgpd aibox-audit; do
+    run "HERMES_HOME='$HERMES_HOME' hermes plugins enable $p >/dev/null 2>&1 || true"
+  done
+  say "plugins activés : approval, rgpd, audit"
+fi
+
 # Fallback cloud (si clé héritée + binaire hermes présents)
 if [ -n "${ANTHROPIC_API_KEY:-}" ] && command -v hermes >/dev/null 2>&1; then
   run "HERMES_HOME='$HERMES_HOME' hermes fallback add anthropic claude-haiku-4-5 --priority 1 || true"
