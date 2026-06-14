@@ -34,6 +34,8 @@ aibox-hermes/
 ├── ARCHITECTURE.md      # design détaillé + flux runtime
 ├── PORT-MAP.md          # chaque asset BoxIA → son mécanisme Hermes
 ├── BUILD-BOARD.md       # plan d'exécution par phases (source de vérité avancement)
+├── install.sh           # ⭐ installeur one-command VPS
+├── INSTALL-VPS.md       # guide d'installation VPS (Ubuntu, Telegram, HTTPS)
 ├── config/
 │   └── config.template.yaml   # template de ~/.hermes/config.yaml (rempli au provisioning)
 ├── plugins/             # sécurité : aibox-approval, aibox-rgpd, aibox-audit

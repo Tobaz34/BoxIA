@@ -61,18 +61,28 @@ for p in aibox-approval aibox-rgpd aibox-audit; do
 done
 say "plugins sécurité liés"
 
-# config.yaml : rendu depuis le template, valeurs entreprise injectées
-TPL="$AIBOX_HERMES_DIR/config/config.template.yaml"
-OUT="$HERMES_HOME/config.yaml"
-if [ "$CHECK" = 1 ]; then
-  echo "    [check] render $TPL -> $OUT (modèle=${OLLAMA_MODEL:-qwen3:8b})"
+# RBAC : connecteurs actifs = intersection(entreprise, droits user)
+ENABLED_N="${ENABLED_CONNECTORS//,/ }"
+USERC_N="${USER_CONNECTORS//,/ }"
+if [ "$USERC_N" = "all" ]; then
+  ALLOWED_LIST="$ENABLED_N"
 else
-  sed -e "s#\${TENANT_DIR}#$AIBOX_HERMES_DIR#g" \
-      -e "s#\${PENNYLANE_TOOL_BASE_URL}#${PENNYLANE_TOOL_BASE_URL:-http://127.0.0.1:8081}#g" \
-      -e "s#http://127.0.0.1:11434/v1#${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}#g" \
-      -e "s#default: \"qwen3:14b\"#default: \"${OLLAMA_MODEL:-qwen3:8b}\"#g" \
-      "$TPL" > "$OUT"
+  ALLOWED_LIST=""
+  for c in $ENABLED_N; do
+    case " $USERC_N " in *" $c "*) ALLOWED_LIST="$ALLOWED_LIST $c" ;; esac
+  done
 fi
+ALLOWED_CSV="$(echo "$ALLOWED_LIST" | tr -s ' ' | sed 's/^ //; s/ $//; s/ /,/g')"
+say "RBAC -> connecteurs actifs : ${ALLOWED_CSV:-aucun}"
+
+# config.yaml : généré avec RBAC (SEULS les connecteurs autorisés y figurent)
+OUT="$HERMES_HOME/config.yaml"
+run "python3 '$AIBOX_HERMES_DIR/provision/render_config.py' \
+  --model '${OLLAMA_MODEL:-qwen3:8b}' \
+  --base-url '${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}' \
+  --connectors '$ALLOWED_CSV' \
+  --tenant-dir '$AIBOX_HERMES_DIR' \
+  --pennylane-base-url '${PENNYLANE_TOOL_BASE_URL:-http://127.0.0.1:8081}' > '$OUT'"
 say "config -> $OUT"
 
 # .env user : secrets entreprise hérités + spécifiques user

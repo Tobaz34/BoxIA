@@ -36,14 +36,17 @@ Statut : ⬜ à faire · 🟦 en cours · ✅ fait
 - [x] **Modèle révisé** : 1 Hermes PAR utilisateur (isolation process) ; entreprise = config partagée héritée
 - [x] `provision/wizard-company.sh` — config partagée entreprise (modèle auto via cookbook, cloud, connecteurs, RGPD) — dry-run validé
 - [x] `provision/wizard-user.sh` — Hermes du user, **hérite** `company.env` (modèle/connecteurs/clés) + delta user (Telegram, SOUL) — héritage validé en dry-run
-- [ ] RBAC par employé : enforcement connecteur/tool (USER_CONNECTORS enregistré ; blocage effectif à finaliser)
+- [x] RBAC par employé : enforcement connecteur via `provision/render_config.py` (un connecteur non autorisé n'apparaît PAS dans la config du user → inappelable). 5 tests.
 - [ ] Pairing Telegram par user — à valider live
 - [x] `provision/provision-tenant.sh` conservé (variante single-instance POC)
 
-## Phase 4 — Install clé-en-main  ⬜
-- [ ] `aibox-install.sh` Hermes-first (absorbe `../aibox-host/`)
-- [ ] Wizard : entreprise, clé cloud, bot Telegram, connecteurs
-- [ ] Mode `--update`, backup/restore
+## Phase 4 — Install clé-en-main (VPS)  🟦
+- [x] `install.sh` one-command VPS (deps + Hermes + modèle + wizards + systemd + Caddy) — **dry-run complet validé**
+- [x] Wizards entreprise + utilisateur (cf. Phase 3)
+- [x] Service systemd `provision/aibox-hermes@.service` (1 par user) + `provision/Caddyfile.template` (HTTPS auto)
+- [x] `INSTALL-VPS.md` — guide complet (Ubuntu, cloud-primary, Telegram, ajout d'employés)
+- [ ] Mode `--update` / backup-restore (à consolider)
+- [ ] PWA web : routage API par user dans Caddy (Telegram OK en attendant)
 
 ## Phase 5 — Bascule xefia  ⬜
 - [ ] Déployer la stack Hermes-first sur xefia
@@ -60,6 +63,7 @@ Reprises comme **idées** (Odysseus = AGPL → jamais de code copié), greffées
 - [x] **PWA mobile** (`pwa/`) — app installable vers l'API Hermes (6 fichiers, JS validé `node --check`). E2E à valider live.
 
 ### Journal
+- **2026-06-14 (nuit, VPS installable)** — **RBAC effectif** (`render_config.py` : connecteur non autorisé absent de la config user, 5 tests → **37/37**). **Stack installable VPS** : `install.sh` one-command (deps→Hermes→modèle→wizards→systemd→Caddy, dry-run complet OK), service `aibox-hermes@.service` (1/user), `Caddyfile.template` (HTTPS auto), `INSTALL-VPS.md`. VPS = sans GPU → défaut **cloud-primary** (Haiku). Phases 3-4 quasi closes.
 - **2026-06-14 (nuit, wizards)** — Révision archi : **1 Hermes par utilisateur** (au lieu de 1/entreprise, à la demande). `wizard-company.sh` (config partagée + modèle auto cookbook) + `wizard-user.sh` (Hermes du user qui **hérite** `company.env`). Héritage validé en dry-run (user reprend modèle qwen3:14b / connecteurs / cloud de l'entreprise). ARCHITECTURE D3/D5 + flux mis à jour.
 - **2026-06-14 (nuit, suite)** — 4 features Odysseus greffées : Cookbook (7 tests + démo + auto-détection ce poste = qwen3:8b), Email triage (skill + 6 tests urgence, bug « huissier→haute » corrigé), Deep research (skill), PWA (6 fichiers statiques, JS valide). **Total 32/32 tests.** Tout sur `claude/hermes-pivot`.
 - **2026-06-14 (nuit)** — Phase 0 + Phase 1 en autonomie.
