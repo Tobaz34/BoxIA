@@ -10,19 +10,21 @@ def test_cpu_4gb_picks_smallest():
     assert rec.recommend(ram_gb=4, vram_gb=0)["recommended"] == "qwen3:1.7b"
 
 
-def test_gpu_12gb_quality_picks_14b():
+def test_gpu_12gb_quality_picks_8b():
+    # À 64K (exigence Hermes), le 14b déborde 12 Go → le bon choix est le 8b (mesuré live).
     r = rec.recommend(ram_gb=32, vram_gb=12, prefer="quality")
-    assert r["recommended"] == "qwen3:14b"
+    assert r["recommended"] == "qwen3:8b"
     assert r["fits"] is True
 
 
 def test_gpu_12gb_speed_steps_down():
     r = rec.recommend(ram_gb=32, vram_gb=12, prefer="speed")
-    assert r["recommended"] == "qwen3:8b"   # un cran sous 14b
+    assert r["recommended"] == "qwen3:4b"   # un cran sous le meilleur (8b)
 
 
-def test_gpu_24gb_picks_32b():
-    assert rec.recommend(ram_gb=64, vram_gb=24)["recommended"] == "qwen3:32b"
+def test_gpu_24gb_picks_14b():
+    # À 64K, le 32b exige ~30 Go → sur 24 Go, le meilleur qui tient est le 14b.
+    assert rec.recommend(ram_gb=64, vram_gb=24)["recommended"] == "qwen3:14b"
 
 
 def test_speed_never_equals_quality_on_capable_hw():

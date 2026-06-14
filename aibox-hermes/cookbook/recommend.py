@@ -6,13 +6,16 @@ pour notre install « 1 PC = 1 entreprise » : catalogue de modèles FR-friendly
 """
 from __future__ import annotations
 
-# Empreintes ~Q4 (Ollama). min_vram_gb == 0 => modèle pensé pour tourner sur CPU.
+# Empreintes À 64K DE CONTEXTE (Hermes exige >=64K → le KV-cache 64K s'ajoute aux
+# poids du modèle). MESURÉ LIVE sur xefia : qwen3:8b à 64K = 11 Go → tient sur 12 Go
+# (100% GPU, ~9s) ; qwen3:14b à 64K déborde 12 Go (bascule CPU, ~48s).
+# min_vram_gb == 0 => modèle pensé pour tourner sur CPU.
 CATALOG = [
-    {"id": "qwen3:1.7b", "params_b": 1.7, "min_ram_gb": 4,  "min_vram_gb": 0,  "fr": 3, "tier": 1, "note": "ultra-léger, CPU"},
+    {"id": "qwen3:1.7b", "params_b": 1.7, "min_ram_gb": 5,  "min_vram_gb": 0,  "fr": 3, "tier": 1, "note": "ultra-léger, CPU"},
     {"id": "qwen3:4b",   "params_b": 4,   "min_ram_gb": 8,  "min_vram_gb": 0,  "fr": 4, "tier": 2, "note": "léger, CPU OK"},
-    {"id": "qwen3:8b",   "params_b": 8,   "min_ram_gb": 12, "min_vram_gb": 6,  "fr": 4, "tier": 3, "note": "bon compromis (GPU 6-8 Go)"},
-    {"id": "qwen3:14b",  "params_b": 14,  "min_ram_gb": 24, "min_vram_gb": 10, "fr": 5, "tier": 4, "note": "qualité FR (GPU 12 Go)"},
-    {"id": "qwen3:32b",  "params_b": 32,  "min_ram_gb": 48, "min_vram_gb": 22, "fr": 5, "tier": 5, "note": "haut de gamme (GPU 24 Go+)"},
+    {"id": "qwen3:8b",   "params_b": 8,   "min_ram_gb": 16, "min_vram_gb": 12, "fr": 4, "tier": 3, "note": "GPU 12 Go — tient à 64K, 100% GPU (~9s)"},
+    {"id": "qwen3:14b",  "params_b": 14,  "min_ram_gb": 28, "min_vram_gb": 18, "fr": 5, "tier": 4, "note": "GPU 16-24 Go à 64K"},
+    {"id": "qwen3:32b",  "params_b": 32,  "min_ram_gb": 48, "min_vram_gb": 30, "fr": 5, "tier": 5, "note": "GPU 32 Go+ à 64K"},
 ]
 
 GPU_MIN_GB = 6.0  # en dessous : on considère qu'il n'y a pas de GPU utile
