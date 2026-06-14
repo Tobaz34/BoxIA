@@ -33,10 +33,21 @@ def render(
     connectors,
     tenant_dir: str,
     pennylane_base_url: str = "http://127.0.0.1:8081",
+    vision_model: str = "qwen2.5vl:7b",
 ) -> str:
     allowed = [c for c in connectors if c in CONNECTORS]
     blocks = "\n".join(CONNECTORS[c](tenant_dir, pennylane_base_url) for c in allowed)
     mcp = blocks if blocks else "  {}"
+    # Modèle vision dédié (pièces jointes image) : tâche auxiliaire routée vers un
+    # modèle multimodal local. Sans ça, qwen3 (text-only) « ne peut pas voir » l'image.
+    vision = (
+        "auxiliary:\n"
+        "  vision:\n"
+        '    provider: "custom"\n'
+        f'    base_url: "{base_url}"\n'
+        f'    model: "{vision_model}"\n'
+        '    api_key: "ollama"\n\n'
+    ) if vision_model else ""
     return (
         "# Généré par render_config.py — ne pas éditer à la main.\n"
         "model:\n"
@@ -44,6 +55,7 @@ def render(
         f'  base_url: "{base_url}"\n'
         f'  default: "{model}"\n'
         "  context_length: 65536   # Hermes exige >=64K ; qwen3 natif=40K → override obligatoire\n\n"
+        f"{vision}"
         "mcp_servers:\n"
         f"{mcp}\n\n"
         "skills:\n"
@@ -68,6 +80,8 @@ if __name__ == "__main__":
     ap.add_argument("--connectors", default="", help="csv des connecteurs autorisés")
     ap.add_argument("--tenant-dir", required=True)
     ap.add_argument("--pennylane-base-url", default="http://127.0.0.1:8081")
+    ap.add_argument("--vision-model", default="qwen2.5vl:7b",
+                    help="modèle vision pour les pièces jointes image (vide = désactivé)")
     a = ap.parse_args()
     conns = [c.strip() for c in a.connectors.split(",") if c.strip()]
-    print(render(a.model, a.base_url, conns, a.tenant_dir, a.pennylane_base_url))
+    print(render(a.model, a.base_url, conns, a.tenant_dir, a.pennylane_base_url, a.vision_model))
