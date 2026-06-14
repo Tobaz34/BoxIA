@@ -36,11 +36,13 @@ aibox-hermes/
 ├── BUILD-BOARD.md       # plan d'exécution par phases (source de vérité avancement)
 ├── config/
 │   └── config.template.yaml   # template de ~/.hermes/config.yaml (rempli au provisioning)
-├── hooks/               # scripts hooks (approval-gate, rgpd-scrub)        [Phase 1]
-├── mcp-connectors/      # connecteurs FR exposés en serveurs MCP           [Phase 1+]
-│   └── pennylane/
-├── skills/              # skills métier FR (external_dirs)                 [Phase 2]
-└── provision/           # provisioning par tenant (1 instance/entreprise)  [Phase 3]
+├── plugins/             # sécurité : aibox-approval, aibox-rgpd, aibox-audit
+├── mcp-connectors/      # connecteurs FR en serveurs MCP (pennylane)
+├── skills/              # skills FR : aibox-cookbook, aibox-email-triage, aibox-deep-research
+├── cookbook/            # reco modèle local selon le hardware (idée Odysseus)
+├── pwa/                 # app mobile installable vers l'API Hermes (idée Odysseus)
+├── provision/           # provisioning par tenant (provision-tenant.sh)
+└── tests/               # 32 tests unitaires
 ```
 
 ## État
