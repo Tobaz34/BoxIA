@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Documentation — AI Box</title>
+  <link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+  <header class="dtop">
+    <button id="burger" class="burger" aria-label="Menu">☰</button>
+    <div class="dbrand"><span class="brand-dot"></span>Documentation</div>
+    <input id="search" type="search" placeholder="Rechercher…" autocomplete="off" />
+  </header>
+  <div class="dlayout">
+    <nav id="sidebar" class="sidebar" aria-label="Sommaire"></nav>
+    <main id="content" class="content">
+      <div class="loading">Chargement de la documentation…</div>
+    </main>
+  </div>
+  <script src="vendor/marked.min.js"></script>
+  <script src="vendor/purify.min.js"></script>
+  <script src="docs.js"></script>
+</body>
+</html>

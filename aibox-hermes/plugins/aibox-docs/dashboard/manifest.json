@@ -1,0 +1,12 @@
+{
+  "name": "aibox-docs",
+  "label": "Documentation",
+  "description": "Documentation Hermes complète, servie en local (hors-ligne) — remplace l'onglet Docs qui pointait vers le web.",
+  "icon": "FileText",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/docs",
+    "override": "/docs"
+  },
+  "entry": "dist/index.js"
+}

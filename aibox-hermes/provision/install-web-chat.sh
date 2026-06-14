@@ -41,6 +41,23 @@ sudo chmod 755 "$WEB_ROOT" "$WEB_ROOT/chat-ui"
 sudo chmod 644 "$WEB_ROOT/chat-ui/"*
 echo "  UI -> $WEB_ROOT/chat-ui"
 
+# 1bis) Documentation Hermes EN LOCAL (hors-ligne) : viewer statique + contenu
+#       généré depuis la doc Docusaurus de Hermes (snapshot, à rejouer après MAJ).
+sudo mkdir -p "$WEB_ROOT/docs/vendor"
+sudo cp -f "$AIBOX_HERMES_DIR/docs-ui/index.html" "$AIBOX_HERMES_DIR/docs-ui/docs.css" \
+           "$AIBOX_HERMES_DIR/docs-ui/docs.js" "$WEB_ROOT/docs/"
+sudo cp -f "$AIBOX_HERMES_DIR/docs-ui/vendor/"*.js "$WEB_ROOT/docs/vendor/"
+HERMES_DOCS="${HERMES_DOCS:-$HOME/hermes-agent/website/docs}"
+if [ -d "$HERMES_DOCS" ]; then
+  sudo python3 "$AIBOX_HERMES_DIR/provision/build-docs.py" "$HERMES_DOCS" "$WEB_ROOT/docs"
+  echo "  docs -> $WEB_ROOT/docs (générées depuis $HERMES_DOCS)"
+else
+  echo "  ! docs Hermes introuvables ($HERMES_DOCS) — viewer servi sans contenu"
+fi
+sudo chown -R "root:$CADDY_USER" "$WEB_ROOT/docs"
+sudo find "$WEB_ROOT/docs" -type d -exec chmod 755 {} \;
+sudo find "$WEB_ROOT/docs" -type f -exec chmod 644 {} \;
+
 # 2) Token par user : chaque dash env DOIT avoir HERMES_DASHBOARD_SESSION_TOKEN
 #    (sinon le dashboard en génère un aléatoire au démarrage = /api/ws en 403).
 sudo mkdir -p "$WEB_ROOT/chat-tokens"

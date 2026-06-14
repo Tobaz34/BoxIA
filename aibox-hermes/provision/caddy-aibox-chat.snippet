@@ -27,3 +27,11 @@ handle_path /aibox-chat/* {
 	file_server
 }
 # --- AIBOX-CHAT-END ---
+
+# --- AIBOX-DOCS-BEGIN : documentation Hermes servie en local (hors-ligne) ---
+redir /aibox-docs /aibox-docs/
+handle_path /aibox-docs/* {
+	root * /opt/aibox-web/docs
+	file_server
+}
+# --- AIBOX-DOCS-END ---
