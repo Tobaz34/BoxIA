@@ -10,5 +10,5 @@ import sys
 _HERE = os.path.dirname(__file__)
 _ROOT = os.path.dirname(_HERE)
 
-for _p in ("plugins/aibox-rgpd", "plugins/aibox-approval"):
+for _p in ("plugins/aibox-rgpd", "plugins/aibox-approval", "plugins/aibox-audit"):
     sys.path.insert(0, os.path.join(_ROOT, _p))
