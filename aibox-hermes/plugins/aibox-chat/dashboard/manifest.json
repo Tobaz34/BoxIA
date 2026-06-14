@@ -6,7 +6,7 @@
   "version": "1.0.0",
   "tab": {
     "path": "/assistant",
-    "position": "before:sessions"
+    "override": "/"
   },
   "entry": "dist/index.js"
 }

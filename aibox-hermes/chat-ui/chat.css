@@ -30,10 +30,17 @@ body {
 
 /* Top bar */
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: .6rem;
   padding: .65rem 1rem; background: var(--panel); border-bottom: 1px solid var(--border);
   padding-top: max(.65rem, env(safe-area-inset-top));
 }
+#new-chat { margin-left: auto; }
+.model-badge {
+  font-size: .74rem; color: var(--muted); background: rgba(37,99,235,.07);
+  border: 1px solid var(--border); border-radius: 999px; padding: .18rem .6rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw;
+}
+.model-badge:empty { display: none; }
 .brand { font-weight: 700; letter-spacing: -.01em; display: flex; align-items: center; gap: .5rem; }
 .brand-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(37,99,235,.15); }
 .ghost {

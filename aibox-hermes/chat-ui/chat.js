@@ -9,8 +9,36 @@ const $ = (s) => document.querySelector(s);
 const thread = $('#thread'), input = $('#input'), composer = $('#composer'),
       sendBtn = $('#send'), statusEl = $('#status');
 const sidebar = $('#sidebar'), convList = $('#conv-list'), attachmentsEl = $('#attachments'),
-      fileInput = $('#file');
+      fileInput = $('#file'), modelBadge = $('#model-badge');
 let emptyEl = $('#empty');
+
+// Indicateur « ce qu'il utilise » : toolset (session.info) → libellé client.
+const GROUP_LABEL = {
+  clarify: ['❓', 'Clarification'], cronjob: ['⏰', 'Tâche planifiée'],
+  delegation: ['🤝', 'Délégation'], code_execution: ['🐍', 'Exécution de code'],
+  image_gen: ['🎨', "Génération d'image"], memory: ['🧠', 'Mémoire'],
+  file: ['📁', 'Fichiers'], terminal: ['⌨️', 'Commande système'],
+  session_search: ['🔎', 'Recherche historique'], skills: ['🧩', 'Compétence'],
+  tts: ['🔊', 'Synthèse vocale'], todo: ['✅', 'Tâches'],
+  vision: ['👁️', 'Vision (image)'], web: ['🌐', 'Recherche web'],
+};
+let toolGroup = {};                   // nom d'outil -> toolset (depuis session.info)
+function categorize(name) {
+  const g = toolGroup[name];
+  if (g && GROUP_LABEL[g]) return GROUP_LABEL[g];
+  if (g) return ['🔌', 'Connecteur ' + g];   // serveur MCP / toolset inconnu
+  return ['🔧', name || 'Outil'];
+}
+function updateInfo(pl) {
+  const model = pl.model || '';
+  if (modelBadge) {
+    modelBadge.textContent = model ? '🧠 ' + model : '';
+    modelBadge.title = 'Moteur IA : ' + model + (pl.provider === 'custom' ? ' (local)' : (pl.provider ? ' (' + pl.provider + ')' : ''));
+  }
+  toolGroup = {};
+  const tools = pl.tools || {};
+  for (const g in tools) (tools[g] || []).forEach((t) => { toolGroup[t] = g; });
+}
 
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 function renderMarkdown(text) {
@@ -124,8 +152,8 @@ function toolEl(pl) {
   if (!el) { el = document.createElement('div'); el.className = 'tool'; cur.toolWrap.appendChild(el); cur.tools[id] = el; }
   return el;
 }
-function addTool(pl) { const el = toolEl(pl); el.innerHTML = '<span class="tdot"></span>'; el.appendChild(document.createTextNode(' ' + (pl.name || 'outil') + '…')); scroll(); }
-function completeTool(pl) { const el = toolEl(pl); el.innerHTML = '<span class="tdot" style="background:#16a34a"></span>'; el.appendChild(document.createTextNode(' ' + (pl.name || 'outil') + ' ✓')); scroll(); }
+function addTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.name); el.innerHTML = '<span class="tdot"></span>'; el.appendChild(document.createTextNode(' ' + ic + ' ' + lb + '…')); el.title = pl.name || ''; scroll(); }
+function completeTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.name); el.innerHTML = '<span class="tdot" style="background:#16a34a"></span>'; el.appendChild(document.createTextNode(' ' + ic + ' ' + lb + ' ✓')); el.title = pl.name || ''; scroll(); }
 function finishAssistant(note) {
   if (!cur) return;
   if (cur.raf) { clearTimeout(cur.raf); cur.raf = 0; }
@@ -150,6 +178,7 @@ function handleEvent(et, p) {
       if (!sessionId) newConversation(true);
       loadSessions();
       break;
+    case 'session.info': updateInfo(pl); break;
     case 'message.start': if (!cur) startAssistant(); break;
     case 'message.delta': appendAnswer(pl.text || ''); break;
     case 'reasoning.delta': appendThinking(pl.text || ''); break;
