@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>AI Box</title>
   <link rel="stylesheet" href="chat.css" />
+  <!-- Mode "embed" : quand le chat est intégré comme onglet du dashboard Hermes
+       (iframe ?embed=1), on masque la topbar (le dashboard fournit déjà son chrome). -->
+  <script>if(location.search.indexOf('embed=1')>-1)document.documentElement.classList.add('embed');</script>
   <!-- Le token de session (par utilisateur) est récupéré par chat.js depuis
        ./session, servi derrière Authentik. Aucun secret dans ce fichier. -->
 </head>

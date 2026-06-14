@@ -56,10 +56,12 @@ say "RBAC connecteurs de ce user : $USER_CONNECTORS"
 say "HERMES_HOME = $HERMES_HOME"
 
 run "mkdir -p '$HERMES_HOME/plugins'"
-for p in aibox-approval aibox-rgpd aibox-audit; do
+# aibox-chat = plugin dashboard (onglet « Assistant » → chat épuré) ; les 3 autres
+# = plugins agent (hooks approval/rgpd/audit). Tous symlinkés depuis le repo.
+for p in aibox-approval aibox-rgpd aibox-audit aibox-chat; do
   run "ln -sfn '$AIBOX_HERMES_DIR/plugins/$p' '$HERMES_HOME/plugins/$p'"
 done
-say "plugins sécurité liés"
+say "plugins liés (sécurité + onglet Assistant)"
 
 # RBAC : connecteurs actifs = intersection(entreprise, droits user)
 ENABLED_N="${ENABLED_CONNECTORS//,/ }"

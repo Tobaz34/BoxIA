@@ -1,0 +1,12 @@
+{
+  "name": "aibox-chat",
+  "label": "Assistant",
+  "description": "Fenêtre de chat épurée AI Box (ChatGPT-like) intégrée au dashboard Hermes.",
+  "icon": "MessageSquare",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/assistant",
+    "position": "before:sessions"
+  },
+  "entry": "dist/index.js"
+}

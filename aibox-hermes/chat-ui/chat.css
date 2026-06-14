@@ -16,6 +16,11 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+
+/* Mode embed (onglet du dashboard Hermes) : le dashboard fournit déjà l'en-tête */
+html.embed .topbar { display: none; }
+html.embed body { background: transparent; }
+html.embed .composer { background: transparent; }
 body {
   display: flex; flex-direction: column; height: 100dvh;
   background: var(--bg); color: var(--text);
