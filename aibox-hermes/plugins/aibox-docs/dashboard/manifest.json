@@ -5,8 +5,8 @@
   "icon": "FileText",
   "version": "1.0.0",
   "tab": {
-    "path": "/docs",
-    "override": "/docs"
+    "path": "/documentation",
+    "position": "after:skills"
   },
   "entry": "dist/index.js"
 }
