@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>AI Box</title>
+  <link rel="stylesheet" href="chat.css" />
+  <!-- Le token de session (par utilisateur) est récupéré par chat.js depuis
+       ./session, servi derrière Authentik. Aucun secret dans ce fichier. -->
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">AI&nbsp;Box</div>
+    <button id="new-chat" class="ghost" title="Nouvelle conversation">Nouvelle conversation</button>
+  </header>
+
+  <main id="thread" class="thread">
+    <div class="empty" id="empty">
+      <h1>Bonjour 👋</h1>
+      <p>Posez votre question, je suis là pour aider.</p>
+    </div>
+  </main>
+
+  <form id="composer" class="composer">
+    <textarea id="input" rows="1" placeholder="Écrivez votre message…" autocomplete="off"></textarea>
+    <button id="send" type="submit" aria-label="Envoyer" title="Envoyer">➤</button>
+  </form>
+  <div id="status" class="status"></div>
+
+  <script src="chat.js"></script>
+</body>
+</html>
