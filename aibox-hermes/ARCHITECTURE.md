@@ -59,18 +59,21 @@ mcp_servers:
 ```
 Stdio **ou** HTTP (`url:` + `headers:`) — au choix selon le déploiement.
 
-### 3.2 Hooks — sécurité (port du moat)
-```yaml
-hooks:
-  pre_tool_call:
-    - matcher: "pennylane_.*|odoo_.*|.*_create|.*_delete"   # tools mutatifs
-      command: "${TENANT_DIR}/hooks/approval_gate.sh"
-      timeout: 15
-  pre_api_request:
-    - command: "${TENANT_DIR}/hooks/rgpd_scrub.sh"          # avant tout appel LLM cloud
-hooks_auto_accept: true   # non-interactif (gateway) — pré-autorise nos hooks signés
+### 3.2 Plugins Python — sécurité (port du moat) ✅ POC validé
+
+> Vérifié dans la source : seuls les **plugins** (pas les shell hooks) peuvent à la fois *bloquer* un tool et *réécrire* un résultat. `pre_api_request` est **observer-only** (utilisé par Langfuse, ne mute pas le payload). Les plugins vivent dans `${HERMES_HOME}/plugins/<name>/` et sont auto-découverts.
+
+- **`aibox-approval`** — hook `pre_tool_call`. Bloque tout tool matchant `AIBOX_MUTATING_TOOLS_REGEX` tant qu'il n'a pas été approuvé via `/aibox-approve <id>`. Le LLM ne peut pas s'auto-approuver. Anti param-swap par hash des args (port de [approval-gate.ts](../services/app/src/lib/approval-gate.ts)).
+- **`aibox-rgpd`** — hook `transform_tool_result`. Caviarde la PII FR des résultats d'outils avant le cloud quand `AIBOX_RGPD_SCRUB=1` (port de [pii-scrub.ts](../services/app/src/lib/pii-scrub.ts)).
+
+```python
+# squelette commun (cf. plugins/aibox-*/__init__.py)
+def register(ctx):
+    ctx.register_hook("pre_tool_call", _block_mutating_until_approved)   # aibox-approval
+    ctx.register_hook("transform_tool_result", _scrub_pii)               # aibox-rgpd
 ```
-Wire protocol : le script reçoit un JSON sur stdin, renvoie sur stdout un JSON pouvant **bloquer** (`{"decision": "block", ...}`) ou **injecter du contexte**. (Détail exact à figer depuis `docs hooks` — cf. BUILD-BOARD Phase 1.)
+
+Wire : `pre_tool_call` retourne `{"action":"block","message":...}` pour véto ; `transform_tool_result` retourne la string réécrite (ou `None`).
 
 ### 3.3 Modèle — IA locale + fallback
 ```yaml

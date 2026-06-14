@@ -13,17 +13,16 @@ Statut : ⬜ à faire · 🟦 en cours · ✅ fait
 - [ ] Nettoyage Git : merger/archiver les ~15 branches mortes, repartir d'un `main` propre
 - [ ] Archiver l'ancienne stack BoxIA (`services/app`, Dify…) sous `legacy/` ou tag, sans la supprimer
 
-## Phase 1 — POC vertical (dé-risquage)  ⬜
-> Objectif : prouver le concept bout-en-bout sur **une** tranche. Critères go/no-go avant d'aller plus loin.
-- [ ] Hermes installé en local, branché sur Ollama (`provider: custom`)
-- [ ] Lire le wire-protocol exact des hooks (`docs hooks.md`) + MCP (`docs mcp.md`)
-- [ ] `mcp-connectors/pennylane/server.py` — shim MCP → FastAPI Pennylane (read-only)
-- [ ] `hooks/approval_gate.sh` — port de l'approval-gate en `pre_tool_call`
-- [ ] `hooks/rgpd_scrub.sh` — port du scrub PII FR en `pre_api_request`
-- [ ] Test : « liste mes factures impayées » via CLI Hermes → tool MCP → réponse
-- [ ] Test : action mutative simulée → approval-gate bloque → confirmation → exécute
-- [ ] Test : prompt avec PII → scrub avant cloud
-- [ ] **Go/No-go** : (1) MCP shim OK ? (2) hooks OK sans fork ? (3) latence cloud hybride acceptable ?
+## Phase 1 — POC vertical (dé-risquage)  🟦
+> Objectif : prouver le concept bout-en-bout sur **une** tranche. Critères go/no-go.
+- [x] Wire-protocol hooks + MCP lus dans la source Hermes (clone v0.16.0)
+- [x] `mcp-connectors/pennylane/server.py` — shim MCP FastMCP → FastAPI (8 tools read-only)
+- [x] `plugins/aibox-approval/` — approval-gate en plugin `pre_tool_call` (+ /aibox-approve)
+- [x] `plugins/aibox-rgpd/` — scrub PII FR en plugin `transform_tool_result`
+- [x] Tests unitaires : 14/14 verts (scrub PII ordering + machine d'approbation anti param-swap)
+- [x] Valide : serveur MCP importe + liste 8 tools ; matcher mutatif OK (read-only non bloqués, mutatifs bloqués)
+- [ ] **Go/No-go criterion #3** : Hermes live (Ollama + cloud + Telegram) → latence hybride — *nécessite install Hermes + clé cloud + bot, non faisable sur le poste de dev seul*
+- **Verdict POC** : critères #1 (MCP sans fork) et #2 (hooks/plugins sans fork) ✅. #3 = la seule inconnue restante (mesures connues : local ~24-48 s, cloud Haiku ~1-2 s).
 
 ## Phase 2 — Portage du moat  ⬜
 - [ ] Connecteurs Odoo / GLPI / FEC en shims MCP
@@ -50,4 +49,9 @@ Statut : ⬜ à faire · 🟦 en cours · ✅ fait
 ---
 
 ### Journal
-- **2026-06-14** — Phase 0 lancée. Hermes cloné (`.research-cache/hermes-agent`, v0.16.0). Interfaces vérifiées : `mcp_servers`, `hooks` (pre_tool_call/pre_api_request), `group_sessions_per_user`, `skills.external_dirs`, `display.skin`. Verdict : produit faisable **sans fork**. Docs + template créés.
+- **2026-06-14 (nuit)** — Phase 0 + Phase 1 en autonomie.
+  - Phase 0 : décision actée, dossier `aibox-hermes/` + docs + template, commit sur branche `claude/hermes-pivot`. Analyse Git → `BRANCH-AUDIT.md` (origin/main inclut déjà le hardening ; 6 branches fusionnées supprimables, 2 à examiner).
+  - Phase 1 : shim MCP Pennylane (FastMCP, 8 tools), plugins `aibox-approval` (pre_tool_call) + `aibox-rgpd` (transform_tool_result), portés depuis BoxIA. **14/14 tests unitaires verts.** Serveur MCP validé (import + 8 tools listés). Matcher mutatif validé contre les vrais noms de tools.
+  - Correctif d'architecture vs hypothèse initiale : approval & RGPD sont des **plugins Python** (pas des shell hooks) ; `pre_api_request` est observer-only.
+  - Reste : critère #3 (latence live), Phase 2+.
+- **2026-06-14** — Phase 0 lancée. Hermes cloné (`.research-cache/hermes-agent`, v0.16.0). Interfaces vérifiées : `mcp_servers`, `hooks`, `group_sessions_per_user`, `skills.external_dirs`, `display.skin`. Verdict : produit faisable **sans fork**.

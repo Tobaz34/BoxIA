@@ -30,20 +30,18 @@ mcp_servers:
     timeout: 60
   # odoo / glpi / fec : ajoutés en Phase 2 sur le même modèle.
 
-# --- Hooks : sécurité (moat porté) ------------------------------------------
-hooks:
-  # Approval-gate : tout tool mutatif passe par une confirmation non contournable.
-  pre_tool_call:
-    - matcher: "${MUTATING_TOOLS_REGEX}"   # ex: ".*_create|.*_update|.*_delete|.*_send"
-      command: "${TENANT_DIR}/hooks/approval_gate.sh"
-      timeout: 15
-  # RGPD : caviardage PII FR avant tout envoi au LLM cloud.
-  pre_api_request:
-    - command: "${TENANT_DIR}/hooks/rgpd_scrub.sh"
-  # Audit : trace append-only des tool calls (Phase 2).
-  # post_tool_call:
-  #   - command: "${TENANT_DIR}/hooks/audit.sh"
-hooks_auto_accept: true   # gateway non-interactif : pré-autorise nos hooks (signés/embarqués)
+# --- Sécurité : plugins Python (auto-découverts depuis ${HERMES_HOME}/plugins/) ---
+# Le provisioning installe aibox-hermes/plugins/* dans ${HERMES_HOME}/plugins/ :
+#   aibox-approval  → hook pre_tool_call : bloque les tools mutatifs jusqu'à
+#                     /aibox-approve <id> (anti prompt-injection, vérif hash des args)
+#   aibox-rgpd      → hook transform_tool_result : caviarde la PII FR des
+#                     résultats d'outils avant envoi cloud
+# (NB : on utilise des plugins, pas des shell hooks — seuls les plugins peuvent
+#  bloquer un tool ET réécrire un résultat. pre_api_request est observer-only.)
+# Pilotage par env (dans ${HERMES_HOME}/.env) :
+#   AIBOX_MUTATING_TOOLS_REGEX   quels tools exigent une approbation
+#   AIBOX_RGPD_SCRUB=1           active le scrub PII (déploiements cloud-primary)
+#   AIBOX_APPROVAL_TTL_S=300     péremption d'une demande d'approbation
 
 # --- Skills métier FR (lecture seule, hors ~/.hermes/skills) -----------------
 skills:

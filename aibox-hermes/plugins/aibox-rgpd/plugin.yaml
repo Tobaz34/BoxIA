@@ -1,0 +1,6 @@
+name: aibox-rgpd
+version: "0.1.0"
+description: "Caviarde la PII française (SIRET/SIREN/NIR/IBAN/CB/téléphone/email) des résultats d'outils avant envoi à un LLM cloud. Défense-en-profondeur pour déploiements cloud-primary — activer via AIBOX_RGPD_SCRUB=1. Port de pii-scrub.ts (BoxIA)."
+author: "AI Box"
+hooks:
+  - transform_tool_result
