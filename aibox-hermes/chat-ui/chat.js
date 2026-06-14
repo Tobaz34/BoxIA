@@ -78,7 +78,7 @@ function startAssistant() {
   const { row, b } = addRow('assistant');
   b.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
   cur = { row, bubble: b, thinkWrap: tw, thinkBody: tw.querySelector('.think-body'),
-          toolWrap, text: '', think: '', started: false, lastRender: 0, raf: 0 };
+          toolWrap, tools: {}, text: '', think: '', started: false, lastRender: 0, raf: 0 };
 }
 function renderNow() {
   if (!cur) return;
@@ -101,11 +101,22 @@ function appendThinking(t) {
   cur.think += t; cur.thinkBody.textContent = cur.think;
   cur.thinkWrap.querySelector('.count').textContent = cur.think.split('\n').length + ' lignes'; scroll();
 }
-function addTool(name) {
+function toolEl(pl) {
   if (!cur) startAssistant();
-  const el = document.createElement('div'); el.className = 'tool';
-  el.innerHTML = '<span class="tdot"></span>'; el.appendChild(document.createTextNode(' ' + (name || 'outil') + '…'));
-  cur.toolWrap.appendChild(el); scroll();
+  const id = pl.tool_id || pl.name || ('t' + Object.keys(cur.tools).length);
+  let el = cur.tools[id];
+  if (!el) { el = document.createElement('div'); el.className = 'tool'; cur.toolWrap.appendChild(el); cur.tools[id] = el; }
+  return el;
+}
+function addTool(pl) {
+  const el = toolEl(pl);
+  el.innerHTML = '<span class="tdot"></span>';
+  el.appendChild(document.createTextNode(' ' + (pl.name || 'outil') + '…')); scroll();
+}
+function completeTool(pl) {
+  const el = toolEl(pl);
+  el.innerHTML = '<span class="tdot" style="background:#16a34a"></span>';
+  el.appendChild(document.createTextNode(' ' + (pl.name || 'outil') + ' ✓')); scroll();
 }
 function finishAssistant(note) {
   if (!cur) return;
@@ -132,26 +143,31 @@ function handleEvent(et, p) {
       });
       break;
     case 'message.start': if (!cur) startAssistant(); break;
-    case 'message.delta': appendAnswer(p.text || p.delta || p.content || ''); break;
-    case 'reasoning.delta':
-    case 'thinking.delta': appendThinking(p.text || p.delta || ''); break;
-    case 'tool.start': case 'tool.call': addTool(p.name || p.tool); break;
+    case 'message.delta': appendAnswer((p.payload || {}).text || ''); break;
+    case 'reasoning.delta': appendThinking((p.payload || {}).text || ''); break;
+    case 'tool.start': addTool(p.payload || {}); break;
+    case 'tool.complete': completeTool(p.payload || {}); break;
     case 'message.complete': {
-      const final = (p.payload && p.payload.text) || p.text;
-      if (final && cur && final.length > cur.text.length) { cur.text = final; cur.started = true; }
+      const final = (p.payload || {}).text || (p.payload || {}).rendered;
+      if (final && cur) { cur.text = final; cur.started = true; }
       finishAssistant(); break;
     }
+    case 'run.completed': finishAssistant(); break;
+    case 'run.failed': { const m = (p.payload || {}).message; finishAssistant(); if (m) setStatus(m, true); break; }
     case 'run.cancelled': finishAssistant(cur && cur.started ? '⏹ Réponse interrompue.' : 'Réponse interrompue.'); break;
-    case 'approval.request': renderApproval(p); break;
-    case 'clarify.request': renderClarify(p); break;
+    case 'approval.request': renderApproval(p.payload || {}); break;
+    case 'clarify.request': renderClarify(p.payload || {}); break;
+    case 'sudo.request': case 'secret.request':
+      setStatus('Cette action requiert une autorisation système, non disponible dans le chat.', true);
+      if (sessionId) rpc('session.interrupt', { session_id: sessionId }); finishAssistant(); break;
     case 'error':
       setStatus((p.payload && p.payload.message) || p.message || 'Une erreur est survenue.', true); finishAssistant(); break;
   }
 }
 
-function renderApproval(p) {
+function renderApproval(pl) {
   const div = document.createElement('div'); div.className = 'card approval';
-  const txt = (p.payload && (p.payload.summary || p.payload.command)) || p.summary || 'Action sensible : confirmer ?';
+  const txt = pl.summary || pl.command || pl.tool || 'Action sensible : confirmer ?';
   const para = document.createElement('p'); para.textContent = '🔒 ' + txt; div.appendChild(para);
   const act = document.createElement('div'); act.className = 'actions';
   const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = 'Valider';
@@ -160,9 +176,9 @@ function renderApproval(p) {
   no.onclick = () => { rpc('approval.respond', { session_id: sessionId, choice: 'deny', all: false }); rpc('session.interrupt', { session_id: sessionId }); div.remove(); };
   act.appendChild(ok); act.appendChild(no); div.appendChild(act); thread.appendChild(div); scroll();
 }
-function renderClarify(p) {
-  const reqId = (p.payload && p.payload.request_id) || p.request_id;
-  const q = (p.payload && (p.payload.question || p.payload.prompt)) || p.question || 'Pouvez-vous préciser ?';
+function renderClarify(pl) {
+  const reqId = pl.request_id;
+  const q = pl.question || pl.prompt || 'Pouvez-vous préciser ?';
   const div = document.createElement('div'); div.className = 'card clarify';
   const para = document.createElement('p'); para.textContent = '❓ ' + q; div.appendChild(para);
   const act = document.createElement('div'); act.className = 'actions';
