@@ -17,8 +17,9 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 
-/* Mode embed (onglet du dashboard Hermes) : le dashboard fournit déjà l'en-tête */
-html.embed .topbar { display: none; }
+/* Mode embed (onglet du dashboard Hermes) : on garde la barre fine (menu + nouvelle) */
+html.embed .topbar { padding: .35rem .6rem; }
+html.embed .brand { display: none; }
 html.embed body { background: transparent; }
 html.embed .composer { background: transparent; }
 body {
@@ -41,6 +42,50 @@ body {
   transition: .15s;
 }
 .ghost:hover { color: var(--text); border-color: var(--muted); }
+.icon-btn { background: none; border: 0; color: var(--muted); cursor: pointer; padding: .3rem; border-radius: 8px; display: grid; place-items: center; line-height: 0; }
+.icon-btn:hover { color: var(--text); background: rgba(0,0,0,.05); }
+#menu { font-size: 1.1rem; }
+
+/* Layout : sidebar conversations + zone principale */
+.layout { flex: 1; display: flex; min-height: 0; position: relative; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.sidebar {
+  width: 270px; flex: none; background: var(--panel); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  margin-left: -270px; transition: margin-left .2s ease;
+}
+body.nav-open .sidebar { margin-left: 0; }
+.sidebar-head { padding: .7rem 1rem .4rem; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.conv-list { overflow-y: auto; padding: 0 .5rem 1rem; }
+.conv-item {
+  display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
+  padding: .5rem .6rem; border-radius: 9px; font: inherit; color: var(--text); margin-bottom: 2px;
+}
+.conv-item:hover { background: rgba(0,0,0,.04); }
+.conv-item.active { background: rgba(37,99,235,.1); }
+.conv-item .t { font-size: .88rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-item .p { font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-empty { color: var(--muted); font-size: .82rem; padding: .5rem .6rem; }
+.backdrop { display: none; position: absolute; inset: 0; background: rgba(0,0,0,.25); z-index: 5; }
+body.nav-open .backdrop { display: block; }
+/* En grand écran, la sidebar pousse le contenu (pas d'overlay) */
+@media (min-width: 900px) {
+  body.nav-open .backdrop { display: none; }
+}
+
+/* Bande des pièces jointes (au-dessus du composer) */
+.attachments { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0 1rem; width: 100%; max-width: var(--maxw); margin: 0 auto; }
+.attachments:empty { display: none; }
+.attachments { padding-top: .5rem; }
+.att-chip { position: relative; width: 56px; height: 56px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--assistant); }
+.att-chip img { width: 100%; height: 100%; object-fit: cover; }
+.att-chip .x { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: .7rem; cursor: pointer; line-height: 18px; padding: 0; }
+.att-chip.uploading { display: grid; place-items: center; color: var(--muted); font-size: .7rem; }
+
+/* Image générée par l'agent (artefact) dans une bulle */
+.bubble img { max-width: 100%; border-radius: 10px; margin: .4rem 0; display: block; }
+.dl-chip { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--accent); text-decoration: none; font-size: .85rem; margin: .3rem 0; }
+.dl-chip:hover { border-color: var(--accent); }
 
 /* Thread */
 .thread {
