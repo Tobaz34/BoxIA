@@ -127,6 +127,15 @@ if command -v hermes >/dev/null 2>&1; then
   say "plugins activés : approval, rgpd, audit"
 fi
 
+# Thème dashboard "AI Box" (update-safe : vit dans HERMES_HOME/dashboard-themes/)
+THEME_SRC="$AIBOX_HERMES_DIR/branding/dashboard-themes/aibox.yaml"
+if [ -f "$THEME_SRC" ]; then
+  run "mkdir -p '$HERMES_HOME/dashboard-themes'"
+  run "ln -sfn '$THEME_SRC' '$HERMES_HOME/dashboard-themes/aibox.yaml'"
+  command -v hermes >/dev/null 2>&1 && run "HERMES_HOME='$HERMES_HOME' hermes config set theme aibox >/dev/null 2>&1 || true"
+  say "thème dashboard AI Box appliqué"
+fi
+
 # Fallback cloud (si clé héritée + binaire hermes présents)
 if [ -n "${ANTHROPIC_API_KEY:-}" ] && command -v hermes >/dev/null 2>&1; then
   run "HERMES_HOME='$HERMES_HOME' hermes fallback add anthropic claude-haiku-4-5 --priority 1 || true"
