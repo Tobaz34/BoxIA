@@ -1,0 +1,33 @@
+# Service systemd — un dashboard Hermes PRIVÉ par utilisateur (derrière Caddy).
+# Instance %i = nom d'utilisateur (ex: aibox-dash@andre).
+#
+# Chaque backend bind 0.0.0.0 (pour accepter le Host transmis par Caddy) MAIS
+# n'est PAS ouvert dans ufw → seul Caddy l'atteint en localhost. Privé.
+#
+# EnvironmentFile par user — /home/<owner>/aibox/dash/<user>.env :
+#     HERMES_HOME=/home/<owner>/aibox/companies/<co>/users/<user>/hermes
+#     DASH_PORT=9120        # un port distinct par user (9120, 9121, …)
+#
+# Installer :
+#   sudo cp aibox-dash@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aibox-dash@<user>
+#
+# (Adapter User= et les chemins à ton installation.)
+[Unit]
+Description=AI Box - Dashboard utilisateur (%i)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clikinfo
+EnvironmentFile=/home/clikinfo/aibox/dash/%i.env
+Environment=PATH=/home/clikinfo/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/clikinfo
+ExecStart=/home/clikinfo/.local/bin/hermes dashboard --host 0.0.0.0 --port ${DASH_PORT} --insecure --no-open --skip-build
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

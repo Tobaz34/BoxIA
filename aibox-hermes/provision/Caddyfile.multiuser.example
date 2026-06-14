@@ -1,0 +1,35 @@
+# Reverse-proxy multi-utilisateur AI Box.
+# UNE URL, login par personne, chacun routé vers SON dashboard Hermes privé.
+# Validé live sur xefia (Caddy v2.11).
+#
+# Ajouter un utilisateur :
+#   1. créer son Hermes :   wizard-user.sh <entreprise> <user>
+#   2. son dashboard privé : écrire ~/aibox/dash/<user>.env (HERMES_HOME + DASH_PORT=912X)
+#                            sudo systemctl enable --now aibox-dash@<user>
+#   3. générer son hash :    caddy hash-password --plaintext '<son-mot-de-passe>'
+#   4. ajouter la ligne dans basic_auth ET dans map ci-dessous, puis :
+#                            sudo systemctl reload caddy
+#
+# Le placeholder {http.auth.user.id} (l'utilisateur authentifié) pilote le routage
+# via `map` → chacun atterrit sur son backend isolé.
+
+:9119 {
+	route {
+		basic_auth {
+			andre <BCRYPT_HASH_ANDRE>
+			marc  <BCRYPT_HASH_MARC>
+		}
+		map {http.auth.user.id} {backend} {
+			andre 127.0.0.1:9120
+			marc  127.0.0.1:9121
+		}
+		header X-Aibox-Backend {backend}
+		reverse_proxy {backend}
+	}
+}
+
+# ⚠️ HTTP sur LAN : les identifiants transitent en clair (base64) sur ton réseau local.
+# Pour CHIFFRER :
+#   - avec un domaine : remplacer ":9119" par "aibox.ton-domaine.fr" (HTTPS auto Let's Encrypt) ;
+#   - sans domaine    : "https://192.168.15.210" + bloc `tls internal` (certif auto-signé,
+#     le navigateur affichera un avertissement à accepter une fois).
