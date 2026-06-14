@@ -91,3 +91,7 @@ research/
 services/app/next-env.d.ts
 services/app/tsconfig.tsbuildinfo
 services/app/public/version.json
+
+# Bundles IIFE pré-buildés des plugins dashboard AI Box (versionnés volontairement)
+!aibox-hermes/plugins/*/dashboard/dist/
+!aibox-hermes/plugins/*/dashboard/dist/**
