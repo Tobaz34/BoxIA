@@ -43,7 +43,7 @@ function renderMarkdown(text) {
   return window.DOMPurify ? DOMPurify.sanitize(html, { ADD_ATTR: ['target'] }) : html;
 }
 const LOCAL_PATH = /^(\/home\/|\/tmp\/|\/root\/|\/var\/|\/mnt\/)/;
-function enhance(el) {
+function enhance(el, highlight) {
   el.querySelectorAll('pre').forEach((pre) => {
     if (pre.closest('.code-wrap')) return;
     const code = pre.querySelector('code');
@@ -55,7 +55,7 @@ function enhance(el) {
     head.appendChild(ls); head.appendChild(cp);
     pre.parentNode.insertBefore(wrap, pre); wrap.appendChild(head); wrap.appendChild(pre);
     cp.addEventListener('click', () => copyText(pre.innerText, cp, 'Copier'));
-    if (window.hljs && code) { try { hljs.highlightElement(code); } catch (e) {} }
+    if (highlight && window.hljs && code) { try { hljs.highlightElement(code); } catch (e) {} }
   });
   el.querySelectorAll('img').forEach((im) => { const s = im.getAttribute('src') || ''; if (LOCAL_PATH.test(s)) im.src = '/api/media?path=' + encodeURIComponent(s); });
   el.querySelectorAll('a[href]').forEach((a) => {
@@ -88,7 +88,7 @@ function userMessage(text) {
   ed.addEventListener('click', () => { input.value = text; input.focus(); input.dispatchEvent(new Event('input')); });
   acts.appendChild(ed); row.appendChild(acts);
 }
-function assistantStatic(text) { const { row, b } = addRow('assistant'); b.innerHTML = renderMarkdown(text); enhance(b); addTurnActions({ row, text }); }
+function assistantStatic(text) { const { row, b } = addRow('assistant'); b.innerHTML = renderMarkdown(text); enhance(b, true); addTurnActions({ row, text }); }
 function startAssistant() {
   emptyEl?.remove();
   const tw = document.createElement('div'); tw.className = 'think';
@@ -99,7 +99,7 @@ function startAssistant() {
   b.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
   cur = { row, bubble: b, thinkWrap: tw, thinkBody: tw.querySelector('.think-body'), toolWrap, tools: {}, text: '', think: '', started: false, lastRender: 0, raf: 0 };
 }
-function renderNow() { if (!cur) return; cur.bubble.innerHTML = renderMarkdown(cur.text); enhance(cur.bubble); cur.lastRender = Date.now(); scroll(); }
+function renderNow(final) { if (!cur) return; cur.bubble.innerHTML = renderMarkdown(cur.text); enhance(cur.bubble, final); cur.lastRender = Date.now(); scroll(); }
 function scheduleRender() { if (!cur) return; const since = Date.now() - cur.lastRender; if (since > 60) renderNow(); else if (!cur.raf) cur.raf = setTimeout(() => { cur.raf = 0; renderNow(); }, 60 - since); }
 function appendAnswer(t) { if (!t) return; if (!cur) startAssistant(); if (!cur.started) { cur.bubble.textContent = ''; cur.started = true; } cur.text += t; scheduleRender(); }
 function appendThinking(t) { if (!t) return; if (!cur) startAssistant(); cur.thinkWrap.style.display = ''; cur.thinkWrap.classList.add('active'); cur.think += t; cur.thinkBody.textContent = cur.think; cur.thinkWrap.querySelector('.count').textContent = cur.think.split('\n').length + ' lignes'; scroll(); }
@@ -108,7 +108,7 @@ function addTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.nam
 function completeTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.name); el.innerHTML = '<span class="tdot" style="background:#16a34a"></span>'; el.appendChild(document.createTextNode(' ' + ic + ' ' + lb + ' ✓')); el.title = pl.name || ''; scroll(); }
 function finishAssistant(note) {
   if (!cur) return; if (cur.raf) { clearTimeout(cur.raf); cur.raf = 0; }
-  if (cur.started) renderNow(); else cur.bubble.textContent = note || '…';
+  if (cur.started) renderNow(true); else cur.bubble.textContent = note || '…';
   if (note && cur.started) { const n = document.createElement('p'); n.style.cssText = 'opacity:.6;font-size:.85em;margin:.4rem 0 0'; n.textContent = note; cur.bubble.appendChild(n); }
   cur.thinkWrap.classList.remove('active'); const lbl = cur.thinkWrap.querySelector('.label'); if (lbl) lbl.textContent = 'Raisonnement';
   if (cur.started && cur.text) addTurnActions(cur);
