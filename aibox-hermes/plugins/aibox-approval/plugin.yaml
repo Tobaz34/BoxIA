@@ -1,0 +1,10 @@
+name: aibox-approval
+version: "0.1.0"
+description: "Confirmation non contournable des tools mutatifs (anti prompt-injection). Bloque tout tool matchant AIBOX_MUTATING_TOOLS_REGEX tant qu'il n'est pas approuvé via /aibox-approve <id>. Vérif par hash des args (anti param-swap). Port de approval-gate.ts (BoxIA)."
+author: "AI Box"
+hooks:
+  - pre_tool_call
+commands:
+  - aibox-pending
+  - aibox-approve
+  - aibox-reject

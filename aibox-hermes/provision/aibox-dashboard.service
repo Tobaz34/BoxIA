@@ -1,0 +1,28 @@
+# Service systemd — interface web AI Box (tableau de bord Hermes) sur le LAN.
+# Durable : redémarre tout seul, survit au reboot.
+#
+# Installation :
+#   sudo cp aibox-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now aibox-dashboard
+#   sudo ufw allow 9119/tcp          # ⚠️ INDISPENSABLE : sinon injoignable depuis le LAN
+#
+# Adapter User= et HERMES_HOME= au tenant/utilisateur voulu.
+# NB : --insecure autorise le bind hors localhost (HTTP non chiffré sur le LAN).
+#      Pour un accès distant/chiffré, préférer un reverse-proxy HTTPS (Caddy) ou Telegram.
+[Unit]
+Description=AI Box — Hermes Dashboard (interface web)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clikinfo
+Environment=HERMES_HOME=/home/clikinfo/aibox/companies/demo/users/andre/hermes
+Environment=PATH=/home/clikinfo/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/clikinfo
+ExecStart=/home/clikinfo/.local/bin/hermes dashboard --host 0.0.0.0 --port 9119 --insecure --no-open --skip-build
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

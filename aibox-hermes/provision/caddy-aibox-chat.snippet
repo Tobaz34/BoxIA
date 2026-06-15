@@ -1,0 +1,38 @@
+# =============================================================================
+# Bloc Caddy pour la fenêtre de chat épurée (AI Box) derrière Authentik.
+# À insérer DANS le `route { ... }` du site :443, APRÈS `forward_auth` et
+# AVANT `map {http.request.header.X-Authentik-Username} {backend}` + reverse_proxy.
+#
+# Le `route {}` (et non `handle {}`) garantit l'ordre d'exécution : forward_auth
+# d'abord (sinon l'UI serait servie sans login), puis ces routes, puis le
+# reverse_proxy catch-all vers le dashboard Hermes du user (dont /api/ws).
+#
+# Roots = web-root lisible par le user `caddy` (PAS /home/clikinfo : non
+# traversable par caddy). Voir provision/install-web-chat.sh.
+# =============================================================================
+
+# --- AIBOX-CHAT-BEGIN : fenêtre de chat épurée (ChatGPT-like) ---
+# Token de session du user authentifié. Le rewrite force le fichier <user>.json
+# d'après X-Authentik-Username (posé par forward_auth → impossible de lire le
+# token d'un autre user, même en spoofant l'en-tête : forward_auth l'écrase).
+handle /aibox-chat/session {
+	root * /opt/aibox-web/chat-tokens
+	rewrite * /{http.request.header.X-Authentik-Username}.json
+	header Cache-Control no-store
+	file_server
+}
+redir /aibox-chat /aibox-chat/
+handle_path /aibox-chat/* {
+	root * /opt/aibox-web/chat-ui
+	header Cache-Control "no-store"
+	file_server
+}
+# --- AIBOX-CHAT-END ---
+
+# --- AIBOX-DOCS-BEGIN : documentation Hermes servie en local (hors-ligne) ---
+redir /aibox-docs /aibox-docs/
+handle_path /aibox-docs/* {
+	root * /opt/aibox-web/docs
+	file_server
+}
+# --- AIBOX-DOCS-END ---

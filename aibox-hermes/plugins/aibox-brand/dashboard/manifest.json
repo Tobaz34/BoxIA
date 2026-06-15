@@ -1,0 +1,12 @@
+{
+  "name": "aibox-brand",
+  "label": "AI Box",
+  "description": "White-label : masque la marque Hermes/Nous Research dans le chrome du dashboard (produit vendable client).",
+  "icon": "Sparkles",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/aibox-brand",
+    "hidden": true
+  },
+  "entry": "dist/index.js"
+}

@@ -1,0 +1,43 @@
+# Thème dashboard « AI Box » — slate sombre, accent bleu, police Inter.
+#
+# UPDATE-SAFE : ce fichier est lu par Hermes depuis ${HERMES_HOME}/dashboard-themes/
+# (data utilisateur) → une MAJ d'Hermes ne le touche JAMAIS. Aucun fichier du
+# code Hermes n'est modifié. Le provisioning le lie dans le HERMES_HOME de chaque user.
+#
+# Apparaît dans le sélecteur de thème du dashboard (icône palette, en haut).
+name: aibox
+label: AI Box
+description: Slate sombre, accent bleu — branding AI Box
+
+palette:
+  background: "#0b1220"      # canvas profond (navy slate)
+  midground: "#d8e3f4"       # couleur principale visible (texte + chrome)
+  foreground:                # calque haut (invisible par défaut, pilote les accents)
+    hex: "#ffffff"
+    alpha: 0
+  warmGlow: "rgba(56, 189, 248, 0.18)"   # halo bleu ciel (au lieu de l'ambre Hermes)
+  noiseOpacity: 0.35
+
+typography:
+  fontSans: '"Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+  fontMono: 'ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace'
+  # Police chargée depuis bunny.net (RGPD-friendly, pas Google). Retirer cette
+  # ligne pour rester 100% local (police système).
+  fontUrl: "https://fonts.bunny.net/css?family=inter:400,500,600,700"
+  letterSpacing: "-0.005em"
+
+layout:
+  radius: "0.75rem"          # coins arrondis modernes
+  density: comfortable
+
+# Accents précis (tokens shadcn) → boutons/anneaux/bordures cohérents bleu.
+colorOverrides:
+  primary: "#2563eb"
+  primaryForeground: "#ffffff"
+  accent: "#1e3a8a"
+  accentForeground: "#dbeafe"
+  ring: "#38bdf8"
+  border: "#1e293b"
+  input: "#1e293b"
+
+terminalBackground: "#0b1220"

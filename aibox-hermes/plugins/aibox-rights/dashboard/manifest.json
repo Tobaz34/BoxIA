@@ -1,0 +1,13 @@
+{
+  "name": "aibox-rights",
+  "label": "Utilisateurs",
+  "description": "Gestion des droits : rôle (client / admin) par utilisateur — pilote les menus visibles. Réservé aux administrateurs.",
+  "icon": "Shield",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/utilisateurs",
+    "position": "after:chat"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

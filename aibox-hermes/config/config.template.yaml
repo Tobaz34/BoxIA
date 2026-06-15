@@ -1,0 +1,72 @@
+# =============================================================================
+# AI Box — template de ~/.hermes/config.yaml (par tenant)
+# =============================================================================
+# Rempli au provisioning (provision/provision-tenant.sh) : ${...} substitués.
+# Ne contient AUCUN secret : les clés vont dans ${HERMES_HOME}/.env.
+# Schéma vérifié contre Hermes v0.16.0 (cli-config.yaml.example).
+# =============================================================================
+
+# --- Modèle : IA locale par défaut, fallback cloud pour la latence ----------
+model:
+  provider: "custom"                       # Ollama = OpenAI-compatible
+  base_url: "http://127.0.0.1:11434/v1"
+  default: "qwen3:14b"
+  # context_length: laisser Hermes auto-détecter (sauf num_ctx custom)
+# Fallback configuré post-provisioning (écrit dans ce même fichier par la CLI) :
+#   hermes fallback add anthropic claude-haiku-4-5 --priority 1   # latence messagerie
+#   hermes fallback add custom    qwen3:14b --base-url http://127.0.0.1:11434/v1 --priority 2
+# → cloud rapide en primary, local en repli (hors-ligne / données sensibles).
+# Le scrub RGPD (hook pre_api_request) caviarde la PII avant tout appel cloud.
+
+# --- Connecteurs métier FR exposés en MCP -----------------------------------
+# Chaque connecteur = un shim MCP qui proxy le microservice FastAPI existant.
+mcp_servers:
+  pennylane:
+    command: "${TENANT_DIR}/mcp-connectors/pennylane/.venv/bin/python"
+    args: ["${TENANT_DIR}/mcp-connectors/pennylane/server.py"]
+    env:
+      PENNYLANE_TOOL_BASE_URL: "${PENNYLANE_TOOL_BASE_URL}"   # ex: http://127.0.0.1:8081
+      PENNYLANE_TOOL_API_KEY: "${env:PENNYLANE_TOOL_API_KEY}" # depuis .env
+    timeout: 60
+  # odoo / glpi / fec : ajoutés en Phase 2 sur le même modèle.
+
+# --- Sécurité : plugins Python (auto-découverts depuis ${HERMES_HOME}/plugins/) ---
+# Le provisioning installe aibox-hermes/plugins/* dans ${HERMES_HOME}/plugins/ :
+#   aibox-approval  → hook pre_tool_call : bloque les tools mutatifs jusqu'à
+#                     /aibox-approve <id> (anti prompt-injection, vérif hash des args)
+#   aibox-rgpd      → hook transform_tool_result : caviarde la PII FR des
+#                     résultats d'outils avant envoi cloud
+# (NB : on utilise des plugins, pas des shell hooks — seuls les plugins peuvent
+#  bloquer un tool ET réécrire un résultat. pre_api_request est observer-only.)
+# Pilotage par env (dans ${HERMES_HOME}/.env) :
+#   AIBOX_MUTATING_TOOLS_REGEX   quels tools exigent une approbation
+#   AIBOX_RGPD_SCRUB=1           active le scrub PII (déploiements cloud-primary)
+#   AIBOX_APPROVAL_TTL_S=300     péremption d'une demande d'approbation
+
+# --- Skills métier FR (lecture seule, hors ~/.hermes/skills) -----------------
+skills:
+  external_dirs:
+    - "${TENANT_DIR}/skills"
+
+# --- Multi-utilisateur : N employés isolés dans 1 instance ------------------
+group_sessions_per_user: true     # défaut sécurisé : un employé ≠ contexte partagé
+max_concurrent_sessions: null
+
+# --- Canaux : messagerie d'abord (configurés au provisioning) ---------------
+# Tokens/allowlist dans .env ; le pairing/allowlist se règle via la gateway.
+# platforms:
+#   telegram:
+#     reply_to_mode: "first"
+#     guest_mode: false
+
+# --- Branding « AI Box » -----------------------------------------------------
+display:
+  skin: "aibox"                   # config/skins/aibox.yaml (Phase 2)
+  tool_progress: new              # Telegram : discret
+
+# --- Comportement agent ------------------------------------------------------
+agent:
+  max_turns: 40
+  reasoning_effort: "medium"
+
+# SOUL.md (personnalité/branding par tenant) vit dans ${HERMES_HOME}/SOUL.md.

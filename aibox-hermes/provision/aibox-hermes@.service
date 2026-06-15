@@ -1,0 +1,24 @@
+# Service systemd — un Hermes par utilisateur. Instance = "<entreprise>-<user>".
+# L'EnvironmentFile fournit HERMES_HOME ; Hermes lit ses secrets dans HERMES_HOME/.env.
+#
+#   sudo systemctl enable --now aibox-hermes@<entreprise>-<user>
+#   journalctl -u aibox-hermes@<entreprise>-<user> -f
+[Unit]
+Description=AI Box — Hermes (%i)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/aibox/instances/%i.env
+Environment=PYTHONUNBUFFERED=1
+# NB : vérifier l'invocation gateway de votre version Hermes (`hermes gateway` / `hermes gateway run`).
+ExecStart=/usr/bin/env hermes gateway
+Restart=on-failure
+RestartSec=5
+# Durcissement raisonnable
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

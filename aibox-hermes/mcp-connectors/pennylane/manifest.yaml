@@ -1,0 +1,43 @@
+# Manifest interne AI Box — connecteur Pennylane exposé en MCP.
+# Consommé par le provisioning qui écrit le bloc mcp_servers.pennylane dans
+# ~/.hermes/config.yaml. (Format proche du catalogue Nous optional-mcps.)
+manifest_version: 1
+name: pennylane
+description: "Compta Pennylane (lecture seule) — factures clients/fournisseurs, impayés, clients, devis."
+
+transport:
+  type: stdio
+  command: "${INSTALL_DIR}/.venv/bin/python"
+  args:
+    - "${INSTALL_DIR}/server.py"
+
+install:
+  type: local           # vit dans le repo produit, pas un clone git
+  bootstrap:
+    - "python3 -m venv .venv"
+    - ".venv/bin/pip install -r requirements.txt"
+
+auth:
+  type: api_key
+  env:
+    - name: PENNYLANE_TOOL_BASE_URL
+      prompt: "URL du microservice FastAPI Pennylane"
+      default: "http://127.0.0.1:8081"
+      required: true
+      secret: false
+    - name: PENNYLANE_TOOL_API_KEY
+      prompt: "Bearer du microservice Pennylane"
+      required: true
+      secret: true
+
+# Tous lecture seule → tous activables sans risque.
+tools:
+  default_enabled:
+    - pennylane_health
+    - list_unpaid_invoices
+    - list_invoices
+    - get_invoice
+    - list_customers
+    - get_customer
+    - list_quotes
+    - list_supplier_invoices

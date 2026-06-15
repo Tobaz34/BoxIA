@@ -1,0 +1,14 @@
+# Caddyfile AI Box — HTTPS automatique (Let's Encrypt) pour la PWA.
+# Rendu par install.sh : __DOMAIN__ et __PWA_DIR__ sont substitués.
+__DOMAIN__ {
+    encode gzip
+    root * __PWA_DIR__
+    file_server
+
+    # Accès web par utilisateur (PWA → API Hermes) : à activer quand l'API
+    # par user est exposée sur un port dédié. Exemple :
+    #   handle_path /u/alice/* {
+    #       reverse_proxy 127.0.0.1:9119
+    #   }
+    # Sécuriser chaque route (basicauth / forward_auth) avant exposition.
+}
