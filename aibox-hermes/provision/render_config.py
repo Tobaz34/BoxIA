@@ -52,9 +52,12 @@ def render(
     # Recherche web. `ddgs` (DuckDuckGo) ne demande AUCUNE clé API → activable d'office,
     # recherche seule (pas d'extraction). Pour une meilleure qualité + extraction,
     # passer plus tard à tavily/brave/firecrawl (clé dans .env) sans toucher ce bloc.
+    # IMPORTANT : on écrit `web.backend` (et NON `web.search_backend`). Hermes n'expose
+    # l'outil `web_search` que si `check_web_api_key()` voit un backend dispo, et cette
+    # fonction lit `web.backend`. Mettre seulement `search_backend` → l'outil reste caché.
     web = (
         "web:\n"
-        f'  search_backend: "{search_backend}"\n\n'
+        f'  backend: "{search_backend}"\n\n'
     ) if search_backend else ""
     return (
         "# Généré par render_config.py — ne pas éditer à la main.\n"
