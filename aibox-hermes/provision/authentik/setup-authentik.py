@@ -70,6 +70,18 @@ if out:
     if prov.pk not in list(out.providers.values_list("pk", flat=True)):
         out.providers.add(prov); changed.append("outpost.provider")
 
+# 4bis) Recalcule les redirect_uris du provider (callback de l'outpost). SANS ÇA,
+# sur une install fraîche, le 1er login échoue « Redirect URI Error » (les
+# redirect_uris ne sont pas encore posés). set_oauth_defaults() les dérive.
+try:
+    before = [str(r.url) for r in (prov.redirect_uris or [])]
+    prov.set_oauth_defaults()
+    prov.save()
+    if [str(r.url) for r in (prov.redirect_uris or [])] != before:
+        changed.append("provider.redirect_uris")
+except Exception as e:
+    print("note set_oauth_defaults:", e)
+
 # 5) Utilisateurs employés
 for tok in [u for u in USERS.split(",") if u.strip()]:
     parts = tok.split(":")
