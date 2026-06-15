@@ -7,18 +7,21 @@ pour notre install « 1 PC = 1 entreprise » : catalogue de modèles FR-friendly
 from __future__ import annotations
 
 # Empreintes À 64K DE CONTEXTE (Hermes exige >=64K → le KV-cache 64K s'ajoute aux
-# poids). Le service Ollama tourne avec OLLAMA_KV_CACHE_TYPE=q8_0 + FLASH_ATTENTION
-# (posé par install.sh) → le cache KV est ~2× plus compact, ce qui fait tenir le 14B
-# sur 12 Go. MESURÉ LIVE sur xefia (RTX 4070 Super 12 Go) : qwen3:8b à 64K = 11 Go
-# (100% GPU) ; qwen3:14b à 64K avec KV q8_0 = 13 Go → 90% GPU / 10% CPU, ~27 tok/s
-# (fluide). Sans le KV q8_0 le 14B débordait (~73% GPU, lent).
+# poids). MESURÉ LIVE sur xefia (RTX 4070 Super 12 Go) : qwen3:8b à 64K = 11 Go
+# (100% GPU, rapide).
+# ⚠️ LE 14B A ÉTÉ TESTÉ ET REJETÉ SUR 12 Go (2026-06-15) : même avec KV q8_0 il
+# reste à 90% GPU / 10% CPU (~27 tok/s, plus lent), son mode « thinking » sur-délibère
+# (9 Ko de réflexion sur une tâche de code = ~90 s/tour), et basculer 14b↔8b fait
+# planter le runner Ollama (OOM, 170 Mo libres). Le gain qualité (FR/raisonnement)
+# ne compense pas. → sur 12 Go on RESTE sur le 8B. La fiabilité factuelle vient du
+# system_prompt « web_search obligatoire », pas de la taille du modèle.
 # min_vram_gb == 0 => modèle pensé pour tourner sur CPU.
 CATALOG = [
     {"id": "qwen3:1.7b", "params_b": 1.7, "min_ram_gb": 5,  "min_vram_gb": 0,  "fr": 3, "tier": 1, "note": "ultra-léger, CPU"},
     {"id": "qwen3:4b",   "params_b": 4,   "min_ram_gb": 8,  "min_vram_gb": 0,  "fr": 4, "tier": 2, "note": "léger, CPU OK"},
-    {"id": "qwen3:8b",   "params_b": 8,   "min_ram_gb": 16, "min_vram_gb": 8,  "fr": 4, "tier": 3, "note": "GPU 8-11 Go — 64K, 100% GPU"},
-    {"id": "qwen3:14b",  "params_b": 14,  "min_ram_gb": 24, "min_vram_gb": 12, "fr": 5, "tier": 4, "note": "GPU 12 Go — 64K avec cache KV q8_0, ~27 tok/s (meilleur FR/raisonnement)"},
-    {"id": "qwen3:32b",  "params_b": 32,  "min_ram_gb": 48, "min_vram_gb": 24, "fr": 5, "tier": 5, "note": "GPU 24 Go+ à 64K"},
+    {"id": "qwen3:8b",   "params_b": 8,   "min_ram_gb": 16, "min_vram_gb": 11, "fr": 4, "tier": 3, "note": "GPU 12 Go — 64K, 100% GPU, rapide (recommandé sur 12 Go)"},
+    {"id": "qwen3:14b",  "params_b": 14,  "min_ram_gb": 28, "min_vram_gb": 18, "fr": 5, "tier": 4, "note": "GPU 18-24 Go (sur 12 Go : trop lent + thinking verbeux, voir note)"},
+    {"id": "qwen3:32b",  "params_b": 32,  "min_ram_gb": 48, "min_vram_gb": 30, "fr": 5, "tier": 5, "note": "GPU 32 Go+ à 64K"},
 ]
 
 GPU_MIN_GB = 6.0  # en dessous : on considère qu'il n'y a pas de GPU utile

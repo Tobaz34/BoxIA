@@ -69,12 +69,10 @@ step "3/7  Modèle IA"
 if [ "${WITH_LOCAL_MODEL:-0}" = 1 ]; then
   command -v ollama >/dev/null 2>&1 || run "curl -fsSL https://ollama.com/install.sh | sh"
   run "sudo systemctl enable --now ollama 2>/dev/null || true"   # l'install laisse le service désactivé
-  # Cache KV compact (q8_0) + flash attention : ~2× moins de VRAM pour le contexte,
-  # ce qui fait tenir un modèle 14B à 64K sur un GPU 12 Go (sinon bascule CPU = lent).
-  # Réglage standard Ollama, réversible (supprimer le drop-in + restart).
-  run "sudo mkdir -p /etc/systemd/system/ollama.service.d"
-  run "printf '[Service]\\nEnvironment=\"OLLAMA_FLASH_ATTENTION=1\"\\nEnvironment=\"OLLAMA_KV_CACHE_TYPE=q8_0\"\\n' | sudo tee /etc/systemd/system/ollama.service.d/aibox-kvcache.conf >/dev/null"
-  run "sudo systemctl daemon-reload && sudo systemctl restart ollama 2>/dev/null || true"
+  # NB : on N'active PAS le cache KV q8_0 — c'était pour faire tenir un 14B sur 12 Go,
+  # mais le 14B a été rejeté (trop lent sur 12 Go, voir cookbook/recommend.py). Le 8B
+  # tient à 64K en fp16. Pour un GPU >=18 Go visant le 14B, ajouter à la main :
+  #   /etc/systemd/system/ollama.service.d/*.conf : OLLAMA_KV_CACHE_TYPE=q8_0 + FLASH_ATTENTION=1
   MODEL="$(python3 "$SCRIPT_DIR/cookbook/cookbook.py" --json 2>/dev/null | sed -n 's/.*"recommended": *"\([^"]*\)".*/\1/p')"
   MODEL="${MODEL:-qwen3:4b}"
   echo "  Cookbook recommande : $MODEL"
