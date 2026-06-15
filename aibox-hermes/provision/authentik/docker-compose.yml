@@ -28,9 +28,10 @@ services:
       AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
       AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+    # Seul le HTTP :9000 est publié (en local) ; Caddy fait le TLS sur :9443 avec
+    # son certificat (déjà approuvé) → pas d'avertissement de cert au login.
     ports:
-      - ${COMPOSE_PORT_HTTP:-9000}:9000
-      - ${COMPOSE_PORT_HTTPS:-9443}:9443
+      - 127.0.0.1:${COMPOSE_PORT_HTTP:-9000}:9000
     shm_size: 512mb
     depends_on:
       postgresql: {condition: service_healthy}

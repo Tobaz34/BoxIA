@@ -120,6 +120,14 @@ $(gen_map)
 http://$AIBOX_HOST {
 	redir https://$AIBOX_HOST{uri}
 }
+# Authentik (login) derrière Caddy → certificat Caddy (approuvé), zéro avertissement.
+https://$AIBOX_HOST:$AUTHENTIK_PORT {
+	tls internal
+	reverse_proxy http://127.0.0.1:9000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+	}
+}
 EOF
 } > "$CADDYFILE"
 caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1 && echo "  Caddyfile généré + validé ($CADDYFILE)" || { echo "  ! Caddyfile invalide"; exit 1; }
