@@ -6,6 +6,8 @@ l'appeler — le tool n'existe pas dans sa config.
 """
 from __future__ import annotations
 
+import json
+
 
 def _pennylane_block(tenant_dir: str, pennylane_base_url: str) -> str:
     return (
@@ -26,6 +28,18 @@ CONNECTORS = {
     # odoo / glpi / fec : à ajouter ici quand leurs shims MCP existent.
 }
 
+# Overlay de personnalité (agent.system_prompt) : produit français → réponses FR +
+# unités métriques. Corrige notamment les sources web US (°F/mph) non converties.
+DEFAULT_SYSTEM_PROMPT = (
+    "Tu es l'assistant IA d'AI Box, pour une entreprise française. Réponds toujours "
+    "en français, de manière claire, concise et professionnelle. Utilise "
+    "systématiquement les unités françaises et métriques : températures en °C, "
+    "distances en km, vitesses en km/h, poids en kg, montants en euros (€), dates au "
+    "format JJ/MM/AAAA. Lorsqu'une recherche web ou une source étrangère donne des "
+    "valeurs dans d'autres unités (°F, miles, mph, livres, dollars), convertis-les en "
+    "unités françaises avant de répondre, et cite la source."
+)
+
 
 def render(
     model: str,
@@ -35,6 +49,7 @@ def render(
     pennylane_base_url: str = "http://127.0.0.1:8081",
     vision_model: str = "qwen2.5vl:7b",
     search_backend: str = "ddgs",
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
 ) -> str:
     allowed = [c for c in connectors if c in CONNECTORS]
     blocks = "\n".join(CONNECTORS[c](tenant_dir, pennylane_base_url) for c in allowed)
@@ -80,6 +95,7 @@ def render(
         "agent:\n"
         "  max_turns: 40\n"
         '  reasoning_effort: "medium"\n'
+        + (f"  system_prompt: {json.dumps(system_prompt, ensure_ascii=False)}\n" if system_prompt else "")
     )
 
 
