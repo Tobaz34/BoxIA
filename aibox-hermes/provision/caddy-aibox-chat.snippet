@@ -24,6 +24,7 @@ handle /aibox-chat/session {
 redir /aibox-chat /aibox-chat/
 handle_path /aibox-chat/* {
 	root * /opt/aibox-web/chat-ui
+	header Cache-Control "no-store"
 	file_server
 }
 # --- AIBOX-CHAT-END ---

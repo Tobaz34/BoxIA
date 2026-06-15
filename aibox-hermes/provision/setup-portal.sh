@@ -99,6 +99,7 @@ https://$AIBOX_HOST {
 			redir /aibox-chat /aibox-chat/
 			handle_path /aibox-chat/* {
 				root * $WEB_ROOT/chat-ui
+				header Cache-Control "no-store"
 				file_server
 			}
 			# --- AIBOX-CHAT-END ---
