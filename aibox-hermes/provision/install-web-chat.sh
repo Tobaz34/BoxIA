@@ -32,14 +32,17 @@ CADDY_USER="$(systemctl show caddy -p User --value 2>/dev/null || true)"; CADDY_
 echo "== install-web-chat (WEB_ROOT=$WEB_ROOT, caddy=$CADDY_USER) =="
 
 # 1) UI statique (aucun secret) ----------------------------------------------
-sudo mkdir -p "$WEB_ROOT/chat-ui"
+sudo mkdir -p "$WEB_ROOT/chat-ui/vendor"
 sudo cp -f "$AIBOX_HERMES_DIR/chat-ui/index.html" \
            "$AIBOX_HERMES_DIR/chat-ui/chat.css" \
            "$AIBOX_HERMES_DIR/chat-ui/chat.js" "$WEB_ROOT/chat-ui/"
+# Libs offline (marked = Markdown, purify = anti-XSS, highlight = coloration code).
+# SANS ÇA, les réponses s'affichent en texte brut avec les ** littéraux.
+sudo cp -f "$AIBOX_HERMES_DIR/chat-ui/vendor/"* "$WEB_ROOT/chat-ui/vendor/"
 sudo chown -R "root:$CADDY_USER" "$WEB_ROOT/chat-ui"
-sudo chmod 755 "$WEB_ROOT" "$WEB_ROOT/chat-ui"
-sudo chmod 644 "$WEB_ROOT/chat-ui/"*
-echo "  UI -> $WEB_ROOT/chat-ui"
+sudo chmod 755 "$WEB_ROOT" "$WEB_ROOT/chat-ui" "$WEB_ROOT/chat-ui/vendor"
+sudo chmod 644 "$WEB_ROOT/chat-ui/"*.* "$WEB_ROOT/chat-ui/vendor/"*
+echo "  UI -> $WEB_ROOT/chat-ui (+ vendor)"
 
 # 1bis) Documentation Hermes EN LOCAL (hors-ligne) : viewer statique + contenu
 #       généré depuis la doc Docusaurus de Hermes (snapshot, à rejouer après MAJ).
