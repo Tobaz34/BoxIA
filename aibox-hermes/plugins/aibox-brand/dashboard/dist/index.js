@@ -61,15 +61,23 @@
     else window.addEventListener("DOMContentLoaded", function () { start(client); });
   }
   function boot() {
-    // Source de vérité = plugin de gestion des droits ; repli sur /aibox-chat/session.
-    fetch("/api/plugins/aibox-rights/me", { credentials: "same-origin", cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) {
-        if (j && j.role) return j.role;
-        return fetch("/aibox-chat/session", { credentials: "same-origin", cache: "no-store" })
-          .then(function (r) { return r.ok ? r.json() : {}; }).then(function (k) { return (k && k.role) || "admin"; });
-      })
-      .then(go).catch(function () { go("admin"); });
+    // Source de vérité = roles.json via le plugin droits (/me) — reflète les
+    // changements de rôle faits dans l'UI admin, au prochain rechargement.
+    // IMPORTANT : on appelle /me avec SDK.fetchJSON, qui PORTE le token de session
+    // du dashboard ; un fetch() brut renvoie 401 (Unauthorized) → repli systématique.
+    // Repli si /me indispo : /aibox-chat/session (servi par Caddy, role = roles.json).
+    var SDK = window.__HERMES_PLUGIN_SDK__;
+    var viaMe = (SDK && SDK.fetchJSON)
+      ? SDK.fetchJSON("/api/plugins/aibox-rights/me")
+          .then(function (j) { return (j && j.role) || null; })
+          .catch(function () { return null; })
+      : Promise.resolve(null);
+    viaMe.then(function (role) {
+      if (role) return role;
+      return fetch("/aibox-chat/session", { credentials: "same-origin", cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : {}; })
+        .then(function (k) { return (k && k.role) || "admin"; });
+    }).then(go).catch(function () { go("admin"); });
   }
   boot();
 })();

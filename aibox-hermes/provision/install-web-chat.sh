@@ -61,30 +61,10 @@ sudo chown -R "root:$CADDY_USER" "$WEB_ROOT/docs"
 sudo find "$WEB_ROOT/docs" -type d -exec chmod 755 {} \;
 sudo find "$WEB_ROOT/docs" -type f -exec chmod 644 {} \;
 
-# 2) Token par user : chaque dash env DOIT avoir HERMES_DASHBOARD_SESSION_TOKEN
-#    (sinon le dashboard en génère un aléatoire au démarrage = /api/ws en 403).
-sudo mkdir -p "$WEB_ROOT/chat-tokens"
-for envf in "$DASH_DIR"/*.env; do
-  [ -e "$envf" ] || continue
-  u="$(basename "$envf" .env)"
-  if ! grep -q '^HERMES_DASHBOARD_SESSION_TOKEN=' "$envf"; then
-    echo "HERMES_DASHBOARD_SESSION_TOKEN=aibox-$(openssl rand -hex 13)" >> "$envf"
-    echo "  + token généré pour $u -> restart aibox-dash@$u"
-    systemctl is-enabled "aibox-dash@$u" >/dev/null 2>&1 && sudo systemctl restart "aibox-dash@$u" || true
-  fi
-  t="$(grep -oP '^HERMES_DASHBOARD_SESSION_TOKEN=\K.*' "$envf" || true)"
-  # rôle : 'client' (chat seul) par défaut ; 'admin' (tous les menus) si listé dans AIBOX_ADMINS
-  role="client"; case ",${AIBOX_ADMINS:-}," in *",$u,"*) role="admin";; esac
-  printf '{"token":"%s","role":"%s"}\n' "$t" "$role" | sudo tee "$WEB_ROOT/chat-tokens/$u.json" >/dev/null
-done
-sudo chown -R "root:$CADDY_USER" "$WEB_ROOT/chat-tokens"
-sudo chmod 750 "$WEB_ROOT/chat-tokens"
-sudo bash -c "chmod 640 '$WEB_ROOT/chat-tokens/'*.json"
-echo "  tokens -> $WEB_ROOT/chat-tokens (lisibles par groupe $CADDY_USER uniquement)"
-
-# 2bis) roles.json : source de vérité du plugin « Utilisateurs » (modifiable via l'UI
-#       admin). On préserve les rôles existants ; on ajoute les nouveaux users
-#       (admin si listé dans AIBOX_ADMINS, sinon client).
+# 2) roles.json : SOURCE DE VÉRITÉ UNIQUE des rôles (éditable via l'UI admin).
+#    Construite AVANT les tokens : on préserve les rôles existants, on ajoute les
+#    nouveaux users (admin si listé dans AIBOX_ADMINS, sinon client). Un re-run SANS
+#    AIBOX_ADMINS ne dégrade donc JAMAIS un admin existant en client.
 python3 - "$AIBOX_ROOT/roles.json" "${AIBOX_ADMINS:-}" "$DASH_DIR" <<'PY'
 import json, os, sys, glob
 rf, admins, dashdir = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -100,6 +80,28 @@ for envf in glob.glob(os.path.join(dashdir, "*.env")):
 json.dump(roles, open(rf, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 print("  roles ->", rf, roles)
 PY
+
+# 2bis) Token par user : chaque dash env DOIT avoir HERMES_DASHBOARD_SESSION_TOKEN
+#       (sinon le dashboard en génère un aléatoire au démarrage = /api/ws en 403).
+#       Le rôle écrit dans le token = celui de roles.json → cohérent avec /me, jamais
+#       divergent (c'est ce repli que lit le plugin brand si /me est indispo).
+sudo mkdir -p "$WEB_ROOT/chat-tokens"
+for envf in "$DASH_DIR"/*.env; do
+  [ -e "$envf" ] || continue
+  u="$(basename "$envf" .env)"
+  if ! grep -q '^HERMES_DASHBOARD_SESSION_TOKEN=' "$envf"; then
+    echo "HERMES_DASHBOARD_SESSION_TOKEN=aibox-$(openssl rand -hex 13)" >> "$envf"
+    echo "  + token généré pour $u -> restart aibox-dash@$u"
+    systemctl is-enabled "aibox-dash@$u" >/dev/null 2>&1 && sudo systemctl restart "aibox-dash@$u" || true
+  fi
+  t="$(grep -oP '^HERMES_DASHBOARD_SESSION_TOKEN=\K.*' "$envf" || true)"
+  role="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],'client'))" "$AIBOX_ROOT/roles.json" "$u" 2>/dev/null || echo client)"
+  printf '{"token":"%s","role":"%s"}\n' "$t" "$role" | sudo tee "$WEB_ROOT/chat-tokens/$u.json" >/dev/null
+done
+sudo chown -R "root:$CADDY_USER" "$WEB_ROOT/chat-tokens"
+sudo chmod 750 "$WEB_ROOT/chat-tokens"
+sudo bash -c "chmod 640 '$WEB_ROOT/chat-tokens/'*.json"
+echo "  tokens -> $WEB_ROOT/chat-tokens (rôle = roles.json, lisibles par groupe $CADDY_USER)"
 
 # 3) Caddy : le bloc à insérer dans le site :443 (voir provision/caddy-aibox-chat.snippet)
 if ! grep -q 'AIBOX-CHAT-BEGIN' "$CADDYFILE" 2>/dev/null; then
