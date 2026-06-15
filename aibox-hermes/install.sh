@@ -52,6 +52,13 @@ if [ "$CHECK" = 1 ] || ! have_hermes; then
 else
   echo "  hermes déjà présent ($OWNER_RUN)."
 fi
+# Frontend du dashboard web : setup-hermes ne le build PAS → sans ça, le service
+# `hermes dashboard --skip-build` échoue (« no web dist »). On installe node + build.
+if [ "$WITH_WEB_PORTAL" = 1 ]; then
+  command -v node >/dev/null 2>&1 || run "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y -qq nodejs"
+  asowner 'cd ~/hermes-agent && npm install --workspace web && npm run build -w web'
+  echo "  dashboard web buildé (hermes_cli/web_dist)"
+fi
 
 step "3/7  Modèle IA"
 if [ "${WITH_LOCAL_MODEL:-0}" = 1 ]; then

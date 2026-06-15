@@ -130,11 +130,23 @@ if [ "$CHECK" = 1 ]; then
   echo "    [check] install-web-chat.sh (chat-ui + docs + tokens)"
   echo "    [check] docker exec $AK_CONTAINER ak shell < setup-authentik.py (provider/app/outpost/marque/users)"
 else
-  AIBOX_ROOT="$AIBOX_ROOT" WEB_ROOT="$WEB_ROOT" AIBOX_ADMINS="${AIBOX_ADMINS:-}" bash "$AIBOX_HERMES_DIR/provision/install-web-chat.sh"
+  # HERMES_DOCS pointe vers le home de l'owner (Hermes y est installé, pas dans /root).
+  AIBOX_ROOT="$AIBOX_ROOT" WEB_ROOT="$WEB_ROOT" AIBOX_ADMINS="${AIBOX_ADMINS:-}" \
+    HERMES_DOCS="/home/$OWNER/hermes-agent/website/docs" bash "$AIBOX_HERMES_DIR/provision/install-web-chat.sh"
+  # Config Authentik AVEC RETRY : juste après le déploiement, les migrations/flows
+  # peuvent ne pas être prêts (le health-check /-/health/ready ne le garantit pas).
   if docker ps --format '{{.Names}}' | grep -q "^$AK_CONTAINER$"; then
-    docker exec -e AIBOX_HOST="$AIBOX_HOST" -e AIBOX_AUTHENTIK_PORT="$AUTHENTIK_PORT" \
+    ak_ok=0
+    for i in $(seq 1 8); do
+      out="$(docker exec -e AIBOX_HOST="$AIBOX_HOST" -e AIBOX_AUTHENTIK_PORT="$AUTHENTIK_PORT" \
                 -e AIBOX_USER_PASSWORD="$USER_PASSWORD" -e AIBOX_USERS="$(IFS=,; echo "${USERS[*]}")" \
-                -i "$AK_CONTAINER" ak shell < "$AIBOX_HERMES_DIR/provision/authentik/setup-authentik.py" 2>/dev/null | grep -i CHANGED || true
+                -i "$AK_CONTAINER" ak shell < "$AIBOX_HERMES_DIR/provision/authentik/setup-authentik.py" 2>&1)"
+      if printf '%s' "$out" | grep -q 'AIBOX-AUTHENTIK CHANGED'; then
+        echo "  Authentik: $(printf '%s' "$out" | grep 'AIBOX-AUTHENTIK CHANGED')"; ak_ok=1; break
+      fi
+      echo "  Authentik pas encore prêt (tentative $i/8)…"; sleep 10
+    done
+    [ "$ak_ok" = 1 ] || echo "  ! Authentik non configuré après 8 essais — relancer provision/authentik/setup-authentik.py"
   else
     echo "  ! conteneur Authentik '$AK_CONTAINER' absent — config Authentik non appliquée"
   fi
