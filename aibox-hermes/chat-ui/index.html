@@ -4,6 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>AI Box</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="AI Box" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
   <link rel="stylesheet" href="chat.css?v=3" />
   <link rel="stylesheet" href="vendor/hljs-atom-one-dark.min.css" />
   <script>if(location.search.indexOf('embed=1')>-1)document.documentElement.classList.add('embed');</script>
@@ -14,6 +20,7 @@
     <button id="menu" class="icon-btn" title="Conversations" aria-label="Conversations">☰</button>
     <div class="brand"><span class="brand-dot"></span>AI&nbsp;Box</div>
     <span id="model-badge" class="model-badge" title="Moteur IA"></span>
+    <button id="export" class="ghost" title="Exporter la conversation (Markdown)" aria-label="Exporter">⬇ Exporter</button>
     <button id="new-chat" class="ghost" title="Nouvelle conversation">＋ Nouvelle</button>
   </header>
 
@@ -39,6 +46,10 @@
           </div>
         </div>
       </main>
+
+      <button id="scroll-down" class="scroll-down" title="Descendre en bas" aria-label="Descendre en bas">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12l7 7 7-7"/></svg>
+      </button>
 
       <div id="attachments" class="attachments"></div>
 

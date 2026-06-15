@@ -10,7 +10,8 @@ const $ = (s) => document.querySelector(s);
 const thread = $('#thread'), input = $('#input'), composer = $('#composer'),
       sendBtn = $('#send'), statusEl = $('#status'), convList = $('#conv-list'),
       attachmentsEl = $('#attachments'), fileInput = $('#file'), modelBadge = $('#model-badge'),
-      micBtn = $('#mic'), convSearch = $('#conv-search');
+      micBtn = $('#mic'), convSearch = $('#conv-search'),
+      scrollDownBtn = $('#scroll-down'), exportBtn = $('#export');
 let emptyEl = $('#empty');
 
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
@@ -82,7 +83,27 @@ let waitHint = 0;
 function startWaitHint() { clearTimeout(waitHint); waitHint = setTimeout(() => { if (busy && (!cur || !cur.started)) setStatus('⏳ Le modèle se prépare (quelques secondes)…'); }, 6000); }
 function clearWaitHint() { clearTimeout(waitHint); waitHint = 0; }
 function rpc(method, params) { const id = 'r' + (++nextId); return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, jsonrpc: '2.0', method, params: params || {} })); }); }
-function scroll() { const near = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160; if (near) thread.scrollTop = thread.scrollHeight; }
+function scroll() { const near = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160; if (near) thread.scrollTop = thread.scrollHeight; updateScrollDown(); }
+function updateScrollDown() { if (!scrollDownBtn) return; const far = thread.scrollHeight - thread.scrollTop - thread.clientHeight > 200; scrollDownBtn.classList.toggle('visible', far); }
+// Export de la conversation courante en Markdown (téléchargement local).
+function exportConversation() {
+  const rows = [...thread.querySelectorAll('.row')];
+  if (!rows.length) { setStatus('Rien à exporter.', true); return; }
+  const conv = allSessions.find((s) => s.id === activeStoredId);
+  const title = (conv && (conv.title || conv.preview)) || 'Conversation AI Box';
+  let md = '# ' + title + '\n\n';
+  rows.forEach((r) => {
+    const who = r.classList.contains('user') ? 'Vous' : 'Assistant';
+    const b = r.querySelector('.bubble'); if (!b) return;
+    md += '**' + who + ' :**\n\n' + (b.innerText || '').trim() + '\n\n---\n\n';
+  });
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = title.replace(/[^\w .-]+/g, '_').slice(0, 60) + '.md';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
 function clearThread() { thread.innerHTML = ''; emptyEl = null; cur = null; }
 
 function addRow(role) { emptyEl?.remove(); const row = document.createElement('div'); row.className = 'row ' + role; const b = document.createElement('div'); b.className = 'bubble'; row.appendChild(b); thread.appendChild(row); return { row, b }; }
@@ -304,6 +325,9 @@ $('#menu').addEventListener('click', () => document.body.classList.contains('nav
 $('#backdrop').addEventListener('click', closeNav);
 $('#attach').addEventListener('click', () => fileInput.click());
 micBtn.addEventListener('click', toggleMic);
+exportBtn && exportBtn.addEventListener('click', exportConversation);
+scrollDownBtn && scrollDownBtn.addEventListener('click', () => { thread.scrollTop = thread.scrollHeight; updateScrollDown(); });
+thread.addEventListener('scroll', updateScrollDown);
 convSearch && convSearch.addEventListener('input', renderConvList);
 fileInput.addEventListener('change', async () => { const files = [...fileInput.files]; fileInput.value = ''; for (const f of files) await addAttachment(f); });
 // Coller une image (Ctrl+V) — capture d'écran directe.
@@ -322,6 +346,10 @@ async function boot() {
   try { const r = await fetch('./session', { credentials: 'same-origin', cache: 'no-store' }); if (r.ok) { const j = await r.json(); TOKEN = j.token || ''; } } catch (e) {}
   if (!TOKEN && window.AIBOX) TOKEN = window.AIBOX.token || '';
   connect();
+  // PWA : service worker (installable + repli hors-ligne). Hors iframe embarquée.
+  if ('serviceWorker' in navigator && !document.documentElement.classList.contains('embed')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 }
 input.disabled = true;
 boot();

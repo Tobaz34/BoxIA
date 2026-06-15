@@ -1,0 +1,14 @@
+{
+  "name": "AI Box — Assistant",
+  "short_name": "AI Box",
+  "description": "Votre assistant IA local et privé.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
