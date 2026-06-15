@@ -70,7 +70,9 @@ for envf in "$DASH_DIR"/*.env; do
     systemctl is-enabled "aibox-dash@$u" >/dev/null 2>&1 && sudo systemctl restart "aibox-dash@$u" || true
   fi
   t="$(grep -oP '^HERMES_DASHBOARD_SESSION_TOKEN=\K.*' "$envf" || true)"
-  printf '{"token":"%s"}\n' "$t" | sudo tee "$WEB_ROOT/chat-tokens/$u.json" >/dev/null
+  # rôle : 'client' (chat seul) par défaut ; 'admin' (tous les menus) si listé dans AIBOX_ADMINS
+  role="client"; case ",${AIBOX_ADMINS:-}," in *",$u,"*) role="admin";; esac
+  printf '{"token":"%s","role":"%s"}\n' "$t" "$role" | sudo tee "$WEB_ROOT/chat-tokens/$u.json" >/dev/null
 done
 sudo chown -R "root:$CADDY_USER" "$WEB_ROOT/chat-tokens"
 sudo chmod 750 "$WEB_ROOT/chat-tokens"

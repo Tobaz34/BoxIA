@@ -129,7 +129,7 @@ if [ "$CHECK" = 1 ]; then
   echo "    [check] install-web-chat.sh (chat-ui + docs + tokens)"
   echo "    [check] docker exec $AK_CONTAINER ak shell < setup-authentik.py (provider/app/outpost/marque/users)"
 else
-  AIBOX_ROOT="$AIBOX_ROOT" WEB_ROOT="$WEB_ROOT" bash "$AIBOX_HERMES_DIR/provision/install-web-chat.sh"
+  AIBOX_ROOT="$AIBOX_ROOT" WEB_ROOT="$WEB_ROOT" AIBOX_ADMINS="${AIBOX_ADMINS:-}" bash "$AIBOX_HERMES_DIR/provision/install-web-chat.sh"
   if docker ps --format '{{.Names}}' | grep -q "^$AK_CONTAINER$"; then
     docker exec -e AIBOX_HOST="$AIBOX_HOST" -e AIBOX_AUTHENTIK_PORT="$AUTHENTIK_PORT" \
                 -e AIBOX_USER_PASSWORD="$USER_PASSWORD" -e AIBOX_USERS="$(IFS=,; echo "${USERS[*]}")" \
