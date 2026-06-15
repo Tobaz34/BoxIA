@@ -55,15 +55,21 @@
     new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
     setInterval(relabel, 2000);
   }
+  function go(role) {
+    var client = role === "client";
+    if (document.body) start(client);
+    else window.addEventListener("DOMContentLoaded", function () { start(client); });
+  }
   function boot() {
-    fetch("/aibox-chat/session", { credentials: "same-origin", cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : {}; })
+    // Source de vérité = plugin de gestion des droits ; repli sur /aibox-chat/session.
+    fetch("/api/plugins/aibox-rights/me", { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        var client = !!(j && j.role === "client");
-        if (document.body) start(client);
-        else window.addEventListener("DOMContentLoaded", function () { start(client); });
+        if (j && j.role) return j.role;
+        return fetch("/aibox-chat/session", { credentials: "same-origin", cache: "no-store" })
+          .then(function (r) { return r.ok ? r.json() : {}; }).then(function (k) { return (k && k.role) || "admin"; });
       })
-      .catch(function () { if (document.body) start(false); else window.addEventListener("DOMContentLoaded", function () { start(false); }); });
+      .then(go).catch(function () { go("admin"); });
   }
   boot();
 })();

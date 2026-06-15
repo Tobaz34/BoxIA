@@ -79,6 +79,25 @@ sudo chmod 750 "$WEB_ROOT/chat-tokens"
 sudo bash -c "chmod 640 '$WEB_ROOT/chat-tokens/'*.json"
 echo "  tokens -> $WEB_ROOT/chat-tokens (lisibles par groupe $CADDY_USER uniquement)"
 
+# 2bis) roles.json : source de vérité du plugin « Utilisateurs » (modifiable via l'UI
+#       admin). On préserve les rôles existants ; on ajoute les nouveaux users
+#       (admin si listé dans AIBOX_ADMINS, sinon client).
+python3 - "$AIBOX_ROOT/roles.json" "${AIBOX_ADMINS:-}" "$DASH_DIR" <<'PY'
+import json, os, sys, glob
+rf, admins, dashdir = sys.argv[1], sys.argv[2], sys.argv[3]
+roles = {}
+if os.path.exists(rf):
+    try: roles = json.load(open(rf, encoding="utf-8"))
+    except Exception: roles = {}
+admin_set = {a for a in admins.split(",") if a}
+for envf in glob.glob(os.path.join(dashdir, "*.env")):
+    u = os.path.basename(envf)[:-4]
+    if u not in roles:
+        roles[u] = "admin" if u in admin_set else "client"
+json.dump(roles, open(rf, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+print("  roles ->", rf, roles)
+PY
+
 # 3) Caddy : le bloc à insérer dans le site :443 (voir provision/caddy-aibox-chat.snippet)
 if ! grep -q 'AIBOX-CHAT-BEGIN' "$CADDYFILE" 2>/dev/null; then
   echo "  >> Caddy NON patché : insère provision/caddy-aibox-chat.snippet dans le 'route {}'"
