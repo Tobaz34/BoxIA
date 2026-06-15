@@ -28,7 +28,7 @@
         var el = els[k];
         if (el.children.length <= 2) {
           var t = (el.textContent || "").replace(/\s+/g, " ").trim();
-          if (t === "AI Box Agent" || t === "Hermes Agent") el.textContent = BRAND;
+          if (/^(AI Box|Hermes)\s*Agent$/i.test(t)) el.textContent = BRAND;
         }
       }
       // Attributs visibles
