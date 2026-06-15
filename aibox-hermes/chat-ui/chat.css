@@ -73,6 +73,13 @@ body.nav-open .sidebar { margin-left: 0; }
 .conv-item .t { font-size: .88rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv-item .p { font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv-empty { color: var(--muted); font-size: .82rem; padding: .5rem .6rem; }
+#conv-search { margin: 0 .6rem .4rem; border: 1px solid var(--border); border-radius: 999px; padding: .35rem .8rem; font: inherit; font-size: .82rem; background: #fff; }
+#conv-search:focus { outline: none; border-color: var(--accent); }
+.conv-item { display: flex; align-items: center; gap: .3rem; }
+.conv-item .meta { flex: 1; min-width: 0; }
+.conv-item .act { display: none; border: 0; background: none; cursor: pointer; color: var(--muted); padding: .15rem .3rem; border-radius: 6px; font-size: .8rem; flex: none; }
+.conv-item:hover .act { display: inline-block; }
+.conv-item .act:hover { color: var(--text); background: rgba(0,0,0,.07); }
 .backdrop { display: none; position: absolute; inset: 0; background: rgba(0,0,0,.25); z-index: 5; }
 body.nav-open .backdrop { display: block; }
 /* En grand écran, la sidebar pousse le contenu (pas d'overlay) */
@@ -86,8 +93,19 @@ body.nav-open .backdrop { display: block; }
 .attachments { padding-top: .5rem; }
 .att-chip { position: relative; width: 56px; height: 56px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--assistant); }
 .att-chip img { width: 100%; height: 100%; object-fit: cover; }
-.att-chip .x { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: .7rem; cursor: pointer; line-height: 18px; padding: 0; }
+.att-chip .x { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: .7rem; cursor: pointer; line-height: 18px; padding: 0; z-index: 2; }
 .att-chip.uploading { display: grid; place-items: center; color: var(--muted); font-size: .7rem; }
+.att-chip.doc { width: auto; min-width: 56px; max-width: 160px; height: auto; padding: .4rem .6rem; display: flex; align-items: center; gap: .4rem; font-size: .78rem; }
+.att-chip.doc .ic { font-size: 1.1rem; }
+.att-chip.doc .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Micro (dictée) */
+#mic.rec { color: #fff; background: #ef4444; }
+#mic.rec svg { animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* highlight.js : laisse le thème colorer (ne pas forcer la couleur du code) */
+.code-wrap pre code.hljs { background: transparent; color: inherit; padding: 0; }
 
 /* Image générée par l'agent (artefact) dans une bulle */
 .bubble img { max-width: 100%; border-radius: 10px; margin: .4rem 0; display: block; }

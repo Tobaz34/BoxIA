@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>AI Box</title>
   <link rel="stylesheet" href="chat.css" />
-  <!-- Mode "embed" : intégré comme onglet du dashboard Hermes (iframe ?embed=1). -->
+  <link rel="stylesheet" href="vendor/hljs-atom-one-dark.min.css" />
   <script>if(location.search.indexOf('embed=1')>-1)document.documentElement.classList.add('embed');</script>
   <!-- Token de session récupéré par chat.js depuis ./session (derrière Authentik). -->
 </head>
@@ -20,6 +20,7 @@
   <div class="layout">
     <aside id="sidebar" class="sidebar" aria-label="Conversations">
       <div class="sidebar-head">Conversations</div>
+      <input id="conv-search" type="search" placeholder="Rechercher…" autocomplete="off" />
       <div id="conv-list" class="conv-list"></div>
     </aside>
     <div id="backdrop" class="backdrop"></div>
@@ -42,10 +43,14 @@
       <div id="attachments" class="attachments"></div>
 
       <form id="composer" class="composer">
-        <button id="attach" type="button" class="icon-btn" title="Joindre une image" aria-label="Joindre une image">
+        <button id="attach" type="button" class="icon-btn" title="Joindre une image ou un document" aria-label="Joindre un fichier">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 12.5 12.5 21a4.5 4.5 0 0 1-6.4-6.4l8-8a3 3 0 0 1 4.3 4.3l-8 8a1.5 1.5 0 0 1-2.2-2.2l7.4-7.4"/></svg>
         </button>
-        <input id="file" type="file" accept="image/*" multiple hidden />
+        <input id="file" type="file" multiple hidden
+          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.pptx,.json" />
+        <button id="mic" type="button" class="icon-btn" title="Dictée vocale" aria-label="Dictée vocale">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
         <textarea id="input" rows="1" placeholder="Écrivez votre message…" autocomplete="off" enterkeyhint="send"></textarea>
         <button id="send" type="button" class="send" aria-label="Envoyer" title="Envoyer">
           <svg class="ic-send" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2z"/></svg>
@@ -58,6 +63,7 @@
 
   <script src="vendor/marked.min.js"></script>
   <script src="vendor/purify.min.js"></script>
+  <script src="vendor/highlight.min.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>
