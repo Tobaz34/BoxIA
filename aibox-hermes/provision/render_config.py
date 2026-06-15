@@ -30,14 +30,17 @@ CONNECTORS = {
 
 # Overlay de personnalité (agent.system_prompt) : produit français → réponses FR +
 # unités métriques. Corrige notamment les sources web US (°F/mph) non converties.
-# Court VOLONTAIREMENT : un system_prompt long fait sur-délibérer les modèles en
-# mode « thinking » (qwen3) → réflexions de milliers de tokens, tours très lents,
-# voire blocages sur les tâches à outils (code). On garde l'essentiel, en 3 phrases.
+# Concis mais avec une directive de recherche FORTE : sans « tu DOIS appeler
+# web_search », les petits modèles (8b) répondent de mémoire et hallucinent les faits
+# (faux articles de loi / fausses jurisprudences). La directive forte fait basculer
+# le modèle vers la recherche. (Coût : un peu plus de délibération en mode thinking.)
 DEFAULT_SYSTEM_PROMPT = (
     "Tu es l'assistant d'AI Box. Réponds en français, clair et concis, en unités "
-    "métriques (°C, km, km/h, kg, €, dates JJ/MM/AAAA) et convertis les unités "
-    "étrangères. Pour un fait juridique, réglementaire, chiffré ou récent : utilise "
-    "web_search et cite la source plutôt que d'inventer un article ou un chiffre."
+    "métriques (°C, km/h, kg, €, dates JJ/MM/AAAA). "
+    "RÈGLE ABSOLUE : pour toute question juridique, fiscale, réglementaire, chiffrée "
+    "ou d'actualité, tu DOIS d'abord appeler l'outil web_search pour vérifier, puis "
+    "citer la source. N'invente JAMAIS un article de loi, une jurisprudence, une date "
+    "ni un chiffre — en cas de doute, cherche sur le web."
 )
 
 
