@@ -24,7 +24,7 @@
         },
       },
       h("iframe", {
-        src: "/aibox-chat/?embed=1",
+        src: "/aibox-chat/?embed=1&v=3",
         title: "Assistant AI Box",
         loading: "eager",
         allow: "clipboard-write; microphone",

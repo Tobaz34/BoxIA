@@ -23,7 +23,7 @@
         },
       },
       h("iframe", {
-        src: "/aibox-docs/",
+        src: "/aibox-docs/?v=3",
         title: "Documentation Hermes (locale)",
         loading: "eager",
         style: { width: "100%", height: "100%", border: "0", display: "block" },
