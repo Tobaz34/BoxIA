@@ -34,6 +34,7 @@ def render(
     tenant_dir: str,
     pennylane_base_url: str = "http://127.0.0.1:8081",
     vision_model: str = "qwen2.5vl:7b",
+    search_backend: str = "ddgs",
 ) -> str:
     allowed = [c for c in connectors if c in CONNECTORS]
     blocks = "\n".join(CONNECTORS[c](tenant_dir, pennylane_base_url) for c in allowed)
@@ -48,6 +49,13 @@ def render(
         f'    model: "{vision_model}"\n'
         '    api_key: "ollama"\n\n'
     ) if vision_model else ""
+    # Recherche web. `ddgs` (DuckDuckGo) ne demande AUCUNE clé API → activable d'office,
+    # recherche seule (pas d'extraction). Pour une meilleure qualité + extraction,
+    # passer plus tard à tavily/brave/firecrawl (clé dans .env) sans toucher ce bloc.
+    web = (
+        "web:\n"
+        f'  search_backend: "{search_backend}"\n\n'
+    ) if search_backend else ""
     return (
         "# Généré par render_config.py — ne pas éditer à la main.\n"
         "model:\n"
@@ -56,6 +64,7 @@ def render(
         f'  default: "{model}"\n'
         "  context_length: 65536   # Hermes exige >=64K ; qwen3 natif=40K → override obligatoire\n\n"
         f"{vision}"
+        f"{web}"
         "mcp_servers:\n"
         f"{mcp}\n\n"
         "skills:\n"
@@ -82,6 +91,9 @@ if __name__ == "__main__":
     ap.add_argument("--pennylane-base-url", default="http://127.0.0.1:8081")
     ap.add_argument("--vision-model", default="qwen2.5vl:7b",
                     help="modèle vision pour les pièces jointes image (vide = désactivé)")
+    ap.add_argument("--search-backend", default="ddgs",
+                    help="backend recherche web (ddgs=DuckDuckGo sans clé ; vide = désactivé)")
     a = ap.parse_args()
     conns = [c.strip() for c in a.connectors.split(",") if c.strip()]
-    print(render(a.model, a.base_url, conns, a.tenant_dir, a.pennylane_base_url, a.vision_model))
+    print(render(a.model, a.base_url, conns, a.tenant_dir, a.pennylane_base_url,
+                 a.vision_model, a.search_backend))

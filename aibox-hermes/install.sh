@@ -52,6 +52,10 @@ if [ "$CHECK" = 1 ] || ! have_hermes; then
 else
   echo "  hermes déjà présent ($OWNER_RUN)."
 fi
+# Recherche web sans clé (DuckDuckGo) : le backend `ddgs` du config.yaml a besoin du
+# paquet `ddgs` dans le venv Hermes. Hermes le lazy-installe au 1er appel, mais on le
+# pré-installe pour que la 1re recherche soit instantanée (et hors-ligne d'install).
+asowner '~/hermes-agent/venv/bin/python -m pip install -q ddgs 2>/dev/null || true'
 # Frontend du dashboard web : setup-hermes ne le build PAS → sans ça, le service
 # `hermes dashboard --skip-build` échoue (« no web dist »). On installe node + build.
 if [ "$WITH_WEB_PORTAL" = 1 ]; then
