@@ -30,21 +30,27 @@ COMPANY_SLUG="${COMPANY_SLUG:-demo}"
 
 run()  { if [ "$CHECK" = 1 ]; then echo "  [check] $*"; else eval "$@"; fi; }
 step() { printf '\n== %s ==\n' "$*"; }
+# Exécute en tant que propriétaire du portail : Hermes, HERMES_HOME et les données
+# lui appartiennent (le dashboard tourne sous ce compte) — pas root. bash -lc → PATH
+# (~/.local/bin pour uv/hermes). En portail web l'owner = clikinfo ; sinon = invoquant.
+OWNER_RUN="$AIBOX_OWNER"
+asowner() { if [ "$CHECK" = 1 ]; then echo "  [check][$OWNER_RUN] $*"; else sudo -u "$OWNER_RUN" -H bash -lc "$*"; fi; }
+have_hermes() { sudo -u "$OWNER_RUN" -H bash -lc 'command -v hermes >/dev/null 2>&1' 2>/dev/null; }
 
 step "1/7  Dépendances système"
 run "export DEBIAN_FRONTEND=noninteractive"
 run "apt-get update -qq"
 run "apt-get install -y -qq python3 python3-venv python3-pip git curl jq"
 
-step "2/7  Hermes Agent (installé vierge, jamais modifié)"
-# Vraie méthode (vérifiée live) : clone + setup-hermes.sh via uv (non-interactif).
-if ! command -v hermes >/dev/null 2>&1; then
-  run "command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh"
-  run "[ -d \$HOME/hermes-agent/.git ] || git clone --depth 1 https://github.com/nousresearch/hermes-agent.git \$HOME/hermes-agent"
-  run "cd \$HOME/hermes-agent && yes n | ./setup-hermes.sh"
-  export PATH="$HOME/.local/bin:$PATH"
+step "2/7  Hermes Agent (installé pour $OWNER_RUN, jamais modifié)"
+# Vraie méthode (vérifiée live) : clone + setup-hermes.sh via uv (non-interactif),
+# EN TANT QUE l'owner → ~/.local/bin/hermes et ~/hermes-agent lui appartiennent.
+if [ "$CHECK" = 1 ] || ! have_hermes; then
+  asowner 'command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh'
+  asowner '[ -d ~/hermes-agent/.git ] || git clone --depth 1 https://github.com/nousresearch/hermes-agent.git ~/hermes-agent'
+  asowner 'cd ~/hermes-agent && yes n | ./setup-hermes.sh'
 else
-  echo "  hermes déjà présent."
+  echo "  hermes déjà présent ($OWNER_RUN)."
 fi
 
 step "3/7  Modèle IA"
@@ -67,21 +73,19 @@ else
 fi
 
 step "4/7  Config entreprise (wizard-company)"
-run "AIBOX_ROOT='$AIBOX_ROOT' bash '$SCRIPT_DIR/provision/wizard-company.sh' '$COMPANY_SLUG' $([ "$CHECK" = 1 ] && echo --check)"
+asowner "AIBOX_ROOT='$AIBOX_ROOT' OLLAMA_MODEL='${OLLAMA_MODEL:-}' ENABLED_CONNECTORS='${ENABLED_CONNECTORS:-}' ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY:-}' bash '$SCRIPT_DIR/provision/wizard-company.sh' '$COMPANY_SLUG' $([ "$CHECK" = 1 ] && echo --check)"
 
-step "5/7  Premier utilisateur + service systemd"
+step "5/7  Premier utilisateur"
 if [ -n "${FIRST_USER_SLUG:-}" ]; then
-  run "AIBOX_ROOT='$AIBOX_ROOT' bash '$SCRIPT_DIR/provision/wizard-user.sh' '$COMPANY_SLUG' '$FIRST_USER_SLUG' $([ "$CHECK" = 1 ] && echo --check)"
-  INSTANCE="${COMPANY_SLUG}-${FIRST_USER_SLUG}"
-  if [ "$CHECK" = 1 ]; then
-    echo "  [check] instance systemd aibox-hermes@$INSTANCE (HERMES_HOME mappé)"
-  else
-    mkdir -p "$AIBOX_ROOT/instances"
-    echo "HERMES_HOME=$AIBOX_ROOT/companies/$COMPANY_SLUG/users/$FIRST_USER_SLUG/hermes" \
-      > "$AIBOX_ROOT/instances/$INSTANCE.env"
-    install -m 644 "$SCRIPT_DIR/provision/aibox-hermes@.service" /etc/systemd/system/aibox-hermes@.service
-    systemctl daemon-reload
-    systemctl enable --now "aibox-hermes@$INSTANCE"
+  asowner "AIBOX_ROOT='$AIBOX_ROOT' bash '$SCRIPT_DIR/provision/wizard-user.sh' '$COMPANY_SLUG' '$FIRST_USER_SLUG' $([ "$CHECK" = 1 ] && echo --check)"
+  # Hors portail web : service gateway (Telegram/CLI). En portail, c'est aibox-dash@ (étape 7).
+  if [ "$WITH_WEB_PORTAL" != 1 ]; then
+    INSTANCE="${COMPANY_SLUG}-${FIRST_USER_SLUG}"
+    if [ "$CHECK" = 1 ]; then echo "  [check] instance systemd aibox-hermes@$INSTANCE"; else
+      asowner "mkdir -p '$AIBOX_ROOT/instances' && echo \"HERMES_HOME=$AIBOX_ROOT/companies/$COMPANY_SLUG/users/$FIRST_USER_SLUG/hermes\" > '$AIBOX_ROOT/instances/$INSTANCE.env'"
+      install -m 644 "$SCRIPT_DIR/provision/aibox-hermes@.service" /etc/systemd/system/aibox-hermes@.service
+      systemctl daemon-reload; systemctl enable --now "aibox-hermes@$INSTANCE"
+    fi
   fi
 else
   echo "  (aucun FIRST_USER_SLUG — ajoute des employés ensuite, voir ci-dessous)"
@@ -111,7 +115,10 @@ if [ "$WITH_WEB_PORTAL" = 1 ]; then
   # 7a) Authentik (login) — secrets auto-générés
   run "AIBOX_OWNER='$AIBOX_OWNER' AKADMIN_PASSWORD='${AKADMIN_PASSWORD:-AiBoxAdmin2026!Change}' bash '$SCRIPT_DIR/provision/authentik/deploy-authentik.sh' $([ "$CHECK" = 1 ] && echo --check)"
   # 7b) Portail : dashboards par user + Caddy + contenu web + config Authentik
-  run "AIBOX_ROOT='$AIBOX_ROOT' AIBOX_OWNER='$AIBOX_OWNER' COMPANY='$COMPANY_SLUG' AIBOX_HOST='$AIBOX_HOST' USER_PASSWORD='${USER_PASSWORD:-1234}' bash '$SCRIPT_DIR/provision/setup-portal.sh' $([ "$CHECK" = 1 ] && echo --check)"
+  run "AIBOX_ROOT='$AIBOX_ROOT' AIBOX_OWNER='$AIBOX_OWNER' COMPANY='$COMPANY_SLUG' AIBOX_HOST='$AIBOX_HOST' USER_PASSWORD='${USER_PASSWORD:-1234}' AIBOX_ADMINS='${AIBOX_ADMINS:-}' bash '$SCRIPT_DIR/provision/setup-portal.sh' $([ "$CHECK" = 1 ] && echo --check)"
+  # 7c) Les données du portail dans le home de l'owner doivent lui appartenir
+  #     (dash env + roles.json sont écrits par root ; le dashboard/plugin droits écrit en tant qu'owner).
+  run "chown -R '$AIBOX_OWNER':'$AIBOX_OWNER' '$AIBOX_ROOT/dash' 2>/dev/null; [ -f '$AIBOX_ROOT/roles.json' ] && chown '$AIBOX_OWNER':'$AIBOX_OWNER' '$AIBOX_ROOT/roles.json'; true"
   echo "  Portail : https://$AIBOX_HOST/  (login Authentik akadmin + employés, chat en page d'accueil)"
 else
   echo "  (WITH_WEB_PORTAL=0 — portail web non installé)"
