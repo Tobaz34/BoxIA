@@ -99,6 +99,15 @@ body.nav-open .backdrop { display: block; }
 .att-chip.doc .ic { font-size: 1.1rem; }
 .att-chip.doc .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Glisser-déposer un fichier */
+body.dragging .composer { box-shadow: 0 0 0 2px var(--accent) inset; border-radius: 22px; }
+body.dragging::after {
+  content: "📎 Déposez vos fichiers ici"; position: fixed; inset: 0; z-index: 30;
+  display: grid; place-items: center; pointer-events: none;
+  background: rgba(37,99,235,.07); color: var(--accent); font-weight: 700; font-size: 1.1rem;
+  border: 2px dashed var(--accent);
+}
+
 /* Micro (dictée) */
 #mic.rec { color: #fff; background: #ef4444; }
 #mic.rec svg { animation: pulse 1s infinite; }

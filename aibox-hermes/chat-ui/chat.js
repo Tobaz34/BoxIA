@@ -76,6 +76,11 @@ let cur = null;
 
 function setStatus(msg, err) { statusEl.textContent = msg || ''; statusEl.classList.toggle('err', !!err); }
 function setBusy(b) { busy = b; document.body.classList.toggle('busy', b); sendBtn.title = b ? 'Arrêter' : 'Envoyer'; }
+// Indice « le modèle se prépare » : le 1er token d'un modèle local froid peut
+// tarder (~30 s). Sans retour, l'utilisateur croit que c'est planté.
+let waitHint = 0;
+function startWaitHint() { clearTimeout(waitHint); waitHint = setTimeout(() => { if (busy && (!cur || !cur.started)) setStatus('⏳ Le modèle se prépare (quelques secondes)…'); }, 6000); }
+function clearWaitHint() { clearTimeout(waitHint); waitHint = 0; }
 function rpc(method, params) { const id = 'r' + (++nextId); return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, jsonrpc: '2.0', method, params: params || {} })); }); }
 function scroll() { const near = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160; if (near) thread.scrollTop = thread.scrollHeight; }
 function clearThread() { thread.innerHTML = ''; emptyEl = null; cur = null; }
@@ -101,8 +106,8 @@ function startAssistant() {
 }
 function renderNow(final) { if (!cur) return; cur.bubble.innerHTML = renderMarkdown(cur.text); enhance(cur.bubble, final); cur.lastRender = Date.now(); scroll(); }
 function scheduleRender() { if (!cur) return; const since = Date.now() - cur.lastRender; if (since > 60) renderNow(); else if (!cur.raf) cur.raf = setTimeout(() => { cur.raf = 0; renderNow(); }, 60 - since); }
-function appendAnswer(t) { if (!t) return; if (!cur) startAssistant(); if (!cur.started) { cur.bubble.textContent = ''; cur.started = true; } cur.text += t; scheduleRender(); }
-function appendThinking(t) { if (!t) return; if (!cur) startAssistant(); cur.thinkWrap.style.display = ''; cur.thinkWrap.classList.add('active'); cur.think += t; cur.thinkBody.textContent = cur.think; cur.thinkWrap.querySelector('.count').textContent = cur.think.split('\n').length + ' lignes'; scroll(); }
+function appendAnswer(t) { if (!t) return; if (!cur) startAssistant(); if (!cur.started) { cur.bubble.textContent = ''; cur.started = true; clearWaitHint(); setStatus(''); } cur.text += t; scheduleRender(); }
+function appendThinking(t) { if (!t) return; if (!cur) startAssistant(); if (cur.think === '') { clearWaitHint(); setStatus(''); } cur.thinkWrap.style.display = ''; cur.thinkWrap.classList.add('active'); cur.think += t; cur.thinkBody.textContent = cur.think; cur.thinkWrap.querySelector('.count').textContent = cur.think.split('\n').length + ' lignes'; scroll(); }
 function toolEl(pl) { if (!cur) startAssistant(); const id = pl.tool_id || pl.name || ('t' + Object.keys(cur.tools).length); let el = cur.tools[id]; if (!el) { el = document.createElement('div'); el.className = 'tool'; cur.toolWrap.appendChild(el); cur.tools[id] = el; } return el; }
 function addTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.name); el.innerHTML = '<span class="tdot"></span>'; el.appendChild(document.createTextNode(' ' + ic + ' ' + lb + '…')); el.title = pl.name || ''; scroll(); }
 function completeTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.name); el.innerHTML = '<span class="tdot" style="background:#16a34a"></span>'; el.appendChild(document.createTextNode(' ' + ic + ' ' + lb + ' ✓')); el.title = pl.name || ''; scroll(); }
@@ -112,7 +117,7 @@ function finishAssistant(note) {
   if (note && cur.started) { const n = document.createElement('p'); n.style.cssText = 'opacity:.6;font-size:.85em;margin:.4rem 0 0'; n.textContent = note; cur.bubble.appendChild(n); }
   cur.thinkWrap.classList.remove('active'); const lbl = cur.thinkWrap.querySelector('.label'); if (lbl) lbl.textContent = 'Raisonnement';
   if (cur.started && cur.text) addTurnActions(cur);
-  cur = null; setBusy(false); setStatus(''); input.focus(); loadSessions();
+  cur = null; setBusy(false); clearWaitHint(); setStatus(''); input.focus(); loadSessions();
 }
 function addTurnActions(turn) {
   const acts = document.createElement('div'); acts.className = 'msg-actions';
@@ -278,8 +283,10 @@ function connect() {
 function doSend(text) {
   if (!ready || !sessionId) { setStatus('Connexion en cours…'); return; }
   if (busy) return;
-  lastUserText = text; userMessage(text); setBusy(true); setStatus('');
-  rpc('prompt.submit', { session_id: sessionId, text }).then(() => { clearAttachments(); }).catch(() => { setStatus('Échec de l\'envoi', true); setBusy(false); });
+  const hadAttach = attachmentsEl.children.length > 0;
+  lastUserText = text; userMessage(text); setBusy(true);
+  if (hadAttach) setStatus('👁️ Analyse de la pièce jointe en cours…'); else { setStatus(''); startWaitHint(); }
+  rpc('prompt.submit', { session_id: sessionId, text }).then(() => { clearAttachments(); }).catch(() => { setStatus('Échec de l\'envoi', true); setBusy(false); clearWaitHint(); });
 }
 function regenerate() { if (!lastUserText || busy || !ready || !sessionId) return; setBusy(true); setStatus('Régénération…'); rpc('prompt.submit', { session_id: sessionId, text: lastUserText }).catch(() => { setStatus('Échec', true); setBusy(false); }); }
 function doStop() { if (!busy || !sessionId) return; setStatus('Arrêt…'); rpc('session.interrupt', { session_id: sessionId }).catch(() => {}); }
@@ -299,6 +306,15 @@ $('#attach').addEventListener('click', () => fileInput.click());
 micBtn.addEventListener('click', toggleMic);
 convSearch && convSearch.addEventListener('input', renderConvList);
 fileInput.addEventListener('change', async () => { const files = [...fileInput.files]; fileInput.value = ''; for (const f of files) await addAttachment(f); });
+// Coller une image (Ctrl+V) — capture d'écran directe.
+window.addEventListener('paste', (e) => {
+  const files = [...((e.clipboardData && e.clipboardData.items) || [])].filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); files.forEach(addAttachment); }
+});
+// Glisser-déposer un fichier n'importe où dans la fenêtre.
+['dragenter', 'dragover'].forEach((ev) => document.addEventListener(ev, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); document.body.classList.add('dragging'); } }));
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+document.addEventListener('drop', (e) => { e.preventDefault(); document.body.classList.remove('dragging'); [...((e.dataTransfer && e.dataTransfer.files) || [])].forEach(addAttachment); });
 document.querySelectorAll('.suggestion').forEach((s) => s.addEventListener('click', () => { const pr = s.getAttribute('data-prompt') || s.textContent.trim(); if (pr.endsWith(': ') || pr.endsWith('：')) { input.value = pr; input.focus(); input.dispatchEvent(new Event('input')); } else doSend(pr); }));
 
 // --- Boot -------------------------------------------------------------------
