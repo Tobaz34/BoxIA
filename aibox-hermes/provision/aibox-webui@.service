@@ -1,0 +1,40 @@
+# Service systemd — une interface web hermes-webui PRIVÉE par utilisateur (derrière Caddy).
+# Instance %i = nom d'utilisateur (ex: aibox-webui@andre). Remplace aibox-dash@.
+#
+# Bind 127.0.0.1 (loopback) → seul Caddy l'atteint ; jamais exposé directement.
+#
+# EnvironmentFile par user — /home/<owner>/aibox/webui/<user>.env :
+#     HERMES_HOME=/home/<owner>/aibox/companies/<co>/users/<user>/hermes
+#     HERMES_WEBUI_PORT=9130        # un port distinct par user (9130, 9131, …)
+#
+# Les variables communes (agent, python, extension white-label AI Box) sont en dur
+# ci-dessous. L'extension vit dans le repo BoxIA → update-safe (un git pull de
+# hermes-webui ne touche pas à /home/clikinfo/BoxIA/aibox-hermes/webui-ext).
+#
+# Installer :
+#   sudo cp aibox-webui@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aibox-webui@<user>
+[Unit]
+Description=AI Box - Interface web utilisateur (%i)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clikinfo
+EnvironmentFile=/home/clikinfo/aibox/webui/%i.env
+Environment=PATH=/home/clikinfo/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HERMES_WEBUI_AGENT_DIR=/home/clikinfo/hermes-agent
+Environment=HERMES_WEBUI_PYTHON=/home/clikinfo/hermes-agent/venv/bin/python
+Environment=HERMES_WEBUI_HOST=127.0.0.1
+Environment=HERMES_WEBUI_EXTENSION_DIR=/home/clikinfo/BoxIA/aibox-hermes/webui-ext/static
+Environment=HERMES_WEBUI_EXTENSION_SCRIPT_URLS=/extensions/aibox.js
+Environment=HERMES_WEBUI_EXTENSION_STYLESHEET_URLS=/extensions/aibox.css
+WorkingDirectory=/home/clikinfo/hermes-webui
+ExecStart=/usr/bin/python3 /home/clikinfo/hermes-webui/bootstrap.py --foreground --no-browser
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
