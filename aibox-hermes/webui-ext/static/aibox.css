@@ -1,0 +1,16 @@
+/* AI Box — extension white-label pour hermes-webui (CSS injectée via
+   HERMES_WEBUI_EXTENSION_STYLESHEET_URLS). UPDATE-SAFE : hors code upstream.
+   Additif uniquement (cf. docs/EXTENSIONS.md) : on masque/teinte, on ne casse rien. */
+
+/* Masquer le lien externe « Hermes Dashboard » (expose la marque + un outil
+   technique dont le client n'a pas besoin). */
+#dashboardRailBtn,
+[data-dashboard-link] {
+  display: none !important;
+}
+
+/* Accent de marque AI Box (bleu) — n'est appliqué que si le thème expose ces
+   variables ; sinon sans effet (donc sans risque). À affiner selon le skin retenu. */
+:root {
+  --aibox-accent: #2563eb;
+}
