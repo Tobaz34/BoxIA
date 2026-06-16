@@ -58,7 +58,11 @@ for u in "${USERS[@]}"; do
   if [ "$CHECK" = 1 ]; then
     echo "    [check] écrire $envf (HERMES_HOME=$hh, HERMES_WEBUI_PORT=$port) + langue fr"
   else
-    { echo "HERMES_HOME=$hh"; echo "HERMES_WEBUI_PORT=$port"; } > "$envf"
+    # Rôle : admin (tout) si listé dans AIBOX_ADMINS, sinon client (chat focalisé).
+    # Passé à l'extension via le query-string du script → droits par rôle.
+    role="client"; case ",${AIBOX_ADMINS:-}," in *",$u,"*) role="admin";; esac
+    { echo "HERMES_HOME=$hh"; echo "HERMES_WEBUI_PORT=$port";
+      echo "HERMES_WEBUI_EXTENSION_SCRIPT_URLS=/extensions/aibox.js?role=$role"; } > "$envf"
     chown "$OWNER:$OWNER" "$envf"
     # Langue par défaut = français (réglage du state webui, par user)
     mkdir -p "$hh/webui"

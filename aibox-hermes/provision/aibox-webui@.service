@@ -29,8 +29,9 @@ Environment=HERMES_WEBUI_AGENT_DIR=/home/clikinfo/hermes-agent
 Environment=HERMES_WEBUI_PYTHON=/home/clikinfo/hermes-agent/venv/bin/python
 Environment=HERMES_WEBUI_HOST=127.0.0.1
 Environment=HERMES_WEBUI_EXTENSION_DIR=/home/clikinfo/BoxIA/aibox-hermes/webui-ext/static
-Environment=HERMES_WEBUI_EXTENSION_SCRIPT_URLS=/extensions/aibox.js
 Environment=HERMES_WEBUI_EXTENSION_STYLESHEET_URLS=/extensions/aibox.css
+# HERMES_WEBUI_EXTENSION_SCRIPT_URLS est défini PAR USER dans l'EnvironmentFile
+# (/extensions/aibox.js?role=admin|client) → pilote les droits selon le rôle.
 WorkingDirectory=/home/clikinfo/hermes-webui
 ExecStart=/usr/bin/python3 /home/clikinfo/hermes-webui/bootstrap.py --foreground --no-browser
 Restart=on-failure

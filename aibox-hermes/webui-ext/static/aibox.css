@@ -14,3 +14,9 @@
 :root {
   --aibox-accent: #2563eb;
 }
+
+/* DROITS PAR RÔLE — un utilisateur « client » ne voit qu'un chat focalisé :
+   on masque la barre de navigation technique (Tasks/Kanban/Skills/Memory/Spaces/
+   Insights/Logs/Settings…). La classe `aibox-client` est posée par aibox.js selon
+   le rôle (?role=client). L'« admin » garde toute l'interface. */
+html.aibox-client nav.rail { display: none !important; }
