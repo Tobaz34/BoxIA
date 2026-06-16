@@ -45,30 +45,33 @@ else USERS=(); for d in "$USERS_DIR"/*/; do [ -d "$d" ] && USERS+=("$(basename "
 [ ${#USERS[@]} -eq 0 ] && { echo "Aucun utilisateur (lance d'abord les wizards)."; exit 1; }
 echo "== setup-portal : host=$AIBOX_HOST, users=${USERS[*]} =="
 
-# 1) Dashboard privé par user : env (HERMES_HOME + port + token) + service ------
-run "mkdir -p '$DASH_DIR'"
-run "install -m 644 '$AIBOX_HERMES_DIR/provision/aibox-dash@.service' /etc/systemd/system/aibox-dash@.service"
+# 1) Interface web hermes-webui PRIVÉE par user : env (HERMES_HOME + port) + service
+#    Remplace l'ancien dashboard Hermes + chat-ui maison. Langue = français.
+#    L'extension white-label « AI Box » est injectée par le service (repo, update-safe).
+WEBUI_DIR="$AIBOX_ROOT/webui"
+run "mkdir -p '$WEBUI_DIR'"
+run "install -m 644 '$AIBOX_HERMES_DIR/provision/aibox-webui@.service' /etc/systemd/system/aibox-webui@.service"
 run "systemctl daemon-reload"
-port=9120
+port=9130
 for u in "${USERS[@]}"; do
-  envf="$DASH_DIR/$u.env"; hh="$USERS_DIR/$u/hermes"
+  envf="$WEBUI_DIR/$u.env"; hh="$USERS_DIR/$u/hermes"
   if [ "$CHECK" = 1 ]; then
-    echo "    [check] écrire $envf (HERMES_HOME=$hh, DASH_PORT=$port, token généré)"
-  elif [ ! -f "$envf" ]; then
-    { echo "HERMES_HOME=$hh"; echo "DASH_PORT=$port";
-      echo "HERMES_DASHBOARD_SESSION_TOKEN=aibox-$(openssl rand -hex 13)"; } > "$envf"
-    chown "$OWNER:$OWNER" "$envf"
+    echo "    [check] écrire $envf (HERMES_HOME=$hh, HERMES_WEBUI_PORT=$port) + langue fr"
   else
-    grep -q '^HERMES_DASHBOARD_SESSION_TOKEN=' "$envf" || echo "HERMES_DASHBOARD_SESSION_TOKEN=aibox-$(openssl rand -hex 13)" >> "$envf"
-    grep -q '^DASH_PORT=' "$envf" || echo "DASH_PORT=$port" >> "$envf"
+    { echo "HERMES_HOME=$hh"; echo "HERMES_WEBUI_PORT=$port"; } > "$envf"
+    chown "$OWNER:$OWNER" "$envf"
+    # Langue par défaut = français (réglage du state webui, par user)
+    mkdir -p "$hh/webui"
+    python3 -c "import json,os,sys;p=sys.argv[1];d=json.load(open(p,encoding='utf-8')) if os.path.exists(p) else {};d['language']='fr';json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)" "$hh/webui/settings.json" 2>/dev/null || true
+    chown -R "$OWNER:$OWNER" "$hh/webui"
   fi
-  run "systemctl enable --now 'aibox-dash@$u' >/dev/null 2>&1 || systemctl restart 'aibox-dash@$u' || true"
-  echo "  dashboard $u -> :$port"
+  run "systemctl enable --now 'aibox-webui@$u' >/dev/null 2>&1 || systemctl restart 'aibox-webui@$u' || true"
+  echo "  webui $u -> :$port (fr)"
   port=$((port+1))
 done
 
 # 2) Caddy :443 (Authentik forward_auth + map user->backend + routes web) -------
-gen_map() { for i in "${!USERS[@]}"; do echo "				${USERS[$i]} 127.0.0.1:$((9120+i))"; done; }
+gen_map() { for i in "${!USERS[@]}"; do echo "				${USERS[$i]} 127.0.0.1:$((9130+i))"; done; }
 {
 cat <<EOF
 # Généré par setup-portal.sh — ne pas éditer à la main.
@@ -86,23 +89,8 @@ https://$AIBOX_HOST {
 				header_up X-Forwarded-Proto https
 				trusted_proxies private_ranges
 			}
-			# Page d'accueil = le chat épuré (override /chat) plutôt que /sessions
-			@root path /
-			redir @root /chat
-			# --- AIBOX-CHAT-BEGIN ---
-			handle /aibox-chat/session {
-				root * $WEB_ROOT/chat-tokens
-				rewrite * /{http.request.header.X-Authentik-Username}.json
-				header Cache-Control no-store
-				file_server
-			}
-			redir /aibox-chat /aibox-chat/
-			handle_path /aibox-chat/* {
-				root * $WEB_ROOT/chat-ui
-				header Cache-Control "no-store"
-				file_server
-			}
-			# --- AIBOX-CHAT-END ---
+			# hermes-webui sert l'app à la racine (/) → pas de redirect /chat.
+			# (white-label AI Box + langue FR injectés côté service.)
 			# --- AIBOX-DOCS-BEGIN ---
 			redir /aibox-docs /aibox-docs/
 			handle_path /aibox-docs/* {
