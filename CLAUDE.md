@@ -10,11 +10,24 @@
 - ❌ `ssh clikinfo@192.168.15.210 "git checkout|reset|pull|merge"` direct
 - ❌ `ssh clikinfo@192.168.15.210 "./install.sh"` ou `./reset-as-client.sh` direct
 
-**OBLIGATOIRE** : tout déploiement passe par
+**OBLIGATOIRE pour l'ancien `aibox-app` (stack BoxIA /srv/ai-stack)** : tout déploiement passe par
 ```bash
 tools/deploy-to-xefia.sh <branche>
 ```
 Ce script gère le lock multi-sessions, le tag de backup, le reset propre, le rebuild ciblé, les migrations DB, le smoke test et le log d'audit.
+
+### Exception — déploiement de la stack Hermes (`~/BoxIA` + services `aibox-webui@`/`aibox-dash@`)
+
+Depuis le pivot Hermes (2026-06), le produit live n'est PLUS `aibox-app`/`/srv/ai-stack` mais Hermes Agent dans `~/BoxIA` (= `/home/clikinfo/BoxIA`), servi par des services systemd `aibox-webui@<user>` et `aibox-dash@<user>`. `deploy-to-xefia.sh` NE gère PAS cette stack (il cible `/srv/ai-stack` + `docker compose build aibox-app`). Le déploiement Hermes est donc AUTORISÉ en SSH direct, **à condition de respecter l'esprit de la règle** (versionné, réversible, traçable) :
+
+1. **Tag de backup AVANT toute bascule** : `git -C ~/BoxIA tag backup-avant-<desc>-<timestamp>`.
+2. **Uniquement une branche déjà commitée + poussée sur origin** (jamais d'édition à la main côté serveur) : `git -C ~/BoxIA fetch && git -C ~/BoxIA checkout <branche-trackée>`.
+3. **Rechargement** via `systemctl restart aibox-webui@<user>` / `aibox-dash@<user>` (whitelist NOPASSWD) — les plugins/extensions sont des symlinks vers `~/BoxIA`, donc le checkout suffit à les mettre à jour.
+4. **Config Authentik** = rejeu du script versionné idempotent `provision/authentik/setup-authentik.py` (via `docker exec ... ak shell`), jamais de mutation ad-hoc (cf. RÈGLE 2).
+5. **Rollback** = `git -C ~/BoxIA checkout main` (ou le tag de backup) + restart.
+6. **RÈGLE 3 s'applique toujours** : une seule session déploie à la fois.
+
+Toujours INTERDIT même pour Hermes : `git reset --hard`/`pull`/`merge` qui écraseraient un état non poussé, et toute édition manuelle de fichier côté serveur (scp/cp/vim/tee) hors du checkout git.
 
 **Lecture seule autorisée sans le script** :
 - ✅ `docker ps`, `docker logs`, `docker exec ... <commande_lecture>`
