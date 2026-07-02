@@ -71,6 +71,17 @@ def _rotate(path: Path, max_entries: int) -> None:
 def read_all(path: Optional[Path] = None) -> list[dict]:
     path = path or audit_path()
     try:
-        return [json.loads(ln) for ln in path.read_text("utf-8").splitlines() if ln.strip()]
+        raw = path.read_text("utf-8").splitlines()
     except OSError:
         return []
+    out: list[dict] = []
+    for ln in raw:
+        if not ln.strip():
+            continue
+        try:
+            out.append(json.loads(ln))
+        except (json.JSONDecodeError, ValueError):
+            # Ligne corrompue (écriture interrompue, edit manuel) → on la saute
+            # au lieu de faire crasher /aibox-audit à vie.
+            continue
+    return out

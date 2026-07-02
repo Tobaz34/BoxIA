@@ -9,7 +9,12 @@
 (function () {
   "use strict";
   var BRAND = "AI Box";
-  window.__HERMES_PLUGINS__.register("aibox-brand", function () { return null; });
+  // register() peut jeter si __HERMES_PLUGINS__ est absent (chargement partiel).
+  // On protège l'appel : sinon toute la suite de l'IIFE (dont le masquage client)
+  // ne s'exécuterait pas → fail-OPEN. On veut que le masquage s'applique quand même.
+  try {
+    window.__HERMES_PLUGINS__.register("aibox-brand", function () { return null; });
+  } catch (e) { /* pas de registre plugin : on continue le white-label + rôle */ }
 
   var TEST = /Hermes|Nous Research/;
   function clean(s) { return s.replace(/Hermes Agent/g, BRAND).replace(/Hermes/g, BRAND).replace(/Nous Research/g, BRAND); }
@@ -72,12 +77,15 @@
           .then(function (j) { return (j && j.role) || null; })
           .catch(function () { return null; })
       : Promise.resolve(null);
+    // Fail-CLOSED : si /me ET /aibox-chat/session échouent (ou ne renvoient pas
+    // de rôle), on retombe sur « client » (vue chat masquée), JAMAIS « admin ».
+    // Un rôle indéterminé ne doit pas exposer la barre latérale technique.
     viaMe.then(function (role) {
       if (role) return role;
       return fetch("/aibox-chat/session", { credentials: "same-origin", cache: "no-store" })
         .then(function (r) { return r.ok ? r.json() : {}; })
-        .then(function (k) { return (k && k.role) || "admin"; });
-    }).then(go).catch(function () { go("admin"); });
+        .then(function (k) { return (k && k.role) || "client"; });
+    }).then(go).catch(function () { go("client"); });
   }
   boot();
 })();

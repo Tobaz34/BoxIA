@@ -106,8 +106,15 @@ def list_pending(session_id: Optional[str] = None) -> list[dict]:
     return sorted(out, key=lambda r: r["created_at"], reverse=True)
 
 
-def find_for(tool_name: str, args: Any) -> Optional[dict]:
-    """Enregistrement (tout statut, non expiré) matchant exactement (tool, args)."""
+def find_for(tool_name: str, args: Any, session_id: str = "") -> Optional[dict]:
+    """Enregistrement (tout statut, non expiré) matchant exactement (tool, args).
+
+    Si ``session_id`` est fourni, l'approbation est liée à la session : une
+    demande créée dans une autre session (session_id non vide et différent) n'est
+    PAS consommable ici — sinon une approbation d'une session A débloquerait le
+    même appel dans une session B. Les enregistrements sans session_id (info
+    indisponible au moment de la création) restent matchables partout.
+    """
     h = args_hash(args)
     for f in _dir().glob("*.json"):
         rec = _read(f.stem)
@@ -115,6 +122,9 @@ def find_for(tool_name: str, args: Any) -> Optional[dict]:
             continue
         if now() > rec["expires_at"]:
             _remove(rec["id"])
+            continue
+        rec_sid = rec.get("session_id") or ""
+        if session_id and rec_sid and rec_sid != session_id:
             continue
         return rec
     return None
@@ -149,10 +159,26 @@ def evaluate(
       - pending  : demande déjà en attente pour ces args (bloquer)
       - rejected : demande refusée par l'utilisateur (bloquer, consommé)
     """
-    rec = find_for(tool_name, args)
+    rec = find_for(tool_name, args, session_id)
     if rec and rec["status"] == "approved":
-        _remove(rec["id"])
-        return "allow", rec
+        # Consommation atomique : on unlink AVANT de renvoyer "allow". Si deux
+        # appels concurrents matchent la même approbation, un seul verra le
+        # fichier disparaître avec succès (unlink lève FileNotFoundError sur le
+        # perdant) → une seule exécution autorisée. Pas de primitive de lock
+        # cross-process ici (état = 1 fichier/demande), donc on s'appuie sur
+        # l'atomicité de unlink() côté OS pour départager.
+        try:
+            _file(rec["id"]).unlink()
+        except OSError:
+            # Déjà consommé par un appel concurrent → traiter comme non approuvé.
+            rec2 = find_for(tool_name, args, session_id)
+            if not rec2:
+                rec2 = create_pending(tool_name, args, description, session_id, ttl_s)
+                return "created", rec2
+            if rec2["status"] == "pending":
+                return "pending", rec2
+        else:
+            return "allow", rec
     if rec and rec["status"] == "pending":
         return "pending", rec
     if rec and rec["status"] == "rejected":

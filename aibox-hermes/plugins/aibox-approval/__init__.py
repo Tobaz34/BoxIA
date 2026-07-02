@@ -12,6 +12,7 @@ Commandes : ``/aibox-pending``, ``/aibox-approve <id>``, ``/aibox-reject <id>``.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -22,16 +23,64 @@ from . import approval_store as store
 logger = logging.getLogger(__name__)
 
 # Par défaut : verbes mutatifs courants (création/màj/suppression/envoi/paiement).
-# Les tools lecture seule (list_*, get_*, *_health) ne matchent pas → non bloqués.
-_DEFAULT_REGEX = r".*_create.*|.*create_.*|.*_update.*|.*_delete.*|.*_send.*|.*_pay.*|.*_refund.*|.*_cancel.*"
+# Les tools lecture seule (list_*, get_*, read_*, *_health) ne matchent pas → non bloqués.
+# On couvre 3 formes : verbe en début de nom (send_email, delete_file, pay_invoice),
+# verbe préfixé par un underscore (mcp_x_create), et verbe suivi d'un underscore
+# (create_invoice quelque part dans le nom). Détection insensible à la casse.
+_VERBS = r"create|update|delete|send|pay|refund|cancel"
+_DEFAULT_REGEX = (
+    rf"^(?:{_VERBS})_.*"  # verbe en tête : send_email, delete_file, update_contact, pay_invoice
+    rf"|.*_(?:{_VERBS}).*"  # verbe précédé d'un underscore : mcp_pennylane_create_invoice
+    rf"|.*(?:{_VERBS})_.*"  # verbe suivi d'un underscore : xcreate_… / …create_…
+)
 
 
 def _pattern() -> "re.Pattern[str]":
-    return re.compile(os.environ.get("AIBOX_MUTATING_TOOLS_REGEX", _DEFAULT_REGEX))
+    return re.compile(os.environ.get("AIBOX_MUTATING_TOOLS_REGEX", _DEFAULT_REGEX), re.IGNORECASE)
 
 
 def _is_mutating(tool_name: str) -> bool:
     return bool(tool_name) and _pattern().fullmatch(tool_name) is not None
+
+
+def _normalize_args(args: Any) -> Any:
+    """Normalise les args pour le hash/résumé sans jamais les écraser en {}.
+
+    Les args peuvent arriver en dict, mais aussi en string JSON (certains
+    transports MCP) ou en liste. Si on les vidait en {} (ancien bug), l'invariant
+    anti param-swap tombait : une approbation valait pour n'importe quels args.
+    On tente donc un json.loads si c'est une string ; sinon on garde la valeur
+    telle quelle (le hash porte sur la représentation canonique, cf. args_hash).
+    """
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str):
+        try:
+            return json.loads(args)
+        except (ValueError, TypeError):
+            return args  # string brute → hashée telle quelle
+    if args is None:
+        return {}
+    return args  # liste / autre → hashée telle quelle
+
+
+def _summarize_args(args: Any, max_val: int = 40, max_total: int = 240) -> str:
+    """Résumé lisible des arguments pour que l'humain approuve en connaissance de cause."""
+    def _trunc(v: Any) -> str:
+        s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
+        s = s.replace("\n", " ").strip()
+        return s if len(s) <= max_val else s[: max_val - 1] + "…"
+
+    if isinstance(args, dict):
+        if not args:
+            return "(aucun argument)"
+        pairs = [f"{k}={_trunc(v)}" for k, v in args.items()]
+        summary = ", ".join(pairs)
+    else:
+        summary = _trunc(args)
+    if len(summary) > max_total:
+        summary = summary[: max_total - 1] + "…"
+    return summary
 
 
 def _ttl_left(rec: dict) -> str:
@@ -65,8 +114,9 @@ def _on_pre_tool_call(
     if not _is_mutating(tool_name):
         return None
     sid = session_id or task_id or ""
-    safe_args = args if isinstance(args, dict) else {}
-    verdict, rec = store.evaluate(tool_name, safe_args, description=tool_name, session_id=sid)
+    safe_args = _normalize_args(args)
+    description = f"{tool_name} — {_summarize_args(safe_args)}"
+    verdict, rec = store.evaluate(tool_name, safe_args, description=description, session_id=sid)
     if verdict == "allow":
         logger.info("aibox-approval: %s approuvé (id=%s) → exécution autorisée", tool_name, rec["id"])
         return None

@@ -32,14 +32,50 @@ def _enabled() -> bool:
     return os.environ.get("AIBOX_RGPD_SCRUB", "").lower() in {"1", "true", "yes", "on"}
 
 
+def _scrub_recursive(value: Any) -> tuple[Any, int, dict]:
+    """Caviarde récursivement toutes les strings d'une structure dict/list/str.
+
+    Les résultats d'outils structurés (dict/list — ex : sortie MCP Pennylane avec
+    emails/SIREN) partaient au cloud SANS scrub quand on n'acceptait que les str.
+    On parcourt donc la structure et on caviarde chaque valeur string.
+    """
+    by_type: dict[str, int] = {}
+
+    def _merge(sub: dict) -> None:
+        for k, v in sub.items():
+            by_type[k] = by_type.get(k, 0) + v
+
+    if isinstance(value, str):
+        out, n, by = pii_patterns.scrub_pii(value)
+        return out, n, by
+    if isinstance(value, dict):
+        new: dict = {}
+        for k, v in value.items():
+            nv, _, by = _scrub_recursive(v)
+            _merge(by)
+            new[k] = nv
+        return new, sum(by_type.values()), by_type
+    if isinstance(value, (list, tuple)):
+        seq = [ _scrub_recursive(v) for v in value ]
+        for _, _, by in seq:
+            _merge(by)
+        rebuilt = [ nv for nv, _, _ in seq ]
+        return (type(value)(rebuilt), sum(by_type.values()), by_type)
+    return value, 0, {}
+
+
 def _on_transform_tool_result(
     tool_name: str = "", result: Any = None, **_: Any
-) -> Optional[str]:
-    """Caviarde la PII de la string résultat. Retourner une string la remplace ;
-    retourner None la laisse inchangée."""
-    if not _enabled() or not isinstance(result, str) or not result:
+) -> Optional[Any]:
+    """Caviarde la PII du résultat. Retourner une valeur la remplace ; retourner
+    None la laisse inchangée. Gère les str ET les structures dict/list."""
+    if not _enabled() or result is None:
         return None
-    scrubbed, n, by_type = pii_patterns.scrub_pii(result)
+    if not isinstance(result, (str, dict, list, tuple)):
+        return None
+    if isinstance(result, str) and not result:
+        return None
+    scrubbed, n, by_type = _scrub_recursive(result)
     if n == 0:
         return None
     logger.info(

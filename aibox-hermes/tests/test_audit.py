@@ -46,3 +46,14 @@ def test_rotation_keeps_most_recent():
     assert len(rows) == 5
     assert rows[0]["tool"] == "t5"   # plus anciennes droppées
     assert rows[-1]["tool"] == "t9"
+
+
+# --- Fix #8 : une ligne JSON corrompue ne fait plus crasher read_all ----------
+def test_read_all_skips_corrupt_line():
+    al.append(al.build_record("a", {}, None, 0, ts=1.0))
+    # Ligne corrompue injectée manuellement (écriture interrompue, edit manuel).
+    with open(al.audit_path(), "a", encoding="utf-8") as f:
+        f.write("{ceci n'est pas du JSON valide\n")
+    al.append(al.build_record("b", {}, None, 0, ts=2.0))
+    rows = al.read_all()  # ne doit PAS lever JSONDecodeError
+    assert [x["tool"] for x in rows] == ["a", "b"]  # la ligne corrompue est sautée

@@ -25,9 +25,12 @@ class _Pattern(NamedTuple):
 
 PATTERNS: list[_Pattern] = [
     # IBAN d'abord, sinon phone_fr grignote son intérieur.
+    # IGNORECASE : un IBAN saisi en minuscules (« fr76 3000 6000 … ») doit être
+    # caviardé aussi — sinon il échappait à ce pattern puis se faisait mutiler par
+    # le pattern téléphone en aval.
     _Pattern(
         "iban",
-        re.compile(r"\b[A-Z]{2}\d{2}[\s]?(?:[A-Z0-9]{4}[\s]?){4,7}[A-Z0-9]{1,4}\b"),
+        re.compile(r"\b[A-Z]{2}\d{2}[\s]?(?:[A-Z0-9]{4}[\s]?){4,7}[A-Z0-9]{1,4}\b", re.IGNORECASE),
         "[IBAN_REDACTED]",
     ),
     # Email avant les patterns numériques (un email peut contenir 9+ chiffres).
@@ -47,14 +50,16 @@ PATTERNS: list[_Pattern] = [
         re.compile(r"\b[12]\s?\d{2}\s?\d{2}\s?\d{2,3}\s?\d{3}\s?\d{3}\s?\d{2}\b"),
         "[NIR_REDACTED]",
     ),
+    # SIRET/SIREN acceptent espace, point ou tiret comme séparateur (comme le
+    # pattern téléphone), pour couvrir « 732.829.320 » et « 732-829-320 ».
     _Pattern(
         "siret",
-        re.compile(r"\b\d{3}[\s]?\d{3}[\s]?\d{3}[\s]?\d{5}\b"),
+        re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{3}[\s.-]?\d{5}\b"),
         "[SIRET_REDACTED]",
     ),
     _Pattern(
         "siren",
-        re.compile(r"\b\d{3}[\s]?\d{3}[\s]?\d{3}\b(?!\d)"),
+        re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{3}\b(?!\d)"),
         "[SIREN_REDACTED]",
     ),
     # phone_fr EN DERNIER : le plus permissif.

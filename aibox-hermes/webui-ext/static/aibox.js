@@ -9,7 +9,16 @@
   // Rôle passé par l'URL du script (/extensions/aibox.js?role=admin|client),
   // injecté par user via le service (HERMES_WEBUI_EXTENSION_SCRIPT_URLS).
   var ME = document.currentScript;
-  var ROLE = (function () { try { return new URL(ME.src).searchParams.get("role") || ""; } catch (e) { return ""; } })();
+  // Fail-CLOSED : si currentScript est null, l'URL invalide, ou ?role absent, on
+  // traite l'utilisateur comme « client » (le moins privilégié = vue chat réduite)
+  // et JAMAIS comme admin. Un rôle indéterminé ne doit pas déverrouiller la vue
+  // technique complète. Seul un ?role=admin explicite donne la vue admin.
+  var ROLE = (function () {
+    try {
+      var r = new URL(ME.src).searchParams.get("role");
+      return r === "admin" ? "admin" : "client";
+    } catch (e) { return "client"; }
+  })();
 
   if (window.__aiboxBranded) return;          // garde : pas de double-init
   window.__aiboxBranded = true;
