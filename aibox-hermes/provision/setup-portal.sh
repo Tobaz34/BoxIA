@@ -52,9 +52,28 @@ WEBUI_DIR="$AIBOX_ROOT/webui"
 run "mkdir -p '$WEBUI_DIR'"
 run "install -m 644 '$AIBOX_HERMES_DIR/provision/aibox-webui@.service' /etc/systemd/system/aibox-webui@.service"
 run "systemctl daemon-reload"
-port=9130
+
+# Attribution des ports STABLE (un user garde SON port). Sinon, ajouter un
+# employé décale les ports par ordre alphabétique → le Caddyfile route un user
+# vers le webui d'un AUTRE (fuite cross-user : HERMES_HOME/historique/mémoire).
+# 1re passe : on relit le port déjà attribué dans l'env existant.
+BASE_PORT=9130
+declare -A UPORT=()
+used=" "
 for u in "${USERS[@]}"; do
-  envf="$WEBUI_DIR/$u.env"; hh="$USERS_DIR/$u/hermes"
+  p="$(grep -oP '^HERMES_WEBUI_PORT=\K[0-9]+' "$WEBUI_DIR/$u.env" 2>/dev/null || true)"
+  if [ -n "$p" ]; then UPORT["$u"]="$p"; used="$used$p "; fi
+done
+# 2e passe : les nouveaux users prennent le prochain port libre.
+next=$BASE_PORT
+for u in "${USERS[@]}"; do
+  [ -n "${UPORT[$u]:-}" ] && continue
+  while [[ "$used" == *" $next "* ]]; do next=$((next+1)); done
+  UPORT["$u"]="$next"; used="$used$next "
+done
+
+for u in "${USERS[@]}"; do
+  envf="$WEBUI_DIR/$u.env"; hh="$USERS_DIR/$u/hermes"; port="${UPORT[$u]}"
   if [ "$CHECK" = 1 ]; then
     echo "    [check] écrire $envf (HERMES_HOME=$hh, HERMES_WEBUI_PORT=$port) + langue fr"
   else
@@ -69,13 +88,18 @@ for u in "${USERS[@]}"; do
     python3 -c "import json,os,sys;p=sys.argv[1];d=json.load(open(p,encoding='utf-8')) if os.path.exists(p) else {};d['language']='fr';json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)" "$hh/webui/settings.json" 2>/dev/null || true
     chown -R "$OWNER:$OWNER" "$hh/webui"
   fi
-  run "systemctl enable --now 'aibox-webui@$u' >/dev/null 2>&1 || systemctl restart 'aibox-webui@$u' || true"
+  # enable PUIS restart inconditionnel : sur un service déjà actif, `enable --now`
+  # renvoie 0 et NE relit PAS l'env modifié → l'ancien port reste actif. On force
+  # donc le restart pour que HERMES_WEBUI_PORT (nouvel env) soit bien pris en compte.
+  run "systemctl enable 'aibox-webui@$u' >/dev/null 2>&1 || true"
+  run "systemctl restart 'aibox-webui@$u' || true"
   echo "  webui $u -> :$port (fr)"
-  port=$((port+1))
 done
 
 # 2) Caddy :443 (Authentik forward_auth + map user->backend + routes web) -------
-gen_map() { for i in "${!USERS[@]}"; do echo "				${USERS[$i]} 127.0.0.1:$((9130+i))"; done; }
+# Le map réutilise le port RÉEL attribué à chaque user (UPORT), pas un 9130+i
+# positionnel — sinon le routage diverge de l'env réel des services.
+gen_map() { for u in "${USERS[@]}"; do echo "				$u 127.0.0.1:${UPORT[$u]}"; done; }
 {
 cat <<EOF
 # Généré par setup-portal.sh — ne pas éditer à la main.

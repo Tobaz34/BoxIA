@@ -36,6 +36,15 @@ if b:
     if s.get("locale") != "fr" or b.branding_title != "AI Box":
         s["locale"] = "fr"; b.branding_title = "AI Box"; b.save(); changed.append("brand")
 
+# 1bis) Titre du flow de connexion = rappel de l'identifiant. Cause n°1 des échecs
+# de login observés : l'utilisateur saisit son login SSH/système (ex. « clikinfo »)
+# au lieu de son identifiant AI Box (= son prénom). Le titre s'affiche en haut du
+# formulaire. Idempotent.
+LOGIN_TITLE = "Connexion à AI Box — identifiant : votre prénom"
+af = Flow.objects.filter(slug="default-authentication-flow").first()
+if af and af.title != LOGIN_TITLE:
+    af.title = LOGIN_TITLE; af.save(); changed.append("login-flow.title")
+
 # 2) ProxyProvider forward-auth
 auth_flow = Flow.objects.get(slug="default-provider-authorization-implicit-consent")
 inval_flow = Flow.objects.filter(slug="default-invalidation-flow").first()
