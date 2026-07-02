@@ -39,9 +39,13 @@ function updateInfo(pl) {
 }
 
 // --- Rendu Markdown + coloration + artefacts --------------------------------
+function escapeHtml(text) { return (text || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
 function renderMarkdown(text) {
-  const html = window.marked ? marked.parse(text || '') : (text || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-  return window.DOMPurify ? DOMPurify.sanitize(html, { ADD_ATTR: ['target'] }) : html;
+  // XSS : n'insérer du HTML issu de marked.parse() QUE s'il peut être assaini.
+  // Si DOMPurify manque (vendor 404), repli SÛR = échappement texte, jamais du
+  // HTML brut non assaini.
+  if (window.marked && window.DOMPurify) return DOMPurify.sanitize(marked.parse(text || ''), { ADD_ATTR: ['target'] });
+  return escapeHtml(text);
 }
 const LOCAL_PATH = /^(\/home\/|\/tmp\/|\/root\/|\/var\/|\/mnt\/)/;
 function enhance(el, highlight) {
@@ -82,7 +86,7 @@ function setBusy(b) { busy = b; document.body.classList.toggle('busy', b); sendB
 let waitHint = 0;
 function startWaitHint() { clearTimeout(waitHint); waitHint = setTimeout(() => { if (busy && (!cur || !cur.started)) setStatus('⏳ Le modèle se prépare (quelques secondes)…'); }, 6000); }
 function clearWaitHint() { clearTimeout(waitHint); waitHint = 0; }
-function rpc(method, params) { const id = 'r' + (++nextId); return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, jsonrpc: '2.0', method, params: params || {} })); }); }
+function rpc(method, params) { const id = 'r' + (++nextId); return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); try { ws.send(JSON.stringify({ id, jsonrpc: '2.0', method, params: params || {} })); } catch (e) { pending.delete(id); reject(e); } }); }
 function scroll() { const near = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160; if (near) thread.scrollTop = thread.scrollHeight; updateScrollDown(); }
 function updateScrollDown() { if (!scrollDownBtn) return; const far = thread.scrollHeight - thread.scrollTop - thread.clientHeight > 200; scrollDownBtn.classList.toggle('visible', far); }
 // Export de la conversation courante en Markdown (téléchargement local).
@@ -133,12 +137,17 @@ function toolEl(pl) { if (!cur) startAssistant(); const id = pl.tool_id || pl.na
 function addTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.name); el.innerHTML = '<span class="tdot"></span>'; el.appendChild(document.createTextNode(' ' + ic + ' ' + lb + '…')); el.title = pl.name || ''; scroll(); }
 function completeTool(pl) { const el = toolEl(pl); const [ic, lb] = categorize(pl.name); el.innerHTML = '<span class="tdot" style="background:#16a34a"></span>'; el.appendChild(document.createTextNode(' ' + ic + ' ' + lb + ' ✓')); el.title = pl.name || ''; scroll(); }
 function finishAssistant(note) {
-  if (!cur) return; if (cur.raf) { clearTimeout(cur.raf); cur.raf = 0; }
+  // Toujours débriquer le composer, même si aucun token n'est encore arrivé
+  // (ex : Stop pendant le warm-up, erreur modèle immédiate). Ce reset doit
+  // s'exécuter AVANT le `if (!cur) return` sinon `busy` reste bloqué à vie.
+  setBusy(false); clearWaitHint(); setStatus(''); input.focus();
+  if (!cur) { loadSessions(); return; }
+  if (cur.raf) { clearTimeout(cur.raf); cur.raf = 0; }
   if (cur.started) renderNow(true); else cur.bubble.textContent = note || '…';
   if (note && cur.started) { const n = document.createElement('p'); n.style.cssText = 'opacity:.6;font-size:.85em;margin:.4rem 0 0'; n.textContent = note; cur.bubble.appendChild(n); }
   cur.thinkWrap.classList.remove('active'); const lbl = cur.thinkWrap.querySelector('.label'); if (lbl) lbl.textContent = 'Raisonnement';
   if (cur.started && cur.text) addTurnActions(cur);
-  cur = null; setBusy(false); clearWaitHint(); setStatus(''); input.focus(); loadSessions();
+  cur = null; loadSessions();
 }
 function addTurnActions(turn) {
   const acts = document.createElement('div'); acts.className = 'msg-actions';
@@ -151,7 +160,14 @@ function addTurnActions(turn) {
 function handleEvent(et, p) {
   const pl = p.payload || {};
   switch (et) {
-    case 'gateway.ready': if (!sessionId) newConversation(true); loadSessions(); break;
+    case 'gateway.ready':
+      // À la (re)connexion : si une conversation était déjà ouverte, la reprendre
+      // (session.resume) au lieu d'en créer une vierge — sinon le contexte est
+      // perdu à chaque reconnexion WS. Ne créer une session neuve que si aucune
+      // conversation n'était active.
+      if (!sessionId) { if (activeStoredId) resumeActive(); else newConversation(true); }
+      loadSessions();
+      break;
     case 'session.info': updateInfo(pl); break;
     case 'message.start': if (!cur) startAssistant(); break;
     case 'message.delta': appendAnswer(pl.text || ''); break;
@@ -169,14 +185,17 @@ function handleEvent(et, p) {
   }
 }
 function renderApproval(pl) {
+  // Capturer le session_id à la CRÉATION de la carte : si l'utilisateur change de
+  // conversation avant de cliquer, la réponse doit partir vers la bonne session.
+  const sid = (pl.session_id) || sessionId;
   const div = document.createElement('div'); div.className = 'card approval';
   const txt = pl.summary || pl.command || pl.tool || 'Action sensible : confirmer ?';
   const para = document.createElement('p'); para.textContent = '🔒 ' + txt; div.appendChild(para);
   const act = document.createElement('div'); act.className = 'actions';
   const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = 'Valider';
   const no = document.createElement('button'); no.className = 'no'; no.textContent = 'Refuser';
-  ok.onclick = () => { rpc('approval.respond', { session_id: sessionId, choice: 'once', all: false }).catch(() => {}); div.remove(); };
-  no.onclick = () => { rpc('approval.respond', { session_id: sessionId, choice: 'deny', all: false }).catch(() => {}); rpc('session.interrupt', { session_id: sessionId }).catch(() => {}); div.remove(); };
+  ok.onclick = () => { rpc('approval.respond', { session_id: sid, choice: 'once', all: false }).catch(() => {}); div.remove(); };
+  no.onclick = () => { rpc('approval.respond', { session_id: sid, choice: 'deny', all: false }).catch(() => {}); rpc('session.interrupt', { session_id: sid }).catch(() => {}); div.remove(); };
   act.appendChild(ok); act.appendChild(no); div.appendChild(act); thread.appendChild(div); scroll();
 }
 function renderClarify(pl) {
@@ -217,11 +236,11 @@ async function openSession(storedId) {
   closeNav(); setStatus('Ouverture…');
   try {
     const res = await rpc('session.resume', { session_id: storedId, cols: 80 });
-    sessionId = (res && res.session_id) || storedId; activeStoredId = storedId; clearAttachments();
+    sessionId = (res && res.session_id) || storedId; activeStoredId = storedId; lastUserText = ''; clearAttachments();
     let msgs = (res && res.messages) || [];
     if (!msgs.length) { const h = await rpc('session.history', { session_id: sessionId }); msgs = (h && h.messages) || []; }
     clearThread();
-    msgs.forEach((m) => { const text = m.text || msgText(m.content); if (!text) return; if (m.role === 'user') userMessage(text); else if (m.role === 'assistant') assistantStatic(text); });
+    msgs.forEach((m) => { const text = m.text || msgText(m.content); if (!text) return; if (m.role === 'user') { lastUserText = text; userMessage(text); } else if (m.role === 'assistant') assistantStatic(text); });
     if (!thread.children.length) thread.innerHTML = '<div class="empty"><p>Conversation vide.</p></div>';
     setStatus(''); loadSessions();
   } catch (e) { setStatus('Impossible d\'ouvrir la conversation', true); }
@@ -236,9 +255,20 @@ async function deleteConv(s) {
   try { await rpc('session.delete', { session_id: s.id }); } catch (e) {}
   if (s.id === activeStoredId) newConversation(false); else loadSessions();
 }
+// Reprend la conversation active après une reconnexion WS, sans effacer le fil
+// déjà affiché : on rebinde juste le session_id serveur. En cas d'échec, repli
+// sur une nouvelle conversation.
+async function resumeActive() {
+  const storedId = activeStoredId;
+  try {
+    const res = await rpc('session.resume', { session_id: storedId, cols: 80 });
+    sessionId = (res && res.session_id) || storedId; activeStoredId = storedId;
+    ready = true; input.disabled = false; setStatus('');
+  } catch (e) { newConversation(true); }
+}
 async function newConversation(silent) {
   try { const res = await rpc('session.create', { cols: 80 }); sessionId = res && res.session_id; activeStoredId = (res && res.stored_session_id) || null; ready = true; input.disabled = false; } catch (e) {}
-  clearAttachments();
+  lastUserText = ''; clearAttachments();
   if (!silent) { thread.innerHTML = ''; const e = document.createElement('div'); e.className = 'empty'; e.innerHTML = '<div class="empty-logo">AI</div><h1>Nouvelle conversation</h1><p>Posez votre question.</p>'; thread.appendChild(e); emptyEl = e; cur = null; closeNav(); }
   setStatus(''); loadSessions();
 }
@@ -291,7 +321,17 @@ function readAloud(text, btn) {
 function connect() {
   setStatus('Connexion…'); ws = new WebSocket(wsUrl());
   ws.onopen = () => setStatus('');
-  ws.onclose = () => { setStatus('Déconnecté — reconnexion…', true); ready = false; sessionId = null; setTimeout(connect, 2000); };
+  ws.onclose = () => {
+    setStatus('Déconnecté — reconnexion…', true); ready = false; sessionId = null;
+    // Débriquer le composer si le WS tombe pendant un streaming, sinon busy reste
+    // true à vie et le champ de saisie est gelé jusqu'au reload.
+    setBusy(false); clearWaitHint();
+    // Purger les RPC en vol : sans ça un session.resume/session.list pendu laisse
+    // « Ouverture… » à l'infini.
+    pending.forEach(({ reject }) => { try { reject(new Error('Connexion perdue')); } catch (e) {} });
+    pending.clear();
+    setTimeout(connect, 2000);
+  };
   ws.onerror = () => setStatus('Erreur de connexion', true);
   ws.onmessage = (ev) => {
     let f; try { f = JSON.parse(ev.data); } catch { return; }
@@ -304,6 +344,9 @@ function connect() {
 function doSend(text) {
   if (!ready || !sessionId) { setStatus('Connexion en cours…'); return; }
   if (busy) return;
+  // Ne pas envoyer tant qu'une pièce jointe est encore en cours d'upload,
+  // sinon prompt.submit part avant que l'attachement soit rattaché à la session.
+  if (attachmentsEl.querySelector('.uploading')) { setStatus('⏳ Pièce jointe en cours d\'envoi…'); return; }
   const hadAttach = attachmentsEl.children.length > 0;
   lastUserText = text; userMessage(text); setBusy(true);
   if (hadAttach) setStatus('👁️ Analyse de la pièce jointe en cours…'); else { setStatus(''); startWaitHint(); }
@@ -313,7 +356,7 @@ function regenerate() { if (!lastUserText || busy || !ready || !sessionId) retur
 function doStop() { if (!busy || !sessionId) return; setStatus('Arrêt…'); rpc('session.interrupt', { session_id: sessionId }).catch(() => {}); }
 
 // --- UI wiring --------------------------------------------------------------
-function submitFromInput() { const t = input.value.trim(); if (!t || busy) return; input.value = ''; input.style.height = 'auto'; doSend(t); }
+function submitFromInput() { const t = input.value.trim(); if (!t || busy) return; if (attachmentsEl.querySelector('.uploading')) { setStatus('⏳ Pièce jointe en cours d\'envoi…'); return; } input.value = ''; input.style.height = 'auto'; doSend(t); }
 function openNav() { document.body.classList.add('nav-open'); loadSessions(); }
 function closeNav() { document.body.classList.remove('nav-open'); }
 composer.addEventListener('submit', (e) => { e.preventDefault(); submitFromInput(); });

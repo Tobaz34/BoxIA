@@ -1,12 +1,12 @@
-// Service worker AI Box — cache l'app shell (offline), réseau direct pour l'API.
+// Service worker AI Box PWA — stratégie NETWORK-FIRST (comme chat-ui/sw.js) :
+// on privilégie toujours le réseau pour ne jamais servir d'asset périmé ; le
+// cache ne sert que de repli HORS-LIGNE. L'ancien cache-first « aibox-v1 » sans
+// versionnement servait des assets périmés à vie.
 'use strict';
 
-const CACHE = 'aibox-v1';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
+const CACHE = 'aibox-pwa-v2';
 
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
-});
+self.addEventListener('install', (e) => { self.skipWaiting(); });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
@@ -17,8 +17,19 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   // Les appels API (chat) ne sont JAMAIS mis en cache.
-  if (e.request.method !== 'GET' || url.pathname.includes('/api/')) return;
-  e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
+  if (url.pathname.includes('/api/')) return;
+  e.respondWith(
+    fetch(e.request)
+      .then((resp) => {
+        if (resp && resp.ok && resp.type === 'basic') {
+          const copy = resp.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        }
+        return resp;
+      })
+      .catch(() => caches.match(e.request))
+  );
 });
