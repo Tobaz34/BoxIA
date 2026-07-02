@@ -3,18 +3,16 @@
 #
 # Bind 127.0.0.1 (loopback) → seul Caddy l'atteint ; jamais exposé directement.
 #
-# EnvironmentFile par user — /home/<owner>/aibox/webui/<user>.env :
-#     HERMES_HOME=/home/<owner>/aibox/companies/<co>/users/<user>/hermes
+# GABARIT : les jetons __AIBOX_OWNER__, __OWNER_HOME__ et __AIBOX_REPO__ sont
+# substitués À L'INSTALLATION par setup-portal.sh (sed), à partir de l'owner réel
+# et du chemin réel du repo. Sur xefia c'était clikinfo + /home/clikinfo/BoxIA ;
+# sur toute autre machine (owner ≠ clikinfo, repo ≠ ~/BoxIA) les chemins suivent,
+# sinon l'extension white-label servait un 404.
+#
+# EnvironmentFile par user — __OWNER_HOME__/aibox/webui/<user>.env :
+#     HERMES_HOME=__OWNER_HOME__/aibox/companies/<co>/users/<user>/hermes
 #     HERMES_WEBUI_PORT=9130        # un port distinct par user (9130, 9131, …)
-#
-# Les variables communes (agent, python, extension white-label AI Box) sont en dur
-# ci-dessous. L'extension vit dans le repo BoxIA → update-safe (un git pull de
-# hermes-webui ne touche pas à /home/clikinfo/BoxIA/aibox-hermes/webui-ext).
-#
-# Installer :
-#   sudo cp aibox-webui@.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now aibox-webui@<user>
+#     HERMES_WEBUI_EXTENSION_SCRIPT_URLS=/extensions/aibox.js?role=admin|client
 [Unit]
 Description=AI Box - Interface web utilisateur (%i)
 After=network-online.target ollama.service
@@ -22,18 +20,18 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=clikinfo
-EnvironmentFile=/home/clikinfo/aibox/webui/%i.env
-Environment=PATH=/home/clikinfo/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=HERMES_WEBUI_AGENT_DIR=/home/clikinfo/hermes-agent
-Environment=HERMES_WEBUI_PYTHON=/home/clikinfo/hermes-agent/venv/bin/python
+User=__AIBOX_OWNER__
+EnvironmentFile=__OWNER_HOME__/aibox/webui/%i.env
+Environment=PATH=__OWNER_HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HERMES_WEBUI_AGENT_DIR=__OWNER_HOME__/hermes-agent
+Environment=HERMES_WEBUI_PYTHON=__OWNER_HOME__/hermes-agent/venv/bin/python
 Environment=HERMES_WEBUI_HOST=127.0.0.1
-Environment=HERMES_WEBUI_EXTENSION_DIR=/home/clikinfo/BoxIA/aibox-hermes/webui-ext/static
+Environment=HERMES_WEBUI_EXTENSION_DIR=__AIBOX_REPO__/aibox-hermes/webui-ext/static
 Environment=HERMES_WEBUI_EXTENSION_STYLESHEET_URLS=/extensions/aibox.css
 # HERMES_WEBUI_EXTENSION_SCRIPT_URLS est défini PAR USER dans l'EnvironmentFile
 # (/extensions/aibox.js?role=admin|client) → pilote les droits selon le rôle.
-WorkingDirectory=/home/clikinfo/hermes-webui
-ExecStart=/usr/bin/python3 /home/clikinfo/hermes-webui/bootstrap.py --foreground --no-browser
+WorkingDirectory=__OWNER_HOME__/hermes-webui
+ExecStart=/usr/bin/python3 __OWNER_HOME__/hermes-webui/bootstrap.py --foreground --no-browser
 Restart=on-failure
 RestartSec=5
 

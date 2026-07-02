@@ -1,5 +1,11 @@
-# Service systemd — un Hermes par utilisateur. Instance = "<entreprise>-<user>".
+# Service systemd — un Hermes par utilisateur (variante GATEWAY hors-portail :
+# canal Telegram/CLI, pas de dashboard web). Instance = "<entreprise>-<user>".
 # L'EnvironmentFile fournit HERMES_HOME ; Hermes lit ses secrets dans HERMES_HOME/.env.
+#
+# GABARIT : __AIBOX_OWNER__, __OWNER_HOME__ et __AIBOX_ROOT__ sont substitués à
+# l'installation par install.sh (sed) → tourne sous l'OWNER (pas root, comme le
+# reste de la stack), avec ~owner/.local/bin dans le PATH pour trouver `hermes`,
+# et l'EnvironmentFile suit AIBOX_ROOT (plus de /opt/aibox en dur).
 #
 #   sudo systemctl enable --now aibox-hermes@<entreprise>-<user>
 #   journalctl -u aibox-hermes@<entreprise>-<user> -f
@@ -10,10 +16,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/opt/aibox/instances/%i.env
+User=__AIBOX_OWNER__
+EnvironmentFile=__AIBOX_ROOT__/instances/%i.env
 Environment=PYTHONUNBUFFERED=1
+# PATH incluant ~owner/.local/bin (uv y installe `hermes`) → sinon « hermes: not found ».
+Environment=PATH=__OWNER_HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
 # NB : vérifier l'invocation gateway de votre version Hermes (`hermes gateway` / `hermes gateway run`).
-ExecStart=/usr/bin/env hermes gateway
+ExecStart=__OWNER_HOME__/.local/bin/hermes gateway
 Restart=on-failure
 RestartSec=5
 # Durcissement raisonnable

@@ -108,8 +108,9 @@ else
 fi
 say ".env -> $ENV_FILE"
 
-# SOUL.md : personnalité/branding propre au user
-if [ "$CHECK" != 1 ]; then
+# SOUL.md : personnalité/branding propre au user. Écrit UNE FOIS puis préservé —
+# un re-run du wizard (idempotence) ne doit pas écraser une personnalité éditée à la main.
+if [ "$CHECK" != 1 ] && [ ! -f "$HERMES_HOME/SOUL.md" ]; then
   cat > "$HERMES_HOME/SOUL.md" <<EOF
 # ${COMPANY_NAME:-$COMPANY} — Assistant IA
 

@@ -24,8 +24,14 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AIBOX_HERMES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Racine du repo BoxIA (= parent de aibox-hermes/) : sert à substituer __AIBOX_REPO__
+# dans les units (chemin de l'extension white-label). Pas forcément ~/BoxIA.
+AIBOX_REPO_DIR="$(cd "$AIBOX_HERMES_DIR/.." && pwd)"
 OWNER="${AIBOX_OWNER:-clikinfo}"
-AIBOX_ROOT="${AIBOX_ROOT:-/home/$OWNER/aibox}"
+# Home réel de l'owner (getent → robuste même si owner ≠ /home/owner). Sert à
+# substituer __OWNER_HOME__ dans les units systemd (plus de /home/clikinfo en dur).
+OWNER_HOME="$( { getent passwd "$OWNER" 2>/dev/null || true; } | cut -d: -f6)"; OWNER_HOME="${OWNER_HOME:-/home/$OWNER}"
+AIBOX_ROOT="${AIBOX_ROOT:-$OWNER_HOME/aibox}"
 COMPANY="${COMPANY:-demo}"
 AIBOX_HOST="${AIBOX_HOST:-192.168.15.210}"
 AUTHENTIK_PORT="${AUTHENTIK_PORT:-9443}"
@@ -50,7 +56,17 @@ echo "== setup-portal : host=$AIBOX_HOST, users=${USERS[*]} =="
 #    L'extension white-label « AI Box » est injectée par le service (repo, update-safe).
 WEBUI_DIR="$AIBOX_ROOT/webui"
 run "mkdir -p '$WEBUI_DIR'"
-run "install -m 644 '$AIBOX_HERMES_DIR/provision/aibox-webui@.service' /etc/systemd/system/aibox-webui@.service"
+# Le unit est un GABARIT (__AIBOX_OWNER__/__OWNER_HOME__/__AIBOX_REPO__) : on
+# substitue à l'installation les chemins RÉELS (owner, home, repo) → plus aucun
+# /home/clikinfo ni ~/BoxIA en dur ; l'extension white-label n'est plus en 404
+# quand owner ≠ clikinfo ou repo ≠ ~/BoxIA. En dry-run on montre la commande sed.
+if [ "$CHECK" = 1 ]; then
+  echo "    [check] sed __AIBOX_OWNER__=$OWNER __OWNER_HOME__=$OWNER_HOME __AIBOX_REPO__=$AIBOX_REPO_DIR -> /etc/systemd/system/aibox-webui@.service"
+else
+  sed -e "s#__AIBOX_OWNER__#$OWNER#g" -e "s#__OWNER_HOME__#$OWNER_HOME#g" -e "s#__AIBOX_REPO__#$AIBOX_REPO_DIR#g" \
+    "$AIBOX_HERMES_DIR/provision/aibox-webui@.service" > /etc/systemd/system/aibox-webui@.service
+  chmod 644 /etc/systemd/system/aibox-webui@.service
+fi
 run "systemctl daemon-reload"
 
 # Attribution des ports STABLE (un user garde SON port). Sinon, ajouter un
@@ -128,6 +144,10 @@ https://$AIBOX_HOST {
 			# --- AIBOX-DOCS-END ---
 			map {http.request.header.X-Authentik-Username} {backend} {
 $(gen_map)
+				# default : un user authentifié SANS webui (ex. akadmin, admin
+				# Authentik) tombait sur {backend} vide → reverse_proxy 502 après
+				# login. On le route vers le 1er webui pour éviter le 502.
+				default 127.0.0.1:${UPORT[${USERS[0]}]}
 			}
 			reverse_proxy {backend}
 		}
@@ -155,8 +175,9 @@ if [ "$CHECK" = 1 ]; then
   echo "    [check] docker exec $AK_CONTAINER ak shell < setup-authentik.py (provider/app/outpost/marque/users)"
 else
   # HERMES_DOCS pointe vers le home de l'owner (Hermes y est installé, pas dans /root).
-  AIBOX_ROOT="$AIBOX_ROOT" WEB_ROOT="$WEB_ROOT" AIBOX_ADMINS="${AIBOX_ADMINS:-}" \
-    HERMES_DOCS="/home/$OWNER/hermes-agent/website/docs" bash "$AIBOX_HERMES_DIR/provision/install-web-chat.sh"
+  # On passe WEBUI_DIR explicitement : install-web-chat en fait sa source de vérité users.
+  AIBOX_ROOT="$AIBOX_ROOT" WEB_ROOT="$WEB_ROOT" WEBUI_DIR="$WEBUI_DIR" AIBOX_ADMINS="${AIBOX_ADMINS:-}" \
+    HERMES_DOCS="$OWNER_HOME/hermes-agent/website/docs" bash "$AIBOX_HERMES_DIR/provision/install-web-chat.sh"
   # Config Authentik AVEC RETRY : juste après le déploiement, les migrations/flows
   # peuvent ne pas être prêts (le health-check /-/health/ready ne le garantit pas).
   if docker ps --format '{{.Names}}' | grep -q "^$AK_CONTAINER$"; then

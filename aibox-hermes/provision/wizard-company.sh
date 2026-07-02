@@ -42,6 +42,10 @@ MUT_REGEX='.*_create.*|.*create_.*|.*_update.*|.*_delete.*|.*_send.*|.*_pay.*|.*
 
 say() { printf '  %s\n' "$*"; }
 run() { if [ "$CHECK" = 1 ]; then echo "    [check] $*"; else eval "$@"; fi; }
+# Émet VAR=<valeur-shell-quotée> pour un .env sourcé ensuite (. company.env). printf
+# %q produit un token auto-quoté sûr → un nom comme « L'Atelier » ne casse plus le
+# sourcing (P2 injection par apostrophe). Usage : kv COMPANY_NAME "$COMPANY_NAME"
+kv() { printf '%s=%q\n' "$1" "$2"; }
 
 echo "== Wizard entreprise '$COMPANY_NAME' ($SLUG) (check=$CHECK) =="
 
@@ -78,16 +82,16 @@ if [ "$CHECK" = 1 ]; then
 else
   umask 077
   {
-    echo "# AI Box — config partagée entreprise '$COMPANY_NAME'"
-    echo "COMPANY_NAME='$COMPANY_NAME'"
-    echo "OLLAMA_BASE_URL='$OLLAMA_BASE_URL'"
-    echo "OLLAMA_MODEL='$OLLAMA_MODEL'"
-    echo "ENABLED_CONNECTORS='$ENABLED_CONNECTORS'"
-    echo "PENNYLANE_TOOL_BASE_URL='$PENNYLANE_TOOL_BASE_URL'"
-    [ -n "${PENNYLANE_TOOL_API_KEY:-}" ] && echo "PENNYLANE_TOOL_API_KEY='$PENNYLANE_TOOL_API_KEY'"
-    [ -n "${ANTHROPIC_API_KEY:-}" ] && echo "ANTHROPIC_API_KEY='$ANTHROPIC_API_KEY'"
-    echo "AIBOX_RGPD_SCRUB='$RGPD'"
-    echo "AIBOX_MUTATING_TOOLS_REGEX='$MUT_REGEX'"
+    echo "# AI Box — config partagée entreprise (valeurs shell-quotées, sourçables)"
+    kv COMPANY_NAME "$COMPANY_NAME"
+    kv OLLAMA_BASE_URL "$OLLAMA_BASE_URL"
+    kv OLLAMA_MODEL "$OLLAMA_MODEL"
+    kv ENABLED_CONNECTORS "$ENABLED_CONNECTORS"
+    kv PENNYLANE_TOOL_BASE_URL "$PENNYLANE_TOOL_BASE_URL"
+    [ -n "${PENNYLANE_TOOL_API_KEY:-}" ] && kv PENNYLANE_TOOL_API_KEY "$PENNYLANE_TOOL_API_KEY"
+    [ -n "${ANTHROPIC_API_KEY:-}" ] && kv ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY"
+    kv AIBOX_RGPD_SCRUB "$RGPD"
+    kv AIBOX_MUTATING_TOOLS_REGEX "$MUT_REGEX"
   } > "$COMP_DIR/company.env"
   chmod 600 "$COMP_DIR/company.env"
   # Vue lisible sans secrets (audit)

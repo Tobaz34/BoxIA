@@ -32,8 +32,27 @@ sudo COMPANY_SLUG=ma-boite COMPANY_NAME="Ma Boîte" \
 ```
 Pour tester sans rien installer : `./install.sh --check`.
 
-Le script : dépendances → Hermes → (modèle) → wizard entreprise → 1er user + **service systemd**
-→ (option) PWA/HTTPS Caddy si `AIBOX_DOMAIN` est fourni.
+Le script : dépendances → Hermes → **hermes-webui** → (modèle) → wizard entreprise →
+1er user + **service systemd** → (option) PWA/HTTPS Caddy si `AIBOX_DOMAIN` → portail
+web multi-user (Authentik + Caddy + 1 interface webui par employé).
+
+### Mots de passe (démo vs production)
+Par défaut (**production**), si `AKADMIN_PASSWORD` / `USER_PASSWORD` ne sont pas fournis,
+le script **génère des mots de passe forts aléatoires** et les affiche **une seule fois**
+en fin d'installation (à noter immédiatement — non stockés en clair). Pour une **démo**
+avec des mots de passe faibles mémorisables (`akadmin` / `AiBoxAdmin2026!Change`, employés
+`1234`), lancer avec `AIBOX_DEMO=1`. Ne jamais utiliser le mode démo en production.
+
+### Pare-feu
+En portail web, le script pose les règles `ufw allow` (22/80/443/9443) **puis active ufw**
+(`ufw --force enable`). SSH (22) est autorisé avant l'activation pour ne pas se verrouiller.
+Tous les ports internes (webui 9130+, Authentik 9000) restent fermés au LAN.
+
+### Interface web (hermes-webui)
+L'app servie à chaque employé est **hermes-webui**, clonée automatiquement dans le home de
+l'owner. Dépôt configurable via `HERMES_WEBUI_REPO` (défaut `nesquena/hermes-webui`).
+Le 1er utilisateur (`FIRST_USER_SLUG`) est **admin** du portail par défaut ; surcharger avec
+`AIBOX_ADMINS="user1,user2"`.
 
 ## Ajouter un employé
 ```bash
