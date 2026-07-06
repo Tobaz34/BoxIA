@@ -108,15 +108,20 @@ def himalaya_email_health() -> dict[str, Any]:
 
 def _list_one(account: str, limit: int, unread_only: bool, folder: str) -> list[dict[str, Any]]:
     n = max(1, min(int(limit), 50))
-    # -o json AVANT la query (variadique) sinon himalaya l'absorbe dans le filtre.
-    args = ["envelope", "list", "-a", account, "-f", folder or "inbox", "-s", str(n), "-o", "json"]
-    if unread_only:
-        args += ["not", "flag", "seen"]   # requête himalaya : non-lus
+    # On NE PASSE PAS par la requête serveur `not flag seen` : sur Gmail l'IMAP
+    # SEARCH renvoie des réponses non-standard qui font boucler/échouer himalaya.
+    # On sur-échantillonne les enveloppes récentes puis on filtre les non-lus
+    # côté client (flag "Seen" absent) — rapide et uniforme sur tous les comptes.
+    fetch = min(50, n * 5) if unread_only else n
+    args = ["envelope", "list", "-a", account, "-f", folder or "inbox", "-s", str(fetch), "-o", "json"]
     try:
         env = _json(args)
     except Exception as e:
         return [{"account": account, "error": str(e)}]
-    return [_envelope(x, account) for x in (env or [])]
+    rows = [_envelope(x, account) for x in (env or [])]
+    if unread_only:
+        rows = [r for r in rows if not r["is_read"]]
+    return rows[:n]
 
 
 @mcp.tool
