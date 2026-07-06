@@ -100,6 +100,13 @@ done
 # Le map réutilise le port RÉEL attribué à chaque user (UPORT), pas un 9130+i
 # positionnel — sinon le routage diverge de l'env réel des services.
 gen_map() { for u in "${USERS[@]}"; do echo "				$u 127.0.0.1:${UPORT[$u]}"; done; }
+# Maps user→(port dashboard, token dashboard) : le chat appelle l'API du plugin
+# « Connexions » (montée sur le dashboard) via Caddy, qui injecte le Bearer token
+# du user (déjà authentifié par Authentik). Lus depuis dash/<u>.env, source réelle.
+_dash_port() { grep -oP '^DASH_PORT=\K[0-9]+' "$DASH_DIR/$1.env" 2>/dev/null; }
+_dash_token() { grep -oP '^HERMES_DASHBOARD_SESSION_TOKEN=\K.+' "$DASH_DIR/$1.env" 2>/dev/null; }
+gen_dash_map() { for u in "${USERS[@]}"; do p="$(_dash_port "$u")"; [ -n "$p" ] && echo "				$u 127.0.0.1:$p"; done; }
+gen_dash_tok() { for u in "${USERS[@]}"; do t="$(_dash_token "$u")"; [ -n "$t" ] && echo "				$u \"$t\""; done; }
 {
 cat <<EOF
 # Généré par setup-portal.sh — ne pas éditer à la main.
@@ -126,6 +133,23 @@ https://$AIBOX_HOST {
 				file_server
 			}
 			# --- AIBOX-DOCS-END ---
+			# --- AIBOX-CONNECTIONS-BEGIN ---
+			# API du plugin « Connexions » (gestion des boîtes) : servie par le
+			# dashboard du user, appelée depuis le chat. Caddy injecte le Bearer
+			# token du user (mappé ci-dessous). L'utilisateur est déjà authentifié
+			# par le forward_auth Authentik au-dessus.
+			map {http.request.header.X-Authentik-Username} {dash_backend} {
+$(gen_dash_map)
+			}
+			map {http.request.header.X-Authentik-Username} {dash_token} {
+$(gen_dash_tok)
+			}
+			handle /api/plugins/aibox-connections/* {
+				reverse_proxy {dash_backend} {
+					header_up Authorization "Bearer {dash_token}"
+				}
+			}
+			# --- AIBOX-CONNECTIONS-END ---
 			map {http.request.header.X-Authentik-Username} {backend} {
 $(gen_map)
 			}

@@ -54,6 +54,39 @@ def _read_env() -> dict:
     return env
 
 
+def _set_env(key: str, value: str) -> None:
+    """Écrit/met à jour KEY='value' dans HERMES_HOME/.env (édition ligne par ligne,
+    préserve le reste du fichier). Backup .env.bak avant écriture."""
+    p = _hermes_home() / ".env"
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines() if p.exists() else []
+    out, found = [], False
+    for line in lines:
+        if re.match(rf"^{re.escape(key)}=", line.strip()):
+            out.append(f"{key}='{value}'")
+            found = True
+        else:
+            out.append(line)
+    if not found:
+        out.append(f"{key}='{value}'")
+    if p.exists():
+        try:
+            p.with_suffix(".env.bak").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+    tmp = p.with_name(p.name + f".tmp.{os.getpid()}")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, p)
+
+
+def _get_env(key: str, default: str = "") -> str:
+    return _read_env().get(key, default)
+
+
+def _himalaya_dir() -> Path:
+    return Path.home() / ".config" / "himalaya"
+
+
 def _config_text() -> str:
     p = _hermes_home() / "config.yaml"
     return p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
@@ -137,43 +170,55 @@ def _build_inventory() -> list:
     items = []
 
     # 1. Boîtes email IMAP (himalaya : gmail, ridequest…)
+    #    Désactivée = fichier <compte>.pass renommé en <compte>.pass.off (réversible).
+    hdir = _himalaya_dir()
     for acct, mail, has_pw in _himalaya_accounts():
+        disabled = (hdir / f"{acct}.pass.off").exists() and not has_pw
+        enabled = bool(has_pw)
         items.append({
             "id": f"himalaya:{acct}",
             "category": "Email",
             "label": mail or acct,
             "kind": "IMAP",
-            "configured": bool(has_pw),
-            "detail": "IMAP/SMTP" + ("" if has_pw else " — mot de passe manquant"),
-            "checkable": has_pw,
+            "configured": enabled or disabled,
+            "enabled": enabled,
+            "disabled": disabled,
+            "detail": "IMAP/SMTP" + ("" if (enabled or disabled) else " — mot de passe manquant"),
+            "checkable": enabled,
+            "actions": ["toggle", "set_password"],
         })
 
-    # 2. Boîtes Microsoft 365 (connecteur email-msgraph, allowlist)
+    # 2. Boîtes Microsoft 365 (connecteur email-msgraph, allowlist).
+    #    Désactiver une boîte = la déplacer de MSGRAPH_ALLOWED_MAILBOXES vers
+    #    MSGRAPH_DISABLED_MAILBOXES (réversible). Auth = app Entra (pas de mdp/boîte).
     if "email-msgraph" in mcp:
         ok = all(env.get(k) for k in ("MSGRAPH_TENANT_ID", "MSGRAPH_CLIENT_ID", "MSGRAPH_CLIENT_SECRET"))
-        mailboxes = [m.strip() for m in env.get("MSGRAPH_ALLOWED_MAILBOXES", "").split(",") if m.strip()]
-        for mb in (mailboxes or ["(aucune boîte autorisée)"]):
+        allowed = [m.strip() for m in env.get("MSGRAPH_ALLOWED_MAILBOXES", "").split(",") if m.strip()]
+        disabled_l = [m.strip() for m in env.get("MSGRAPH_DISABLED_MAILBOXES", "").split(",") if m.strip()]
+        for mb in allowed:
             items.append({
-                "id": f"msgraph:{mb}",
-                "category": "Email",
-                "label": mb,
-                "kind": "Microsoft 365",
-                "configured": ok and bool(mailboxes),
-                "detail": "Microsoft Graph (app-only)",
-                "checkable": ok and bool(mailboxes),
+                "id": f"msgraph:{mb}", "category": "Email", "label": mb, "kind": "Microsoft 365",
+                "configured": ok, "enabled": ok, "disabled": False,
+                "detail": "Microsoft Graph (app-only)", "checkable": ok, "actions": ["toggle"],
+            })
+        for mb in disabled_l:
+            items.append({
+                "id": f"msgraph:{mb}", "category": "Email", "label": mb, "kind": "Microsoft 365",
+                "configured": True, "enabled": False, "disabled": True,
+                "detail": "Microsoft Graph (app-only)", "checkable": False, "actions": ["toggle"],
             })
 
-    # 3. Boîte Exchange on-premise (connecteur email-ews)
+    # 3. Boîte Exchange on-premise (connecteur email-ews).
+    #    Désactiver = déplacer EWS_PASSWORD → EWS_PASSWORD_OFF (réversible).
     if "email-ews" in mcp:
-        ok = all(env.get(k) for k in ("EWS_EMAIL", "EWS_PASSWORD"))
+        has_pw = bool(env.get("EWS_PASSWORD"))
+        disabled = (not has_pw) and bool(env.get("EWS_PASSWORD_OFF"))
         items.append({
-            "id": "ews",
-            "category": "Email",
-            "label": env.get("EWS_EMAIL", "Exchange on-premise"),
-            "kind": "Exchange (EWS)",
-            "configured": ok,
-            "detail": "Exchange Web Services / NTLM",
-            "checkable": ok,
+            "id": "ews", "category": "Email",
+            "label": env.get("EWS_EMAIL", "Exchange on-premise"), "kind": "Exchange (EWS)",
+            "configured": has_pw or disabled, "enabled": has_pw, "disabled": disabled,
+            "detail": "Exchange Web Services / NTLM", "checkable": has_pw,
+            "actions": ["toggle", "set_password"],
         })
 
     # 4. Autres connecteurs MCP RÉELLEMENT déclarés (hors email, déjà traités).
@@ -321,3 +366,97 @@ async def check(iid: str):
     res["latency_ms"] = int((time.time() - t0) * 1000)
     res["id"] = iid
     return res
+
+
+# ── Gestion par boîte : désactiver/réactiver (réversible) + changer le mot de passe ──
+# needs_reconnect=True → le connecteur MCP lit ses variables au démarrage ; le
+# front rebondit le serveur via l'API native de hermes-webui pour appliquer.
+def _csv(v: str) -> list:
+    return [x.strip() for x in (v or "").split(",") if x.strip()]
+
+
+def _manage_himalaya(acct: str, action: str, value: str | None) -> dict:
+    hdir = _himalaya_dir()
+    pw, off = hdir / f"{acct}.pass", hdir / f"{acct}.pass.off"
+    if action == "disable":
+        if pw.exists():
+            os.replace(pw, off)
+        return {"ok": True, "message": "boîte désactivée", "needs_reconnect": False}
+    if action == "enable":
+        if off.exists():
+            os.replace(off, pw)
+        return {"ok": True, "message": "boîte réactivée", "needs_reconnect": False}
+    if action == "set_password":
+        if not value:
+            raise HTTPException(status_code=400, detail="Mot de passe vide.")
+        tmp = hdir / f"{acct}.pass.tmp.{os.getpid()}"
+        tmp.write_text(value, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, pw)
+        if off.exists():
+            off.unlink()
+        return {"ok": True, "message": "mot de passe mis à jour", "needs_reconnect": False}
+    raise HTTPException(status_code=400, detail="Action inconnue.")
+
+
+def _manage_msgraph(mb: str, action: str, value: str | None) -> dict:
+    allowed = _csv(_get_env("MSGRAPH_ALLOWED_MAILBOXES"))
+    disabled = _csv(_get_env("MSGRAPH_DISABLED_MAILBOXES"))
+    if action == "disable":
+        if mb in allowed:
+            allowed.remove(mb)
+        if mb not in disabled:
+            disabled.append(mb)
+    elif action == "enable":
+        if mb in disabled:
+            disabled.remove(mb)
+        if mb not in allowed:
+            allowed.append(mb)
+    else:
+        raise HTTPException(status_code=400, detail="Les boîtes Microsoft 365 utilisent l'auth par application (pas de mot de passe par boîte).")
+    _set_env("MSGRAPH_ALLOWED_MAILBOXES", ",".join(allowed))
+    _set_env("MSGRAPH_DISABLED_MAILBOXES", ",".join(disabled))
+    return {"ok": True, "message": "état mis à jour", "needs_reconnect": True, "connector": "email-msgraph"}
+
+
+def _manage_ews(action: str, value: str | None) -> dict:
+    if action == "disable":
+        cur = _get_env("EWS_PASSWORD")
+        if cur:
+            _set_env("EWS_PASSWORD_OFF", cur)
+            _set_env("EWS_PASSWORD", "")
+        return {"ok": True, "message": "boîte désactivée", "needs_reconnect": True, "connector": "email-ews"}
+    if action == "enable":
+        off = _get_env("EWS_PASSWORD_OFF")
+        if off:
+            _set_env("EWS_PASSWORD", off)
+            _set_env("EWS_PASSWORD_OFF", "")
+        return {"ok": True, "message": "boîte réactivée", "needs_reconnect": True, "connector": "email-ews"}
+    if action == "set_password":
+        if not value:
+            raise HTTPException(status_code=400, detail="Mot de passe vide.")
+        _set_env("EWS_PASSWORD", value)
+        _set_env("EWS_PASSWORD_OFF", "")
+        # miroir dans le fichier partagé xefi.pass (source utilisée au provisioning)
+        try:
+            (_himalaya_dir() / "xefi.pass").write_text(value, encoding="utf-8")
+        except Exception:
+            pass
+        return {"ok": True, "message": "mot de passe mis à jour", "needs_reconnect": True, "connector": "email-ews"}
+    raise HTTPException(status_code=400, detail="Action inconnue.")
+
+
+@router.post("/manage")
+async def manage(body: dict):
+    iid = str(body.get("id", "")).strip()
+    action = str(body.get("action", "")).strip()
+    value = body.get("value")
+    if action not in ("enable", "disable", "set_password"):
+        raise HTTPException(status_code=400, detail="Action invalide.")
+    if iid.startswith("himalaya:"):
+        return _manage_himalaya(iid.split(":", 1)[1], action, value)
+    if iid.startswith("msgraph:"):
+        return _manage_msgraph(iid.split(":", 1)[1], action, value)
+    if iid == "ews":
+        return _manage_ews(action, value)
+    raise HTTPException(status_code=404, detail="Boîte inconnue ou non gérable.")
