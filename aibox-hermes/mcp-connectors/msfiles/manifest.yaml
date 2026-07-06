@@ -1,0 +1,43 @@
+# Manifest interne AI Box — SharePoint / OneDrive exposés en MCP (Graph app-only).
+# Réutilise l'App Registration email-msgraph + permissions Sites.Read.All & Files.Read.All.
+manifest_version: 1
+name: msfiles
+description: "SharePoint & OneDrive (Graph) — sites, bibliothèques, recherche et lecture de fichiers. Lecture seule."
+
+transport:
+  type: stdio
+  command: "${INSTALL_DIR}/.venv/bin/python"
+  args:
+    - "${INSTALL_DIR}/server.py"
+
+install:
+  type: local
+  bootstrap:
+    - "python3 -m venv .venv"
+    - ".venv/bin/pip install -r requirements.txt"
+
+auth:
+  type: oauth_client_credentials
+  env:
+    - name: MSGRAPH_TENANT_ID
+      prompt: "Tenant ID Entra (même app que les emails M365)"
+      required: true
+      secret: false
+    - name: MSGRAPH_CLIENT_ID
+      prompt: "Client ID de l'App Registration"
+      required: true
+      secret: false
+    - name: MSGRAPH_CLIENT_SECRET
+      prompt: "Secret client de l'App Registration"
+      required: true
+      secret: true
+
+tools:
+  default_enabled:
+    - msfiles_health
+    - list_sharepoint_sites
+    - list_site_drives
+    - list_files
+    - search_files
+    - list_onedrive
+    - read_file

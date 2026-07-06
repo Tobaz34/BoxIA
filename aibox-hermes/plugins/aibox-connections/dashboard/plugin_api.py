@@ -258,6 +258,7 @@ def _build_inventory() -> list:
     meta = {
         "pennylane": ("Comptabilité", "Pennylane", "Factures / clients"),
         "odoo": ("ERP / CRM", "Odoo", "ERP"),
+        "msfiles": ("Documents", "SharePoint / OneDrive", "Microsoft 365"),
         "sharepoint": ("Documents", "SharePoint / OneDrive", "Microsoft 365"),
         "glpi": ("Support IT", "GLPI", "Tickets IT"),
         "fec": ("Comptabilité", "FEC", "Écritures comptables"),
@@ -283,6 +284,9 @@ def _build_inventory() -> list:
         ("sharepoint", "Documents", "SharePoint / OneDrive", "Microsoft 365"),
     ]:
         if iid in mcp:
+            continue
+        # SharePoint est fourni par le connecteur 'msfiles' → ne pas re-suggérer.
+        if iid == "sharepoint" and "msfiles" in mcp:
             continue
         items.append({
             "id": iid,
@@ -376,6 +380,13 @@ def _check(iid: str) -> dict:
             "print('OK', 'Odoo', h.get('server_version'))\n"
         )
         return _check_connector("odoo", snip)
+    if iid == "msfiles":
+        snip = (
+            "import server\n"
+            "h=getattr(server.msfiles_health,'fn',server.msfiles_health)()\n"
+            "print('OK', 'site:', h.get('sample_site'))\n"
+        )
+        return _check_connector("msfiles", snip)
     raise HTTPException(status_code=404, detail="Intégration inconnue ou non testable.")
 
 

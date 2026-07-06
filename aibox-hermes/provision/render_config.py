@@ -78,12 +78,28 @@ def _odoo_block(tenant_dir: str, pennylane_base_url: str) -> str:
     )
 
 
+def _msfiles_block(tenant_dir: str, pennylane_base_url: str) -> str:
+    # SharePoint/OneDrive via Graph — réutilise l'app email-msgraph (mêmes creds).
+    return (
+        '  msfiles:\n'
+        f'    command: "{tenant_dir}/mcp-connectors/msfiles/.venv/bin/python"\n'
+        f'    args: ["{tenant_dir}/mcp-connectors/msfiles/server.py"]\n'
+        '    env:\n'
+        f'      MSGRAPH_TENANT_ID: {json.dumps(_envval("MSGRAPH_TENANT_ID"))}\n'
+        f'      MSGRAPH_CLIENT_ID: {json.dumps(_envval("MSGRAPH_CLIENT_ID"))}\n'
+        f'      MSGRAPH_CLIENT_SECRET: {json.dumps(_envval("MSGRAPH_CLIENT_SECRET"))}\n'
+        '    timeout: 60\n'
+        '    tools: { resources: false, prompts: false }'
+    )
+
+
 # Registre des connecteurs MCP connus → fonction qui rend leur bloc de config.
 CONNECTORS = {
     "pennylane": _pennylane_block,
     "email-msgraph": _email_msgraph_block,
     "email-ews": _email_ews_block,
     "odoo": _odoo_block,
+    "msfiles": _msfiles_block,
     # glpi / fec : à ajouter ici quand leurs shims MCP existent.
 }
 

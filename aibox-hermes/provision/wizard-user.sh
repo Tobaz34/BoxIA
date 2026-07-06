@@ -138,7 +138,7 @@ else
       say ".env : $v ajoutée"
     fi
   }
-  case ",$ALLOWED_CSV," in *",email-msgraph,"*)
+  case ",$ALLOWED_CSV," in *",email-msgraph,"*|*",msfiles,"*)
     for v in MSGRAPH_TENANT_ID MSGRAPH_CLIENT_ID MSGRAPH_CLIENT_SECRET MSGRAPH_ALLOWED_MAILBOXES; do
       _sync_env_var "$v"; done ;;
   esac
