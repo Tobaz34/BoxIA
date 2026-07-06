@@ -1,0 +1,13 @@
+{
+  "name": "aibox-connections",
+  "label": "Connexions",
+  "description": "Vue d'ensemble des intégrations connectées à Hermes : boîtes email (IMAP / Microsoft 365 / Exchange), comptabilité, SharePoint, Odoo… État configuré + test de connexion à la demande.",
+  "icon": "Plug",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/connexions",
+    "position": "after:chat"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}
