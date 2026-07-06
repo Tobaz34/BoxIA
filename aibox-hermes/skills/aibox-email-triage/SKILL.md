@@ -116,9 +116,20 @@ CLIKINFO
 
 ## Incidents techniques → Odoo helpdesk (dédup / rebond / création)
 
-⚠️ **support@clikinfo.fr crée DÉJÀ des tickets automatiquement** (alias Odoo de
-l'équipe « Technique »). Pour les mails de CETTE boîte : **ne crée AUCUN ticket**
-(Odoo l'a déjà fait) — tu peux juste les mentionner dans le bilan.
+⚠️ **support@clikinfo.fr crée normalement les tickets automatiquement** (alias
+Odoo de l'équipe « Technique »). MAIS cet alias **échoue parfois** — il faut donc
+un filet de sécurité, sans jamais dupliquer quand il a fonctionné :
+
+Pour un email d'incident reçu sur **support@clikinfo.fr** :
+1. Cherche le ticket correspondant : `odoo_search_read("helpdesk.ticket",
+   [["partner_id","=",<id>],["create_date",">",<date email - 1j>]], ["name","create_date"], 20, "create_date desc")`
+   et compare au sujet/date de l'email.
+2. **Ticket trouvé** → l'alias a marché → **ne crée RIEN**, mentionne au bilan.
+3. **Aucun ticket trouvé MAIS l'email a moins de ~30 min** → l'alias n'a peut-être
+   pas encore tourné → **attends** (ne crée pas), il sera capté au prochain passage.
+4. **Aucun ticket trouvé ET l'email a plus de ~30 min** → l'alias a probablement
+   **échoué** → **crée le ticket en rattrapage** (`odoo_create`, team_id=1) et
+   signale « ⚠️ alias support@ a raté — ticket #… créé en rattrapage » au bilan.
 
 Pour un email d'**incident technique arrivant dans une boîte DIRECTE**
 (a.ladurelle@clikinfo.fr, contact@clikinfo.fr, a.ladurelle@xefi.fr) — panne, accès
