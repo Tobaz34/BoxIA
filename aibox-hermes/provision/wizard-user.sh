@@ -128,7 +128,10 @@ else
       printf "ANTHROPIC_API_KEY='%s'\n" "$ANTHROPIC_API_KEY" >> "$ENV_FILE"
       say ".env : ANTHROPIC_API_KEY ajoutée"
     fi
-    if grep -q "^AIBOX_RGPD_SCRUB='0'" "$ENV_FILE"; then
+    # Défaut produit : cloud actif → scrub ON. MAIS on respecte un opt-out
+    # explicite (AIBOX_RGPD_SCRUB=0 passé au wizard) — cas d'un client qui assume
+    # que ses données partent en clair au cloud (sous DPA).
+    if [ "${AIBOX_RGPD_SCRUB:-1}" != "0" ] && grep -q "^AIBOX_RGPD_SCRUB='0'" "$ENV_FILE"; then
       sed -i "s/^AIBOX_RGPD_SCRUB='0'/AIBOX_RGPD_SCRUB='1'/" "$ENV_FILE"
       say ".env : AIBOX_RGPD_SCRUB=1 (cloud actif → scrub obligatoire)"
     fi
