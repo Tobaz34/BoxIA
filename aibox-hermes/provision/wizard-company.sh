@@ -86,6 +86,11 @@ else
     echo "PENNYLANE_TOOL_BASE_URL='$PENNYLANE_TOOL_BASE_URL'"
     [ -n "${PENNYLANE_TOOL_API_KEY:-}" ] && echo "PENNYLANE_TOOL_API_KEY='$PENNYLANE_TOOL_API_KEY'"
     [ -n "${ANTHROPIC_API_KEY:-}" ] && echo "ANTHROPIC_API_KEY='$ANTHROPIC_API_KEY'"
+    # Connecteur email M365 (Graph app-only) — cf. mcp-connectors/email-msgraph
+    [ -n "${MSGRAPH_TENANT_ID:-}" ] && echo "MSGRAPH_TENANT_ID='$MSGRAPH_TENANT_ID'"
+    [ -n "${MSGRAPH_CLIENT_ID:-}" ] && echo "MSGRAPH_CLIENT_ID='$MSGRAPH_CLIENT_ID'"
+    [ -n "${MSGRAPH_CLIENT_SECRET:-}" ] && echo "MSGRAPH_CLIENT_SECRET='$MSGRAPH_CLIENT_SECRET'"
+    [ -n "${MSGRAPH_ALLOWED_MAILBOXES:-}" ] && echo "MSGRAPH_ALLOWED_MAILBOXES='$MSGRAPH_ALLOWED_MAILBOXES'"
     echo "AIBOX_RGPD_SCRUB='$RGPD'"
     echo "AIBOX_MUTATING_TOOLS_REGEX='$MUT_REGEX'"
   } > "$COMP_DIR/company.env"

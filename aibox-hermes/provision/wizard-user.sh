@@ -100,6 +100,10 @@ elif [ ! -f "$ENV_FILE" ]; then
   {
     [ -n "${PENNYLANE_TOOL_API_KEY:-}" ] && echo "PENNYLANE_TOOL_API_KEY='$PENNYLANE_TOOL_API_KEY'"
     [ -n "${ANTHROPIC_API_KEY:-}" ] && echo "ANTHROPIC_API_KEY='$ANTHROPIC_API_KEY'"
+    [ -n "${MSGRAPH_TENANT_ID:-}" ] && echo "MSGRAPH_TENANT_ID='$MSGRAPH_TENANT_ID'"
+    [ -n "${MSGRAPH_CLIENT_ID:-}" ] && echo "MSGRAPH_CLIENT_ID='$MSGRAPH_CLIENT_ID'"
+    [ -n "${MSGRAPH_CLIENT_SECRET:-}" ] && echo "MSGRAPH_CLIENT_SECRET='$MSGRAPH_CLIENT_SECRET'"
+    [ -n "${MSGRAPH_ALLOWED_MAILBOXES:-}" ] && echo "MSGRAPH_ALLOWED_MAILBOXES='$MSGRAPH_ALLOWED_MAILBOXES'"
     echo "AIBOX_RGPD_SCRUB='${AIBOX_RGPD_SCRUB:-0}'"
     echo "AIBOX_MUTATING_TOOLS_REGEX='${AIBOX_MUTATING_TOOLS_REGEX:-.*_create.*|.*_update.*|.*_delete.*|.*_send.*}'"
     echo "AIBOX_USER_CONNECTORS='$USER_CONNECTORS'"   # RBAC (enforcement connecteur : à finaliser)
@@ -121,7 +125,22 @@ else
       say ".env : AIBOX_RGPD_SCRUB=1 (cloud actif → scrub obligatoire)"
     fi
   fi
-  say "(.env déjà présent — préservé, clé cloud/scrub assurés)"
+  # Variables connecteur email M365 : ajout si absentes, mise à jour si changées
+  # (rotation du secret client possible en rejouant simplement le wizard).
+  # Seulement si le RBAC de CE user inclut le connecteur — pas de secret inutile.
+  case ",$ALLOWED_CSV," in *",email-msgraph,"*)
+  for v in MSGRAPH_TENANT_ID MSGRAPH_CLIENT_ID MSGRAPH_CLIENT_SECRET MSGRAPH_ALLOWED_MAILBOXES; do
+    val="$(eval echo "\${$v:-}")"
+    [ -z "$val" ] && continue
+    if grep -q "^$v=" "$ENV_FILE"; then
+      sed -i "s|^$v=.*|$v='$val'|" "$ENV_FILE"
+    else
+      printf "%s='%s'\n" "$v" "$val" >> "$ENV_FILE"
+      say ".env : $v ajoutée"
+    fi
+  done
+  ;; esac
+  say "(.env déjà présent — préservé, clé cloud/scrub/msgraph assurés)"
 fi
 say ".env -> $ENV_FILE"
 

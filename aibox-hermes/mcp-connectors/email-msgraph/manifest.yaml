@@ -1,0 +1,46 @@
+# Manifest interne AI Box — boîtes email Microsoft 365 exposées en MCP (Graph, app-only).
+# Pourquoi pas IMAP : basic auth désactivée par Microsoft sur Exchange Online.
+manifest_version: 1
+name: email-msgraph
+description: "Emails Microsoft 365 (Graph) — lecture, dossiers, brouillons, envoi sous approval. Multi-boîtes avec allowlist."
+
+transport:
+  type: stdio
+  command: "${INSTALL_DIR}/.venv/bin/python"
+  args:
+    - "${INSTALL_DIR}/server.py"
+
+install:
+  type: local
+  bootstrap:
+    - "python3 -m venv .venv"
+    - ".venv/bin/pip install -r requirements.txt"
+
+auth:
+  type: oauth_client_credentials
+  env:
+    - name: MSGRAPH_TENANT_ID
+      prompt: "Tenant ID Entra (annuaire M365)"
+      required: true
+      secret: false
+    - name: MSGRAPH_CLIENT_ID
+      prompt: "Client ID de l'App Registration"
+      required: true
+      secret: false
+    - name: MSGRAPH_CLIENT_SECRET
+      prompt: "Secret client de l'App Registration"
+      required: true
+      secret: true
+    - name: MSGRAPH_ALLOWED_MAILBOXES
+      prompt: "Boîtes autorisées (csv) — allowlist OBLIGATOIRE"
+      required: true
+      secret: false
+
+tools:
+  default_enabled:
+    - msgraph_email_health
+    - list_recent_emails
+    - read_email
+    - list_mail_folders
+    - create_draft_email   # brouillon uniquement — gated (mutatif)
+    - send_draft_email     # envoi — gated (mutatif)

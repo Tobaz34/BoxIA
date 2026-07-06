@@ -50,3 +50,17 @@ def test_cloud_fallback_present_when_model_given():
 def test_cloud_fallback_absent_by_default():
     out = rc.render("m", "u", [], "/repo")
     assert "fallback_providers" not in out
+
+
+def test_email_msgraph_connector_block():
+    out = rc.render("m", "u", ["email-msgraph"], "/repo")
+    assert "email-msgraph:" in out
+    assert "/repo/mcp-connectors/email-msgraph/server.py" in out
+    # Secrets via ${env:...} — jamais en clair dans le config.yaml.
+    assert "${env:MSGRAPH_CLIENT_SECRET}" in out
+    assert "${env:MSGRAPH_ALLOWED_MAILBOXES}" in out
+
+
+def test_email_msgraph_rbac_excluded_when_not_allowed():
+    out = rc.render("m", "u", ["pennylane"], "/repo")
+    assert "email-msgraph" not in out

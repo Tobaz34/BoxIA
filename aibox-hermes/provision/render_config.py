@@ -22,9 +22,26 @@ def _pennylane_block(tenant_dir: str, pennylane_base_url: str) -> str:
     )
 
 
+def _email_msgraph_block(tenant_dir: str, pennylane_base_url: str) -> str:
+    # Boîtes M365 via Graph (app-only). Secrets résolus depuis ${HERMES_HOME}/.env.
+    return (
+        '  email-msgraph:\n'
+        f'    command: "{tenant_dir}/mcp-connectors/email-msgraph/.venv/bin/python"\n'
+        f'    args: ["{tenant_dir}/mcp-connectors/email-msgraph/server.py"]\n'
+        '    env:\n'
+        '      MSGRAPH_TENANT_ID: "${env:MSGRAPH_TENANT_ID}"\n'
+        '      MSGRAPH_CLIENT_ID: "${env:MSGRAPH_CLIENT_ID}"\n'
+        '      MSGRAPH_CLIENT_SECRET: "${env:MSGRAPH_CLIENT_SECRET}"\n'
+        '      MSGRAPH_ALLOWED_MAILBOXES: "${env:MSGRAPH_ALLOWED_MAILBOXES}"\n'
+        '    timeout: 60\n'
+        '    tools: { resources: false, prompts: false }'
+    )
+
+
 # Registre des connecteurs MCP connus → fonction qui rend leur bloc de config.
 CONNECTORS = {
     "pennylane": _pennylane_block,
+    "email-msgraph": _email_msgraph_block,
     # odoo / glpi / fec : à ajouter ici quand leurs shims MCP existent.
 }
 
