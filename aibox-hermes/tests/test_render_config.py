@@ -56,9 +56,11 @@ def test_email_msgraph_connector_block():
     out = rc.render("m", "u", ["email-msgraph"], "/repo")
     assert "email-msgraph:" in out
     assert "/repo/mcp-connectors/email-msgraph/server.py" in out
-    # Secrets via ${env:...} — jamais en clair dans le config.yaml.
-    assert "${env:MSGRAPH_CLIENT_SECRET}" in out
-    assert "${env:MSGRAPH_ALLOWED_MAILBOXES}" in out
+    # Valeurs littérales (hermes-webui ne résout PAS ${env:...}) — les clés
+    # d'env sont présentes ; la valeur vient de l'environnement du wizard.
+    assert "MSGRAPH_CLIENT_SECRET:" in out
+    assert "MSGRAPH_ALLOWED_MAILBOXES:" in out
+    assert "${env:" not in out   # plus aucun placeholder non résolu
 
 
 def test_email_msgraph_rbac_excluded_when_not_allowed():
@@ -70,8 +72,9 @@ def test_email_ews_connector_block():
     out = rc.render("m", "u", ["email-ews"], "/repo")
     assert "email-ews:" in out
     assert "/repo/mcp-connectors/email-ews/server.py" in out
-    assert "${env:EWS_PASSWORD}" in out
-    assert "${env:EWS_ENDPOINT}" in out
+    assert "EWS_PASSWORD:" in out
+    assert "EWS_ENDPOINT:" in out
+    assert "${env:" not in out
 
 
 def test_email_ews_rbac_excluded_when_not_allowed():

@@ -7,6 +7,14 @@ l'appeler — le tool n'existe pas dans sa config.
 from __future__ import annotations
 
 import json
+import os
+
+
+def _envval(name: str) -> str:
+    # hermes-webui ne résout PAS la syntaxe ${env:X} dans le bloc env: d'un
+    # serveur MCP — il passe la chaîne littérale. On écrit donc la VRAIE valeur
+    # (lue de l'environnement du wizard) dans config.yaml, comme le fait l'UI.
+    return os.environ.get(name, "")
 
 
 def _pennylane_block(tenant_dir: str, pennylane_base_url: str) -> str:
@@ -16,7 +24,7 @@ def _pennylane_block(tenant_dir: str, pennylane_base_url: str) -> str:
         f'    args: ["{tenant_dir}/mcp-connectors/pennylane/server.py"]\n'
         '    env:\n'
         f'      PENNYLANE_TOOL_BASE_URL: "{pennylane_base_url}"\n'
-        '      PENNYLANE_TOOL_API_KEY: "${env:PENNYLANE_TOOL_API_KEY}"\n'
+        f'      PENNYLANE_TOOL_API_KEY: {json.dumps(_envval("PENNYLANE_TOOL_API_KEY"))}\n'
         '    timeout: 60\n'
         '    tools: { resources: false, prompts: false }'
     )
@@ -29,10 +37,10 @@ def _email_msgraph_block(tenant_dir: str, pennylane_base_url: str) -> str:
         f'    command: "{tenant_dir}/mcp-connectors/email-msgraph/.venv/bin/python"\n'
         f'    args: ["{tenant_dir}/mcp-connectors/email-msgraph/server.py"]\n'
         '    env:\n'
-        '      MSGRAPH_TENANT_ID: "${env:MSGRAPH_TENANT_ID}"\n'
-        '      MSGRAPH_CLIENT_ID: "${env:MSGRAPH_CLIENT_ID}"\n'
-        '      MSGRAPH_CLIENT_SECRET: "${env:MSGRAPH_CLIENT_SECRET}"\n'
-        '      MSGRAPH_ALLOWED_MAILBOXES: "${env:MSGRAPH_ALLOWED_MAILBOXES}"\n'
+        f'      MSGRAPH_TENANT_ID: {json.dumps(_envval("MSGRAPH_TENANT_ID"))}\n'
+        f'      MSGRAPH_CLIENT_ID: {json.dumps(_envval("MSGRAPH_CLIENT_ID"))}\n'
+        f'      MSGRAPH_CLIENT_SECRET: {json.dumps(_envval("MSGRAPH_CLIENT_SECRET"))}\n'
+        f'      MSGRAPH_ALLOWED_MAILBOXES: {json.dumps(_envval("MSGRAPH_ALLOWED_MAILBOXES"))}\n'
         '    timeout: 60\n'
         '    tools: { resources: false, prompts: false }'
     )
@@ -45,10 +53,10 @@ def _email_ews_block(tenant_dir: str, pennylane_base_url: str) -> str:
         f'    command: "{tenant_dir}/mcp-connectors/email-ews/.venv/bin/python"\n'
         f'    args: ["{tenant_dir}/mcp-connectors/email-ews/server.py"]\n'
         '    env:\n'
-        '      EWS_ENDPOINT: "${env:EWS_ENDPOINT}"\n'
-        '      EWS_EMAIL: "${env:EWS_EMAIL}"\n'
-        '      EWS_USERNAME: "${env:EWS_USERNAME}"\n'
-        '      EWS_PASSWORD: "${env:EWS_PASSWORD}"\n'
+        f'      EWS_ENDPOINT: {json.dumps(_envval("EWS_ENDPOINT"))}\n'
+        f'      EWS_EMAIL: {json.dumps(_envval("EWS_EMAIL"))}\n'
+        f'      EWS_USERNAME: {json.dumps(_envval("EWS_USERNAME"))}\n'
+        f'      EWS_PASSWORD: {json.dumps(_envval("EWS_PASSWORD"))}\n'
         '    timeout: 60\n'
         '    tools: { resources: false, prompts: false }'
     )
@@ -61,10 +69,10 @@ def _odoo_block(tenant_dir: str, pennylane_base_url: str) -> str:
         f'    command: "{tenant_dir}/mcp-connectors/odoo/.venv/bin/python"\n'
         f'    args: ["{tenant_dir}/mcp-connectors/odoo/server.py"]\n'
         '    env:\n'
-        '      ODOO_URL: "${env:ODOO_URL}"\n'
-        '      ODOO_DB: "${env:ODOO_DB}"\n'
-        '      ODOO_USERNAME: "${env:ODOO_USERNAME}"\n'
-        '      ODOO_API_KEY: "${env:ODOO_API_KEY}"\n'
+        f'      ODOO_URL: {json.dumps(_envval("ODOO_URL"))}\n'
+        f'      ODOO_DB: {json.dumps(_envval("ODOO_DB"))}\n'
+        f'      ODOO_USERNAME: {json.dumps(_envval("ODOO_USERNAME"))}\n'
+        f'      ODOO_API_KEY: {json.dumps(_envval("ODOO_API_KEY"))}\n'
         '    timeout: 60\n'
         '    tools: { resources: false, prompts: false }'
     )

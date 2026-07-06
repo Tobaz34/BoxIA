@@ -100,16 +100,7 @@ def msgraph_email_health() -> dict[str, Any]:
     return {"ok": True, "allowed_mailboxes": ALLOWED}
 
 
-@mcp.tool
-def list_recent_emails(mailbox: str, limit: int = 10, unread_only: bool = False,
-                       folder: str = "inbox") -> list[dict[str, Any]]:
-    """Liste les derniers emails d'une boîte M365 (enveloppes : sujet, expéditeur, date, aperçu).
-
-    mailbox : adresse de la boîte (doit être dans l'allowlist).
-    folder : inbox (défaut), sentitems, drafts, deleteditems, ou l'id d'un dossier.
-    unread_only : ne renvoyer que les non-lus. Lecture seule.
-    """
-    mb = _check_mailbox(mailbox)
+def _recent_one(mb: str, limit: int, unread_only: bool, folder: str) -> list[dict[str, Any]]:
     params: dict[str, Any] = {
         "$top": max(1, min(int(limit), 50)),
         "$orderby": "receivedDateTime desc",
@@ -118,7 +109,35 @@ def list_recent_emails(mailbox: str, limit: int = 10, unread_only: bool = False,
     if unread_only:
         params["$filter"] = "isRead eq false"
     data = _req("GET", f"/users/{mb}/mailFolders/{folder}/messages", params)
-    return [_envelope(m) for m in data.get("value", [])]
+    out = []
+    for m in data.get("value", []):
+        e = _envelope(m)
+        e["mailbox"] = mb
+        out.append(e)
+    return out
+
+
+@mcp.tool
+def list_recent_emails(mailbox: str = "", limit: int = 10, unread_only: bool = False,
+                       folder: str = "inbox") -> list[dict[str, Any]]:
+    """Liste les derniers emails M365 (enveloppes : sujet, expéditeur, date, aperçu, boîte).
+
+    mailbox : adresse de la boîte. SI VIDE → toutes les boîtes autorisées (idéal
+    pour un « compte rendu par boîte »). Sinon la boîte doit être dans l'allowlist.
+    folder : inbox (défaut), sentitems, drafts, deleteditems. unread_only : non-lus.
+    Lecture seule.
+    """
+    if not mailbox.strip():
+        if not ALLOWED:
+            raise RuntimeError("MSGRAPH_ALLOWED_MAILBOXES vide")
+        results: list[dict[str, Any]] = []
+        for mb in ALLOWED:
+            try:
+                results.extend(_recent_one(mb, limit, unread_only, folder))
+            except Exception as exc:
+                results.append({"mailbox": mb, "error": str(exc)[:160]})
+        return results
+    return _recent_one(_check_mailbox(mailbox), limit, unread_only, folder)
 
 
 @mcp.tool
