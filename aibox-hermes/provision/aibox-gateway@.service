@@ -32,6 +32,9 @@ WorkingDirectory=/home/clikinfo/hermes-agent
 ExecStart=/home/clikinfo/hermes-agent/venv/bin/hermes gateway run
 Restart=on-failure
 RestartSec=5
+# Le gateway draine les tâches en cours jusqu'à 180s à l'arrêt ; laisser systemd
+# attendre (>= drain_timeout + marge) sinon SIGKILL en plein milieu d'un job/routine.
+TimeoutStopSec=210
 
 [Install]
 WantedBy=multi-user.target
