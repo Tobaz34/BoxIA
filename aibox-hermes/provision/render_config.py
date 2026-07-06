@@ -209,7 +209,7 @@ def render(
         "display:\n"
         "  tool_progress: new\n\n"
         "agent:\n"
-        "  max_turns: 40\n"
+        "  max_turns: 80\n"
         '  reasoning_effort: "medium"\n'
         + (f"  system_prompt: {json.dumps(system_prompt, ensure_ascii=False)}\n" if system_prompt else "")
     )
