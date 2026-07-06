@@ -157,5 +157,45 @@ def send_draft_email(draft_id: str) -> dict[str, Any]:
     return {"sent": True, "draft_id": draft_id}
 
 
+def _resolve_folder(name: str):
+    """Résout un nom de dossier destination : dossiers bien connus, sinon recherche
+    par nom dans l'arborescence de la boîte."""
+    a = _acct()
+    key = (name or "").strip().lower()
+    mapped = {"inbox": a.inbox, "sent": a.sent, "drafts": a.drafts,
+              "trash": a.trash, "junk": a.junk}.get(key)
+    if mapped is not None:
+        return mapped
+    try:
+        for f in a.msg_folder_root.walk():
+            if (f.name or "").lower() == key:
+                return f
+    except Exception:
+        pass
+    raise RuntimeError(f"Dossier '{name}' introuvable dans la boîte")
+
+
+@mcp.tool
+def mark_email_read(item_id: str, folder: str = "inbox", read: bool = True) -> dict[str, Any]:
+    """Marque un email lu (read=True) ou non-lu (read=False). Tri léger, réversible."""
+    m = _folder(folder).get(id=item_id)
+    m.is_read = bool(read)
+    m.save(update_fields=["is_read"])
+    return {"ok": True, "id": item_id, "read": bool(read)}
+
+
+@mcp.tool
+def move_email(item_id: str, target_folder: str, source_folder: str = "inbox") -> dict[str, Any]:
+    """Déplace un email vers un dossier (tri automatique). Réversible.
+
+    target_folder : nom bien connu (trash, junk, sent…) OU nom exact d'un dossier
+    existant de la boîte. source_folder : dossier où se trouve le mail (def inbox).
+    """
+    m = _folder(source_folder).get(id=item_id)
+    dest = _resolve_folder(target_folder)
+    m.move(dest)
+    return {"ok": True, "id": item_id, "from": source_folder, "to": target_folder}
+
+
 if __name__ == "__main__":
     mcp.run()

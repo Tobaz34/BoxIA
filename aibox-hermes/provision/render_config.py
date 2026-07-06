@@ -93,6 +93,23 @@ def _msfiles_block(tenant_dir: str, pennylane_base_url: str) -> str:
     )
 
 
+def _himalaya_block(tenant_dir: str, pennylane_base_url: str) -> str:
+    # Boîtes IMAP/SMTP via le CLI himalaya (Gmail, RideQuest). Pas de secret ici :
+    # himalaya lit sa propre config (~/.config/himalaya/config.toml + fichiers .pass).
+    # HOME est forcé pour que le connecteur (lancé par le process Hermes) trouve la config.
+    return (
+        '  himalaya:\n'
+        f'    command: "{tenant_dir}/mcp-connectors/himalaya/.venv/bin/python"\n'
+        f'    args: ["{tenant_dir}/mcp-connectors/himalaya/server.py"]\n'
+        '    env:\n'
+        f'      HIMALAYA_BIN: {json.dumps(_envval("HIMALAYA_BIN") or "/home/clikinfo/.local/bin/himalaya")}\n'
+        f'      HIMALAYA_ACCOUNTS: {json.dumps(_envval("HIMALAYA_ACCOUNTS") or "gmail,ridequest")}\n'
+        f'      HOME: {json.dumps(_envval("HIMALAYA_HOME") or "/home/clikinfo")}\n'
+        '    timeout: 90\n'
+        '    tools: { resources: false, prompts: false }'
+    )
+
+
 # Registre des connecteurs MCP connus → fonction qui rend leur bloc de config.
 CONNECTORS = {
     "pennylane": _pennylane_block,
@@ -100,6 +117,7 @@ CONNECTORS = {
     "email-ews": _email_ews_block,
     "odoo": _odoo_block,
     "msfiles": _msfiles_block,
+    "himalaya": _himalaya_block,
     # glpi / fec : à ajouter ici quand leurs shims MCP existent.
 }
 

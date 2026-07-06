@@ -92,3 +92,16 @@ def test_cron_mode_deny_by_default():
 def test_cron_mode_allow_when_requested():
     out = rc.render("m", "u", [], "/repo", cron_mode="allow")
     assert 'cron_mode: "allow"' in out
+
+
+def test_himalaya_connector_block():
+    out = rc.render("m", "u", ["himalaya"], "/repo")
+    assert "himalaya:" in out
+    assert "/repo/mcp-connectors/himalaya/server.py" in out
+    assert "HIMALAYA_ACCOUNTS" in out
+    assert "${env:" not in out
+
+
+def test_himalaya_rbac_excluded_when_not_allowed():
+    out = rc.render("m", "u", ["pennylane"], "/repo")
+    assert "himalaya:" not in out

@@ -193,5 +193,44 @@ def send_draft_email(mailbox: str, draft_id: str) -> dict[str, Any]:
     return {"sent": True, "draft_id": draft_id}
 
 
+# Noms de dossiers « bien connus » Graph acceptés directement comme destination.
+_WELL_KNOWN = {"inbox", "archive", "deleteditems", "junkemail", "drafts",
+               "sentitems", "clutter", "conflicts", "outbox"}
+
+
+def _resolve_folder_id(mb: str, name: str) -> str:
+    """Résout un nom de dossier en destinationId Graph : nom bien connu tel quel,
+    sinon recherche par displayName (insensible à la casse)."""
+    key = (name or "").strip()
+    if key.lower() in _WELL_KNOWN:
+        return key.lower()
+    data = _req("GET", f"/users/{mb}/mailFolders", {"$top": 100, "$select": "id,displayName"})
+    for f in data.get("value", []):
+        if (f.get("displayName") or "").lower() == key.lower():
+            return f.get("id")
+    raise RuntimeError(f"Dossier '{name}' introuvable (ni bien connu, ni par nom)")
+
+
+@mcp.tool
+def mark_email_read(mailbox: str, message_id: str, read: bool = True) -> dict[str, Any]:
+    """Marque un email lu (read=True) ou non-lu (read=False). Tri léger, réversible."""
+    mb = _check_mailbox(mailbox)
+    _req("PATCH", f"/users/{mb}/messages/{message_id}", json_body={"isRead": bool(read)})
+    return {"ok": True, "mailbox": mb, "id": message_id, "read": bool(read)}
+
+
+@mcp.tool
+def move_email(mailbox: str, message_id: str, target_folder: str) -> dict[str, Any]:
+    """Déplace un email vers un dossier (tri automatique). Réversible.
+
+    target_folder : nom bien connu (archive, deleteditems, junkemail…) OU nom exact
+    d'un dossier existant de la boîte (résolu automatiquement).
+    """
+    mb = _check_mailbox(mailbox)
+    dest = _resolve_folder_id(mb, target_folder)
+    res = _req("POST", f"/users/{mb}/messages/{message_id}/move", json_body={"destinationId": dest})
+    return {"ok": True, "mailbox": mb, "id": res.get("id", message_id), "moved_to": target_folder}
+
+
 if __name__ == "__main__":
     mcp.run()
