@@ -158,5 +158,44 @@ def log_note(model: str, record_id: int, body: str) -> dict[str, Any]:
     return {"posted": True, "model": model, "record_id": record_id, "message_id": msg_id}
 
 
+@mcp.tool
+def odoo_fields(model: str, attributes: list | None = None) -> dict[str, Any]:
+    """Décrit les champs d'un modèle Odoo (fields_get) : libellé, type, requis, relation.
+
+    À appeler AVANT un `odoo_create` pour connaître les champs obligatoires et les
+    noms techniques (ex: sur 'helpdesk.ticket' ou 'sale.order'). Lecture seule.
+    """
+    attrs = attributes or ["string", "type", "required", "relation", "selection"]
+    return _kw(model, "fields_get", [], {"attributes": attrs})
+
+
+@mcp.tool
+def odoo_create(model: str, values: dict) -> dict[str, Any]:
+    """Crée UN enregistrement dans n'importe quel modèle Odoo. Action mutative → approval-gate.
+
+    model : nom technique (ex: 'helpdesk.ticket', 'sale.order', 'ir.attachment').
+    values : dict des champs (ex: {'name': 'Incident serveur', 'partner_id': 42}).
+    Pour une pièce jointe : model='ir.attachment', values={'name','res_model','res_id',
+    'datas': <base64>}. Renvoie l'id créé. Barrière réelle = droits du compte technique Odoo.
+    """
+    if not isinstance(values, dict) or not values:
+        raise RuntimeError("values doit être un dict non vide")
+    rec_id = _kw(model, "create", [values])
+    return {"created": True, "model": model, "id": rec_id}
+
+
+@mcp.tool
+def odoo_update(model: str, record_id: int, values: dict) -> dict[str, Any]:
+    """Met à jour UN enregistrement Odoo (write). Action mutative sensible → approval-gate.
+
+    model, record_id : cible précise (un seul id — pas de mise à jour de masse).
+    values : dict des champs à modifier (ex: {'stage_id': 3, 'user_id': 75}).
+    """
+    if not isinstance(values, dict) or not values:
+        raise RuntimeError("values doit être un dict non vide")
+    ok = _kw(model, "write", [[int(record_id)], values])
+    return {"updated": bool(ok), "model": model, "id": int(record_id)}
+
+
 if __name__ == "__main__":
     mcp.run()
