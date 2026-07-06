@@ -197,5 +197,22 @@ def odoo_update(model: str, record_id: int, values: dict) -> dict[str, Any]:
     return {"updated": bool(ok), "model": model, "id": int(record_id)}
 
 
+@mcp.tool
+def attach_file(model: str, record_id: int, local_path: str, filename: str = "") -> dict[str, Any]:
+    """Joint un fichier LOCAL du serveur à un enregistrement Odoo (crée un ir.attachment
+    lié). Ex: joindre le PDF d'une facture au vendor bill (account.move). Les octets ne
+    passent pas par le LLM (lecture disque + base64 côté connecteur). Action mutative."""
+    import os as _os, base64 as _b64
+    if not _os.path.isfile(local_path):
+        raise RuntimeError(f"fichier introuvable: {local_path}")
+    fn = filename or _os.path.basename(local_path)
+    with open(local_path, "rb") as f:
+        datas = _b64.b64encode(f.read()).decode()
+    att_id = _kw("ir.attachment", "create", [{
+        "name": fn, "datas": datas, "res_model": model, "res_id": int(record_id)}])
+    return {"attached": True, "attachment_id": att_id, "model": model,
+            "record_id": int(record_id), "filename": fn}
+
+
 if __name__ == "__main__":
     mcp.run()

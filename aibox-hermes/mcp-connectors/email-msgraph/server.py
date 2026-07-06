@@ -232,5 +232,61 @@ def move_email(mailbox: str, message_id: str, target_folder: str) -> dict[str, A
     return {"ok": True, "mailbox": mb, "id": res.get("id", message_id), "moved_to": target_folder}
 
 
+# --- Pièces jointes (pour le module factures fournisseurs) ---
+# Les octets ne transitent PAS par le LLM : on écrit la PJ dans un dossier
+# partagé du serveur et on renvoie son CHEMIN (+ le texte extrait si PDF).
+# Les connecteurs msfiles/odoo lisent ce chemin pour uploader/attacher.
+_ATT_DIR = os.getenv("AIBOX_ATT_DIR", "/tmp/aibox_attachments")
+
+
+def _pdf_text(path: str, max_chars: int = 12000) -> str:
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(path)
+        parts = []
+        for pg in reader.pages[:15]:
+            parts.append(pg.extract_text() or "")
+        return ("\n".join(parts)).strip()[:max_chars]
+    except Exception as e:
+        return f"(extraction PDF impossible: {str(e)[:120]})"
+
+
+@mcp.tool
+def list_attachments(mailbox: str, message_id: str) -> list[dict[str, Any]]:
+    """Liste les pièces jointes d'un email (id, nom, type, taille). Lecture seule."""
+    mb = _check_mailbox(mailbox)
+    data = _req("GET", f"/users/{mb}/messages/{message_id}/attachments",
+                {"$select": "id,name,contentType,size"})
+    return [{"id": a.get("id"), "name": a.get("name"),
+             "content_type": a.get("contentType"), "size": a.get("size")}
+            for a in data.get("value", [])]
+
+
+@mcp.tool
+def save_attachment(mailbox: str, message_id: str, attachment_id: str) -> dict[str, Any]:
+    """Télécharge une pièce jointe sur le serveur (dossier partagé) et renvoie son
+    CHEMIN LOCAL (pas les octets) + le texte extrait si c'est un PDF. À utiliser
+    avec upload_local_file (msfiles) et attach_file (odoo) pour classer une facture.
+    """
+    import base64
+    mb = _check_mailbox(mailbox)
+    a = _req("GET", f"/users/{mb}/messages/{message_id}/attachments/{attachment_id}")
+    b64 = a.get("contentBytes")
+    if not b64:
+        raise RuntimeError("Pièce jointe sans contenu (type non-fichier ?)")
+    os.makedirs(_ATT_DIR, exist_ok=True)
+    name = (a.get("name") or "piece_jointe").replace("/", "_").replace("\\", "_")
+    # nom déterministe (évite les collisions entre mails) : <msgid court>_<nom>
+    safe = f"{str(message_id)[-8:]}_{name}"
+    path = os.path.join(_ATT_DIR, safe)
+    with open(path, "wb") as f:
+        f.write(base64.b64decode(b64))
+    out = {"path": path, "name": a.get("name"), "content_type": a.get("contentType"),
+           "size": a.get("size")}
+    if (a.get("name") or "").lower().endswith(".pdf") or "pdf" in (a.get("contentType") or "").lower():
+        out["pdf_text"] = _pdf_text(path)
+    return out
+
+
 if __name__ == "__main__":
     mcp.run()

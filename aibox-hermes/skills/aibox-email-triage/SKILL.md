@@ -197,6 +197,41 @@ renseignement produit/service, intérêt, projet) d'un client/prospect :
 Garde-fous : jamais d'envoi auto d'une réponse commerciale ; devis toujours en
 brouillon (jamais confirmé/envoyé) ; produits/prix **du catalogue uniquement**.
 
+## Factures fournisseurs → SharePoint + Odoo (dépôt + recap)
+
+Quand un email contient une **facture fournisseur en pièce jointe PDF** (sujet/
+expéditeur type facture, « facture », « invoice », fournisseur connu : EDF, 3CX,
+Ingram, TD Synnex, Sewan, Elis, Germond, XEFI…) :
+
+1. **Confirme la PJ** : `list_attachments(mailbox, message_id)` → repère le PDF.
+2. **Récupère-la** : `save_attachment(mailbox, message_id, attachment_id)` → renvoie
+   `path` (chemin serveur) + `pdf_text`. Les octets ne passent pas par toi.
+3. **Extrais** du `pdf_text` (+ email) : **fournisseur**, **date**, **n° facture**,
+   **montant TTC** (et HT si dispo), devise. Si le PDF est scanné (texte vide) →
+   signale « facture non lisible (scan) — à traiter manuellement » et n'invente rien.
+4. **Dépose dans SharePoint** (site ADMINISTRATIF) :
+   - drive Documents = `b!SFRxgsLX0kCrhpqu_oI2AFCvrZsgFH1MmxjAvq0yIkjsIa5gxh1LTIlHGeIUii-_`
+   - dossier = `7 - FACTURES FOURNISSEURS/{année}/{FOURNISSEUR}` (année = année de la
+     facture ; FOURNISSEUR en MAJUSCULES). Réutilise le dossier fournisseur existant
+     s'il existe (ex. EDF, INGRAM, TD SYNNEX) ; sinon crée-le. Si le fournisseur est
+     incertain → dossier `DIVERS`.
+   - `ensure_folder(drive_id, "7 - FACTURES FOURNISSEURS/{année}/{FOURNISSEUR}")`
+     puis `upload_local_file(drive_id, ce_chemin, path)` (path = de save_attachment).
+5. **Facture fournisseur Odoo** : `find_partner(<fournisseur>)` → partner_id (si absent,
+   signale-le, ne crée pas de fournisseur au hasard). Puis crée un **brouillon** de
+   facture fournisseur : `odoo_create("account.move", {"move_type":"in_invoice",
+   "partner_id":<id>, "invoice_date":"AAAA-MM-JJ", "ref":"<n° facture>"})`. **Ne la
+   valide/poste JAMAIS** (le comptable complète les lignes/taxes). Puis joins le PDF :
+   `attach_file("account.move", <move_id>, path)`.
+6. **Recap** (à la fin du passage, s'il y a eu ≥1 facture) : envoie UN email à
+   `k.ladurelle@clikinfo.fr` ET `a.ladurelle@clikinfo.fr` (create_draft_email
+   mailbox="a.ladurelle@clikinfo.fr" + send_draft_email) listant les pièces déplacées :
+   fournisseur, n°, montant, lien SharePoint, réf. brouillon Odoo.
+
+Garde-fous : facture Odoo toujours en **brouillon** (jamais postée) ; fournisseur
+**identifié** dans Odoo sinon on signale ; montants/n° **jamais inventés** ; en cas
+de doute, dépose au moins dans SharePoint et signale le reste au recap.
+
 ## Format du bilan (livré sur Telegram)
 
 Court, lisible sur mobile. Exemple :

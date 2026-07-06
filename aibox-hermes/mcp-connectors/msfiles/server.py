@@ -209,5 +209,26 @@ def upload_file(drive_id: str, folder_path: str, filename: str,
             "web_url": it.get("webUrl"), "size": it.get("size")}
 
 
+@mcp.tool
+def upload_local_file(drive_id: str, folder_path: str, local_path: str,
+                      filename: str = "") -> dict[str, Any]:
+    """Téléverse un fichier LOCAL du serveur vers SharePoint (folder_path doit exister —
+    appeler ensure_folder avant). filename vide = nom du fichier local. Sert à classer
+    une pièce jointe récupérée par save_attachment (email). Action mutative."""
+    if not os.path.isfile(local_path):
+        raise RuntimeError(f"fichier introuvable: {local_path}")
+    if os.path.getsize(local_path) > 4 * 1024 * 1024:
+        raise RuntimeError("Fichier > 4 Mo : upload de session requis (non implémenté)")
+    fn = filename or os.path.basename(local_path)
+    fp = folder_path.strip("/")
+    full = f"{fp}/{fn}" if fp else fn
+    with open(local_path, "rb") as f:
+        data = f.read()
+    it = _send("PUT", f"/drives/{drive_id}/root:/{full}:/content",
+               content=data, content_type="application/octet-stream")
+    return {"uploaded": True, "id": it.get("id"), "name": it.get("name"),
+            "web_url": it.get("webUrl"), "size": it.get("size")}
+
+
 if __name__ == "__main__":
     mcp.run()
