@@ -137,6 +137,20 @@ Pour un email d'incident reçu sur **support@clikinfo.fr** :
    **échoué** → **crée le ticket en rattrapage** (`odoo_create`, team_id=1) et
    signale « ⚠️ alias support@ a raté — ticket #… créé en rattrapage » au bilan.
 
+### ⚠️ RÈGLES ANTI-DOUBLON (impératives — un manquement pollue le helpdesk)
+- **Idempotence** : ne traite QUE les mails **NON LUS** de ton dossier
+  (`list_recent_emails(..., unread_only=true)`), et **marque-les LUS** une fois
+  traités. Un mail déjà lu = déjà traité → ne le retraite JAMAIS (sinon doublons).
+- **Alertes monitoring / « [Serveur HS] <NOM> » / backup** (expéditeur = supervision,
+  pas le client) : la clé de dédoublonnage est le **NOM DU SERVEUR / de la machine**
+  dans le sujet, PAS l'expéditeur. AVANT toute création :
+  `odoo_search_read("helpdesk.ticket", [["name","ilike","<NOM_SERVEUR>"]], ["name","stage_id"], 10, "create_date desc")`.
+  Si un ticket **ouvert** existe pour ce serveur → **rattache** (log_note « nouvelle
+  alerte le … »), **NE crée PAS**. Un serveur = **un seul** ticket ouvert.
+- **Rafale d'alertes** d'un même client (plusieurs serveurs HS à la fois) : privilégie
+  **un ticket par incident réel** ; si c'est la même panne multi-serveurs, regroupe.
+- Ne crée **jamais** deux tickets identiques dans le même passage.
+
 Pour un email d'**incident technique arrivant dans une boîte DIRECTE**
 (a.ladurelle@clikinfo.fr, contact@clikinfo.fr, a.ladurelle@xefi.fr) — panne, accès
 perdu, « ne fonctionne plus », erreur, serveur/imprimante/mail HS, demande d'un
