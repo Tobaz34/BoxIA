@@ -176,12 +176,96 @@
         m.appendChild(row);
       });
       sub.textContent = servers.length + " connecteur(s) · " + nOk + " prêt(s)";
+      // Formulaire « Configurer Odoo » : écrit dans la config via l'API native
+      // (PUT /api/mcp/servers/odoo). La clé ne transite JAMAIS par le chat/LLM.
+      m.appendChild(odooForm(servers));
       var foot = document.createElement("div"); foot.className = "aibox-cx-foot";
       foot.textContent = "« Prêt » = configuré et activé. « Actif » = connecté avec ses outils chargés (au 1er usage dans une conversation).";
       m.appendChild(foot);
     }
 
     ov.appendChild(m); document.body.appendChild(ov);
+  }
+
+  // Déduit le chemin d'un connecteur MCP à partir d'un autre déjà installé
+  // (remplace le nom du dossier), pour ne rien coder en dur et rester portable.
+  function deriveCmd(servers, target) {
+    for (var i = 0; i < servers.length; i++) {
+      var s = servers[i];
+      if (!s.command || String(s.command).indexOf("mcp-connectors/") < 0) continue;
+      var cmd = String(s.command).replace(/mcp-connectors\/[^/]+\//, "mcp-connectors/" + target + "/");
+      var args = (s.args || []).map(function (a) {
+        return String(a).replace(/mcp-connectors\/[^/]+\//, "mcp-connectors/" + target + "/");
+      });
+      return { command: cmd, args: args };
+    }
+    return null;
+  }
+
+  function odooForm(servers) {
+    var wrap = document.createElement("div");
+    wrap.style.marginTop = "1rem";
+    wrap.style.borderTop = "1px solid rgba(255,255,255,.1)";
+    wrap.style.paddingTop = ".8rem";
+    var existing = servers.filter(function (s) { return s.name === "odoo"; })[0];
+    var title = document.createElement("div");
+    title.style.cssText = "font-weight:600;cursor:pointer;display:flex;align-items:center;gap:.4rem";
+    title.innerHTML = "⚙️ " + (existing ? "Reconfigurer Odoo" : "Configurer Odoo");
+    var form = document.createElement("div");
+    form.style.display = "none";
+    form.style.marginTop = ".7rem";
+    title.addEventListener("click", function () { form.style.display = form.style.display === "none" ? "block" : "none"; });
+
+    function field(label, ph, type) {
+      var l = document.createElement("label");
+      l.style.cssText = "display:block;font-size:.8rem;color:#9ca3af;margin:.5rem 0 .2rem";
+      l.textContent = label;
+      var inp = document.createElement("input");
+      inp.type = type || "text"; inp.placeholder = ph || "";
+      inp.style.cssText = "width:100%;box-sizing:border-box;padding:.45rem .6rem;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:inherit;font:inherit;";
+      form.appendChild(l); form.appendChild(inp);
+      return inp;
+    }
+    var fUrl = field("URL Odoo", "https://odoo.exemple.fr");
+    var fDb = field("Base de données", "nom_base");
+    var fUser = field("Login", "prenom.nom@exemple.fr");
+    var fKey = field("Clé API Odoo", "collée ici — jamais affichée", "password");
+
+    var msg = document.createElement("div");
+    msg.style.cssText = "font-size:.82rem;margin-top:.6rem;min-height:1.1em";
+    var btn = document.createElement("button");
+    btn.textContent = "Enregistrer et connecter";
+    btn.style.cssText = "margin-top:.7rem;padding:.5rem .9rem;border-radius:9px;border:none;cursor:pointer;background:linear-gradient(180deg,#2563eb,#4f86ff);color:#fff;font:600 13px inherit;";
+    btn.addEventListener("click", function () {
+      var url = fUrl.value.trim(), db = fDb.value.trim(), user = fUser.value.trim(), key = fKey.value;
+      if (!url || !db || !user || !key) { msg.style.color = "#f87171"; msg.textContent = "Tous les champs sont requis."; return; }
+      var d = deriveCmd(servers, "odoo");
+      if (!d) { msg.style.color = "#f87171"; msg.textContent = "Impossible de déduire le chemin du connecteur (aucun connecteur MCP installé de référence)."; return; }
+      msg.style.color = "#9ca3af"; msg.textContent = "Enregistrement…"; btn.disabled = true;
+      fetch("/api/mcp/servers/odoo", {
+        method: "PUT", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: d.command, args: d.args, timeout: 60,
+          env: { ODOO_URL: url, ODOO_DB: db, ODOO_USERNAME: user, ODOO_API_KEY: key },
+        }),
+      }).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      }).then(function () {
+        msg.style.color = "#16a34a";
+        msg.textContent = "✓ Odoo enregistré. Il apparaîtra comme « Prêt », et « Actif » au 1er usage dans une conversation.";
+        fKey.value = "";
+        setTimeout(open, 1200);   // recharge le panneau
+      }).catch(function (e) {
+        msg.style.color = "#f87171";
+        msg.textContent = "Échec : " + (e.message || e) + ". (Recharge la page si la session a expiré.)";
+        btn.disabled = false;
+      });
+    });
+    form.appendChild(msg); form.appendChild(btn);
+    wrap.appendChild(title); wrap.appendChild(form);
+    return wrap;
   }
 
   function open() {
