@@ -81,6 +81,13 @@ say "RBAC -> connecteurs actifs : ${ALLOWED_CSV:-aucun}"
 # + fallback cloud Claude si la clé entreprise est présente (local reste primary).
 CLOUD_FALLBACK_MODEL=""
 [ -n "${ANTHROPIC_API_KEY:-}" ] && CLOUD_FALLBACK_MODEL="${CLOUD_FALLBACK_MODEL_OVERRIDE:-claude-haiku-4-5}"
+# Politique routines cron : deny (lecture+notif, sûr) par défaut. USER_CRON_MODE
+# l'override par user ; à défaut, les admins (AIBOX_ADMINS) ont 'allow' (routines
+# autonomes) et les autres 'deny'.
+CRON_MODE="${USER_CRON_MODE:-deny}"
+if [ -z "${USER_CRON_MODE:-}" ]; then
+  case ",${AIBOX_ADMINS:-}," in *",$USER_SLUG,"*) CRON_MODE="allow" ;; esac
+fi
 OUT="$HERMES_HOME/config.yaml"
 run "python3 '$AIBOX_HERMES_DIR/provision/render_config.py' \
   --model '${OLLAMA_MODEL:-qwen3:8b}' \
@@ -88,7 +95,8 @@ run "python3 '$AIBOX_HERMES_DIR/provision/render_config.py' \
   --connectors '$ALLOWED_CSV' \
   --tenant-dir '$AIBOX_HERMES_DIR' \
   --pennylane-base-url '${PENNYLANE_TOOL_BASE_URL:-http://127.0.0.1:8081}' \
-  --cloud-fallback-model '$CLOUD_FALLBACK_MODEL' > '$OUT'"
+  --cloud-fallback-model '$CLOUD_FALLBACK_MODEL' \
+  --cron-mode '$CRON_MODE' > '$OUT'"
 say "config -> $OUT $([ -n "$CLOUD_FALLBACK_MODEL" ] && echo "(fallback cloud: $CLOUD_FALLBACK_MODEL)")"
 
 # .env user : secrets entreprise hérités + spécifiques user

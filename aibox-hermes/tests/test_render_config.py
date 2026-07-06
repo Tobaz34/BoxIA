@@ -80,3 +80,15 @@ def test_email_ews_connector_block():
 def test_email_ews_rbac_excluded_when_not_allowed():
     out = rc.render("m", "u", ["pennylane"], "/repo")
     assert "email-ews" not in out
+
+
+def test_cron_mode_deny_by_default():
+    # Sûr par défaut : les routines cron ne peuvent pas agir sans validation.
+    out = rc.render("m", "u", [], "/repo")
+    assert "approvals:" in out
+    assert 'cron_mode: "deny"' in out
+
+
+def test_cron_mode_allow_when_requested():
+    out = rc.render("m", "u", [], "/repo", cron_mode="allow")
+    assert 'cron_mode: "allow"' in out

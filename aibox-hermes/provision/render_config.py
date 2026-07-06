@@ -129,6 +129,7 @@ def render(
     search_backend: str = "ddgs",
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     cloud_fallback_model: str = "",
+    cron_mode: str = "deny",
 ) -> str:
     allowed = [c for c in connectors if c in CONNECTORS]
     blocks = "\n".join(CONNECTORS[c](tenant_dir, pennylane_base_url) for c in allowed)
@@ -180,6 +181,13 @@ def render(
         f'    - "{tenant_dir}/skills"\n\n'
         "group_sessions_per_user: true\n"
         "max_concurrent_sessions: null\n\n"
+        # Politique d'approbation des runs déclenchés par le scheduler cron
+        # (tâches planifiées / routines). "deny" = les actions sensibles (envoi
+        # email, création/suppression…) sont auto-refusées → routine lecture+notif
+        # seulement. "allow" = la routine agit seule sans validation. La livraison
+        # d'un résumé (--deliver telegram/local) n'est PAS gated → marche même en deny.
+        "approvals:\n"
+        f'  cron_mode: "{cron_mode}"\n\n'
         "display:\n"
         "  tool_progress: new\n\n"
         "agent:\n"
@@ -204,8 +212,11 @@ if __name__ == "__main__":
                     help="backend recherche web (ddgs=DuckDuckGo sans clé ; vide = désactivé)")
     ap.add_argument("--cloud-fallback-model", default="",
                     help="modèle Claude en fallback du local, ex: claude-haiku-4-5 (vide = désactivé)")
+    ap.add_argument("--cron-mode", default="deny", choices=["deny", "allow"],
+                    help="politique des routines cron : deny=lecture+notif (sûr), allow=actions autonomes")
     a = ap.parse_args()
     conns = [c.strip() for c in a.connectors.split(",") if c.strip()]
     print(render(a.model, a.base_url, conns, a.tenant_dir, a.pennylane_base_url,
                  a.vision_model, a.search_backend,
-                 cloud_fallback_model=a.cloud_fallback_model))
+                 cloud_fallback_model=a.cloud_fallback_model,
+                 cron_mode=a.cron_mode))
