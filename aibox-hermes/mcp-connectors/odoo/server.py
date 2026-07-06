@@ -27,12 +27,24 @@ from __future__ import annotations
 import os
 import xmlrpc.client
 from typing import Any
+from urllib.parse import urlparse
 
 from fastmcp import FastMCP
 
 mcp = FastMCP("odoo")
 
-URL = os.getenv("ODOO_URL", "").rstrip("/")
+
+def _rpc_base(url: str) -> str:
+    """Base des endpoints XML-RPC = ORIGINE du domaine (scheme://host[:port]).
+    L'API externe d'Odoo est toujours à la racine (/xmlrpc/2/...), même si l'UI
+    est servie sous un chemin (ex: https://odoo.exemple.fr/odoo → on ignore /odoo)."""
+    p = urlparse(url.strip())
+    if p.scheme and p.netloc:
+        return f"{p.scheme}://{p.netloc}"
+    return url.strip().rstrip("/")
+
+
+URL = _rpc_base(os.getenv("ODOO_URL", ""))
 DB = os.getenv("ODOO_DB", "")
 USERNAME = os.getenv("ODOO_USERNAME", "")
 API_KEY = os.getenv("ODOO_API_KEY", "")
