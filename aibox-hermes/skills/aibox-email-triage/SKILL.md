@@ -78,10 +78,16 @@ Tu as un budget de tours limité. Sois économe, sinon tu finis sans rendre de b
 2. **Triage sur enveloppes d'abord** : classe par sujet/expéditeur SANS ouvrir.
    Les newsletters/pub/notifs se classent sans `read_email`.
 3. **Ne `read_email` QUE les mails actionnables** (client, fournisseur, incident,
-   admin, urgent) — **maximum ~12 par passage**. Odoo/SharePoint uniquement si la
-   réponse en a besoin.
-4. **Termine TOUJOURS par un bilan**, même partiel. S'il reste des mails non
-   traités faute de budget, indique « ⏳ N mails non traités, prochain passage ».
+   admin, urgent). Odoo/SharePoint uniquement si la réponse en a besoin.
+4. **PLAFOND STRICT par passage** : traite « en profondeur » (lecture + lookups
+   Odoo + création ticket/opportunité + brouillon) **au maximum 6 emails**, dans
+   cet ordre de priorité : (1) urgences, (2) incidents, (3) clients/commercial,
+   (4) admin/fournisseur. Les newsletters/pub/notifs se classent en masse sur
+   enveloppe (rapide, hors plafond). Chaque email « profond » coûte des tours :
+   ne dépasse pas 6, sinon tu risques de finir sans bilan.
+5. **Termine TOUJOURS par un bilan**, même partiel — et rends-le AVANT d'épuiser
+   ton budget. S'il reste des actionnables non traités, liste-les en
+   « ⏳ N à traiter au prochain passage » (avec objet + boîte) sans les ouvrir.
 
 ## Politique d'action (IMPORTANT — c'est TON garde-fou)
 
