@@ -38,10 +38,27 @@ def _email_msgraph_block(tenant_dir: str, pennylane_base_url: str) -> str:
     )
 
 
+def _email_ews_block(tenant_dir: str, pennylane_base_url: str) -> str:
+    # Boîte Exchange on-premise via EWS/NTLM. Secrets depuis ${HERMES_HOME}/.env.
+    return (
+        '  email-ews:\n'
+        f'    command: "{tenant_dir}/mcp-connectors/email-ews/.venv/bin/python"\n'
+        f'    args: ["{tenant_dir}/mcp-connectors/email-ews/server.py"]\n'
+        '    env:\n'
+        '      EWS_ENDPOINT: "${env:EWS_ENDPOINT}"\n'
+        '      EWS_EMAIL: "${env:EWS_EMAIL}"\n'
+        '      EWS_USERNAME: "${env:EWS_USERNAME}"\n'
+        '      EWS_PASSWORD: "${env:EWS_PASSWORD}"\n'
+        '    timeout: 60\n'
+        '    tools: { resources: false, prompts: false }'
+    )
+
+
 # Registre des connecteurs MCP connus → fonction qui rend leur bloc de config.
 CONNECTORS = {
     "pennylane": _pennylane_block,
     "email-msgraph": _email_msgraph_block,
+    "email-ews": _email_ews_block,
     # odoo / glpi / fec : à ajouter ici quand leurs shims MCP existent.
 }
 

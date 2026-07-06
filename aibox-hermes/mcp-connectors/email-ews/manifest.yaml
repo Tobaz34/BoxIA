@@ -1,0 +1,46 @@
+# Manifest interne AI Box — boîte email Exchange on-premise exposée en MCP (EWS/NTLM).
+# Pour un Exchange on-prem sans IMAP/SMTP ni Graph (ex: outlook.xefi.fr).
+manifest_version: 1
+name: email-ews
+description: "Email Exchange on-premise (EWS/NTLM) — lecture, dossiers, brouillons, envoi sous approval. Mono-boîte."
+
+transport:
+  type: stdio
+  command: "${INSTALL_DIR}/.venv/bin/python"
+  args:
+    - "${INSTALL_DIR}/server.py"
+
+install:
+  type: local
+  bootstrap:
+    - "python3 -m venv .venv"
+    - ".venv/bin/pip install -r requirements.txt"
+
+auth:
+  type: password
+  env:
+    - name: EWS_ENDPOINT
+      prompt: "URL EWS (ex: https://outlook.xefi.fr/EWS/Exchange.asmx)"
+      required: true
+      secret: false
+    - name: EWS_EMAIL
+      prompt: "Adresse SMTP de la boîte"
+      required: true
+      secret: false
+    - name: EWS_USERNAME
+      prompt: "Login NTLM (souvent = l'adresse ; sinon DOMAINE\\user)"
+      required: false
+      secret: false
+    - name: EWS_PASSWORD
+      prompt: "Mot de passe du compte"
+      required: true
+      secret: true
+
+tools:
+  default_enabled:
+    - ews_email_health
+    - list_recent_emails
+    - read_email
+    - list_mail_folders
+    - create_draft_email   # brouillon uniquement — gated (mutatif)
+    - send_draft_email     # envoi — gated (mutatif)

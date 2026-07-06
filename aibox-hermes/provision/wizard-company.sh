@@ -91,6 +91,11 @@ else
     [ -n "${MSGRAPH_CLIENT_ID:-}" ] && echo "MSGRAPH_CLIENT_ID='$MSGRAPH_CLIENT_ID'"
     [ -n "${MSGRAPH_CLIENT_SECRET:-}" ] && echo "MSGRAPH_CLIENT_SECRET='$MSGRAPH_CLIENT_SECRET'"
     [ -n "${MSGRAPH_ALLOWED_MAILBOXES:-}" ] && echo "MSGRAPH_ALLOWED_MAILBOXES='$MSGRAPH_ALLOWED_MAILBOXES'"
+    # Connecteur email Exchange on-premise (EWS/NTLM) — cf. mcp-connectors/email-ews
+    [ -n "${EWS_ENDPOINT:-}" ] && echo "EWS_ENDPOINT='$EWS_ENDPOINT'"
+    [ -n "${EWS_EMAIL:-}" ] && echo "EWS_EMAIL='$EWS_EMAIL'"
+    [ -n "${EWS_USERNAME:-}" ] && echo "EWS_USERNAME='$EWS_USERNAME'"
+    [ -n "${EWS_PASSWORD:-}" ] && echo "EWS_PASSWORD='$EWS_PASSWORD'"
     echo "AIBOX_RGPD_SCRUB='$RGPD'"
     echo "AIBOX_MUTATING_TOOLS_REGEX='$MUT_REGEX'"
   } > "$COMP_DIR/company.env"

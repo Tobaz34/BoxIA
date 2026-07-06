@@ -125,22 +125,28 @@ else
       say ".env : AIBOX_RGPD_SCRUB=1 (cloud actif → scrub obligatoire)"
     fi
   fi
-  # Variables connecteur email M365 : ajout si absentes, mise à jour si changées
-  # (rotation du secret client possible en rejouant simplement le wizard).
+  # Variables connecteurs email (M365 Graph + Exchange on-prem EWS) : ajout si
+  # absentes, mise à jour si changées (rotation en rejouant le wizard).
   # Seulement si le RBAC de CE user inclut le connecteur — pas de secret inutile.
-  case ",$ALLOWED_CSV," in *",email-msgraph,"*)
-  for v in MSGRAPH_TENANT_ID MSGRAPH_CLIENT_ID MSGRAPH_CLIENT_SECRET MSGRAPH_ALLOWED_MAILBOXES; do
-    val="$(eval echo "\${$v:-}")"
-    [ -z "$val" ] && continue
+  _sync_env_var() {
+    local v val; v="$1"; val="$(eval echo "\${$v:-}")"
+    [ -z "$val" ] && return
     if grep -q "^$v=" "$ENV_FILE"; then
       sed -i "s|^$v=.*|$v='$val'|" "$ENV_FILE"
     else
       printf "%s='%s'\n" "$v" "$val" >> "$ENV_FILE"
       say ".env : $v ajoutée"
     fi
-  done
-  ;; esac
-  say "(.env déjà présent — préservé, clé cloud/scrub/msgraph assurés)"
+  }
+  case ",$ALLOWED_CSV," in *",email-msgraph,"*)
+    for v in MSGRAPH_TENANT_ID MSGRAPH_CLIENT_ID MSGRAPH_CLIENT_SECRET MSGRAPH_ALLOWED_MAILBOXES; do
+      _sync_env_var "$v"; done ;;
+  esac
+  case ",$ALLOWED_CSV," in *",email-ews,"*)
+    for v in EWS_ENDPOINT EWS_EMAIL EWS_USERNAME EWS_PASSWORD; do
+      _sync_env_var "$v"; done ;;
+  esac
+  say "(.env déjà présent — préservé, clé cloud/scrub/email assurés)"
 fi
 say ".env -> $ENV_FILE"
 
