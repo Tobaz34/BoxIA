@@ -1,0 +1,37 @@
+# Service systemd — PASSERELLE MESSAGERIE + SCHEDULER CRON par utilisateur.
+# Instance %i = nom d'utilisateur (ex: aibox-gateway@andre).
+#
+# C'est le process qui : (1) fait tourner le scheduler cron (tâches planifiées /
+# routines — SANS lui, `hermes cron` n'exécute JAMAIS les jobs) et (2) écoute les
+# plateformes de messagerie configurées (Telegram, Discord, WhatsApp…). Le token
+# Telegram et l'allowlist sont lus depuis HERMES_HOME/.env (jamais ici).
+#
+# EnvironmentFile par user — /home/<owner>/aibox/gateway/<user>.env :
+#     HERMES_HOME=/home/<owner>/aibox/companies/<co>/users/<user>/hermes
+#
+# Coexiste avec aibox-webui@<user> (le chat) : même HERMES_HOME, process séparé.
+# Le gateway est le runner de fond ; le webui sert l'UI de chat.
+#
+# Installer :
+#   sudo cp aibox-gateway@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aibox-gateway@<user>
+#   journalctl -u aibox-gateway@<user> -f
+[Unit]
+Description=AI Box - Passerelle messagerie + scheduler cron (%i)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clikinfo
+EnvironmentFile=/home/clikinfo/aibox/gateway/%i.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/clikinfo/hermes-agent/venv/bin:/home/clikinfo/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/clikinfo/hermes-agent
+ExecStart=/home/clikinfo/hermes-agent/venv/bin/hermes gateway run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

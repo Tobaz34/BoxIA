@@ -96,6 +96,30 @@ for u in "${USERS[@]}"; do
   echo "  webui $u -> :$port (fr)"
 done
 
+# 1b) Passerelle messagerie + scheduler CRON par user (aibox-gateway@<user>) -----
+#     Process de fond OBLIGATOIRE pour : (a) exécuter les tâches planifiées /
+#     routines (`hermes cron`) — sans lui, aucun job ne se déclenche — et (b)
+#     écouter Telegram/Discord/WhatsApp. Token + allowlist Telegram = HERMES_HOME/.env
+#     (écrit par wizard-user.sh), jamais ici. Même HERMES_HOME que le webui, process
+#     séparé. env minimal : juste HERMES_HOME.
+GATEWAY_DIR="$AIBOX_ROOT/gateway"
+run "mkdir -p '$GATEWAY_DIR'"
+run "install -m 644 '$AIBOX_HERMES_DIR/provision/aibox-gateway@.service' /etc/systemd/system/aibox-gateway@.service"
+run "systemctl daemon-reload"
+for u in "${USERS[@]}"; do
+  envf="$GATEWAY_DIR/$u.env"; hh="$USERS_DIR/$u/hermes"
+  if [ "$CHECK" = 1 ]; then
+    echo "    [check] écrire $envf (HERMES_HOME=$hh)"
+  else
+    echo "HERMES_HOME=$hh" > "$envf"
+    chown "$OWNER:$OWNER" "$envf"
+  fi
+  # enable puis restart inconditionnel (relit l'env même si déjà actif).
+  run "systemctl enable 'aibox-gateway@$u' >/dev/null 2>&1 || true"
+  run "systemctl restart 'aibox-gateway@$u' || true"
+  echo "  gateway $u -> cron + messagerie (Telegram si token en .env)"
+done
+
 # 2) Caddy :443 (Authentik forward_auth + map user->backend + routes web) -------
 # Le map réutilise le port RÉEL attribué à chaque user (UPORT), pas un 9130+i
 # positionnel — sinon le routage diverge de l'env réel des services.
