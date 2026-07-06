@@ -114,6 +114,39 @@ CLIKINFO
 ```
 (Pour contact@ridequest.fr, signe « L'équipe RideQuest ».)
 
+## Incidents techniques → Odoo helpdesk (dédup / rebond / création)
+
+⚠️ **support@clikinfo.fr crée DÉJÀ des tickets automatiquement** (alias Odoo de
+l'équipe « Technique »). Pour les mails de CETTE boîte : **ne crée AUCUN ticket**
+(Odoo l'a déjà fait) — tu peux juste les mentionner dans le bilan.
+
+Pour un email d'**incident technique arrivant dans une boîte DIRECTE**
+(a.ladurelle@clikinfo.fr, contact@clikinfo.fr, a.ladurelle@xefi.fr) — panne, accès
+perdu, « ne fonctionne plus », erreur, serveur/imprimante/mail HS, demande d'un
+client — applique ce flux **avant** de rédiger une réponse :
+
+1. **Identifier le client** : `find_partner(<email expéditeur>)` → `partner_id`.
+2. **Dédup (ticket déjà ouvert ?)** :
+   `odoo_search_read("helpdesk.ticket", [["partner_id","=",<id>],["stage_id.fold","=",false]], ["name","stage_id","create_date"], 20, "create_date desc")`.
+   Si un ticket ouvert correspond au même sujet → **NE crée PAS**. Ajoute une note
+   (`log_note("helpdesk.ticket", <ticket_id>, "Relance client par email le … : …")`)
+   et signale « rattaché à #… » dans le bilan.
+3. **Rebond (clôturé trop vite ?)** : cherche les tickets **fermés récemment**
+   (stage `fold=true`, `write_date` < 14 j) du même partenaire, sujet proche :
+   `odoo_search_read("helpdesk.ticket", [["partner_id","=",<id>],["stage_id.fold","=",true],["write_date",">",<date-14j>]], ["name","stage_id","write_date"], 10, "write_date desc")`.
+   Si ça correspond → **REBOND** : ne crée pas un doublon. **Rouvre** le ticket
+   (`odoo_update("helpdesk.ticket", <id>, {"stage_id": <id stage "In Progress">})`)
+   + `log_note` (« Rebond : le client resignale le … ; clôture probablement
+   prématurée ») et marque « 🔁 rebond » dans le bilan.
+4. **Sinon (vraiment nouveau)** : **crée** le ticket —
+   `odoo_create("helpdesk.ticket", {"name": <sujet>, "partner_id": <id>, "team_id": 1, "description": <résumé du mail>, "priority": <"2"|"3" si urgent>})`.
+   (team_id 1 = « Technique ». Utilise `odoo_fields("helpdesk.ticket")` en cas de doute.)
+   Signale « ✅ ticket #… créé » dans le bilan.
+
+Règles : crée UNIQUEMENT pour un incident clair d'un client **identifié**. Si le
+client est inconnu ou le cas ambigu → **ne crée pas**, prépare une alerte/brouillon
+et signale-le. Ne **clôture** jamais un ticket. Ne touche jamais aux tickets via support@.
+
 ## Format du bilan (livré sur Telegram)
 
 Court, lisible sur mobile. Exemple :
