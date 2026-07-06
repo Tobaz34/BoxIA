@@ -44,8 +44,14 @@ echo "  config.yaml (connecteurs: $AGENT_CONNECTORS)"
 
 # 2) .env : hérite les secrets d'andre (isolation via connecteurs/skill ; durcir
 #    plus tard avec des comptes techniques Odoo dédiés par agent).
-[ -f "$HH/.env" ] || { install -m 600 "$REF_ENV" "$HH/.env"; }
-echo "  .env"
+#    ⚠️ On RETIRE le token Telegram : un seul process (andre) peut détenir le bot ;
+#    sinon le gateway de l'agent crashe (« token already in use »). Les agents
+#    livrent en local, pas besoin de Telegram.
+if [ ! -f "$HH/.env" ]; then
+  install -m 600 "$REF_ENV" "$HH/.env"
+  sed -i '/^TELEGRAM_/d' "$HH/.env"
+fi
+echo "  .env (sans token Telegram)"
 
 # 3) SOUL.md : persona de l'agent
 cat > "$HH/SOUL.md" <<EOF
