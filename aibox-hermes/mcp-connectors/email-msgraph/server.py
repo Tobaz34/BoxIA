@@ -108,7 +108,11 @@ def _recent_one(mb: str, limit: int, unread_only: bool, folder: str) -> list[dic
     }
     if unread_only:
         params["$filter"] = "isRead eq false"
-    data = _req("GET", f"/users/{mb}/mailFolders/{folder}/messages", params)
+    # folder bien connu (inbox…) utilisable tel quel ; sinon résoudre le NOM → id
+    # (nécessaire pour lire les dossiers custom de routage AI-<métier>).
+    fkey = (folder or "inbox").strip()
+    fref = fkey if fkey.lower() in _WELL_KNOWN else _resolve_folder_id(mb, fkey)
+    data = _req("GET", f"/users/{mb}/mailFolders/{fref}/messages", params)
     out = []
     for m in data.get("value", []):
         e = _envelope(m)
