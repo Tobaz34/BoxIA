@@ -141,6 +141,36 @@ def _himalaya_accounts() -> list:
     return res
 
 
+def _connector_env(name: str) -> dict:
+    """Env d'un connecteur MCP, comme Hermes l'injecte : lit le bloc `env:` du
+    serveur dans config.yaml ; ${env:X} est résolu depuis .env, sinon valeur
+    littérale (cas des connecteurs configurés via l'UI, ex. Odoo)."""
+    lines = _config_text().splitlines()
+    dotenv = _read_env()
+    out: dict = {}
+    in_srv = in_env = False
+    for line in lines:
+        if re.match(rf"^  {re.escape(name)}:\s*$", line):
+            in_srv = True
+            continue
+        if in_srv:
+            if re.match(r"^  \S", line):        # autre serveur → fin
+                break
+            if re.match(r"^    env:\s*$", line):
+                in_env = True
+                continue
+            if in_env:
+                if re.match(r"^    \S", line) and not re.match(r"^      ", line):
+                    in_env = False                # fin du bloc env
+                    continue
+                m = re.match(r"^      ([A-Za-z0-9_]+):\s*(.*)$", line)
+                if m:
+                    k, v = m.group(1), m.group(2).strip().strip("'\"")
+                    ph = re.match(r"^\$\{env:([A-Za-z0-9_]+)\}$", v)
+                    out[k] = dotenv.get(ph.group(1), "") if ph else v
+    return out
+
+
 def _connector_python(name: str) -> str | None:
     """Chemin du python du venv d'un connecteur MCP, extrait de config.yaml.
 
@@ -300,7 +330,10 @@ def _check_connector(name: str, snippet: str) -> dict:
     # le bloc `env:` de config.yaml (${env:X} résolu depuis .env). Notre test doit
     # faire pareil — on charge le .env de HERMES_HOME et on le passe au sous-process.
     try:
-        r = _run([py, "-c", code], timeout=25, extra_env=_read_env())
+        # env comme Hermes l'injecte : .env + bloc env: du connecteur dans config.yaml
+        env = _read_env()
+        env.update(_connector_env(name))
+        r = _run([py, "-c", code], timeout=25, extra_env=env)
     except subprocess.TimeoutExpired:
         return {"ok": False, "message": "timeout (serveur injoignable ?)"}
     out = (r.stdout or "").strip()
@@ -336,6 +369,13 @@ def _check(iid: str) -> dict:
             "print('OK', 'service joignable')\n"
         )
         return _check_connector("pennylane", snip)
+    if iid == "odoo":
+        snip = (
+            "import server\n"
+            "h=getattr(server.odoo_health,'fn',server.odoo_health)()\n"
+            "print('OK', 'Odoo', h.get('server_version'))\n"
+        )
+        return _check_connector("odoo", snip)
     raise HTTPException(status_code=404, detail="Intégration inconnue ou non testable.")
 
 
