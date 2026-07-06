@@ -231,7 +231,8 @@ def _check_connector(name: str, snippet: str) -> dict:
     py = _connector_python(name)
     if not py or not Path(py).exists():
         return {"ok": False, "message": f"venv du connecteur {name} introuvable"}
-    conn_dir = str(Path(py).parents[1])   # .../<name>/.venv/bin/python → .../<name>
+    # .../<name>/.venv/bin/python → parents: [0]=bin [1]=.venv [2]=<name> (server.py)
+    conn_dir = str(Path(py).parents[2])
     code = f"import sys; sys.path.insert(0, {conn_dir!r})\n" + snippet
     try:
         r = _run([py, "-c", code], timeout=25)
