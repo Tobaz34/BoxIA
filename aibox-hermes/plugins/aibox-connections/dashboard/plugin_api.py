@@ -123,9 +123,10 @@ def _connector_python(name: str) -> str | None:
         if in_srv:
             if re.match(r"^  \S", line):    # début d'un autre serveur (2 espaces)
                 break
-            m = re.search(r'command:\s*"([^"]+)"', line)
+            # valeur avec ou SANS guillemets (Hermes réécrit le YAML sans quotes)
+            m = re.search(r'command:\s*(.+?)\s*$', line)
             if m:
-                return m.group(1)
+                return m.group(1).strip().strip("'\"")
     return None
 
 
