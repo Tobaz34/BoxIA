@@ -273,6 +273,8 @@ def _build_inventory() -> list:
             "label": label,
             "kind": kind,
             "configured": True,
+            "enabled": True,
+            "disabled": False,
             "detail": "Connecteur MCP",
             "checkable": True,
         })
