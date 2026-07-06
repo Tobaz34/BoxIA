@@ -176,32 +176,47 @@ def _build_inventory() -> list:
             "checkable": ok,
         })
 
-    # 4. Comptabilité (Pennylane)
-    items.append({
-        "id": "pennylane",
-        "category": "Comptabilité",
-        "label": "Pennylane",
-        "kind": "Factures / clients",
-        "configured": "pennylane" in mcp,
-        "detail": "Connecteur MCP lecture seule",
-        "checkable": "pennylane" in mcp,
-    })
+    # 4. Autres connecteurs MCP RÉELLEMENT déclarés (hors email, déjà traités).
+    #    Métadonnées d'affichage pour ceux qu'on connaît ; générique sinon.
+    #    → on n'affiche QUE ce qui est effectivement dans la config (pas de
+    #      catalogue codé en dur : si un connecteur n'est pas là, il n'apparaît pas).
+    meta = {
+        "pennylane": ("Comptabilité", "Pennylane", "Factures / clients"),
+        "odoo": ("ERP / CRM", "Odoo", "ERP"),
+        "sharepoint": ("Documents", "SharePoint / OneDrive", "Microsoft 365"),
+        "glpi": ("Support IT", "GLPI", "Tickets IT"),
+        "fec": ("Comptabilité", "FEC", "Écritures comptables"),
+    }
+    for name in sorted(mcp):
+        if name in ("email-msgraph", "email-ews"):
+            continue  # déjà rendus comme boîtes email
+        cat, label, kind = meta.get(name, ("Connecteurs", name, "Serveur MCP"))
+        items.append({
+            "id": name,
+            "category": cat,
+            "label": label,
+            "kind": kind,
+            "configured": True,
+            "detail": "Connecteur MCP",
+            "checkable": True,
+        })
 
-    # 5. Intégrations prévues mais pas encore branchées (visibilité produit)
+    # 5. Suggestions « disponibles » : uniquement des intégrations pertinentes non
+    #    encore branchées (Odoo, SharePoint). Masquées dès qu'elles sont configurées.
     for iid, cat, label, kind in [
-        ("sharepoint", "Documents", "SharePoint / OneDrive", "Microsoft 365"),
         ("odoo", "ERP / CRM", "Odoo", "ERP"),
-        ("glpi", "Support IT", "GLPI", "Tickets"),
+        ("sharepoint", "Documents", "SharePoint / OneDrive", "Microsoft 365"),
     ]:
-        present = iid in mcp
+        if iid in mcp:
+            continue
         items.append({
             "id": iid,
             "category": cat,
             "label": label,
             "kind": kind,
-            "configured": present,
-            "detail": "Connecté" if present else "Disponible — non configuré",
-            "checkable": present,
+            "configured": False,
+            "detail": "Disponible — non configuré",
+            "checkable": False,
         })
 
     return items
