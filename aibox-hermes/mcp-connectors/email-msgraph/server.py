@@ -220,6 +220,20 @@ def mark_email_read(mailbox: str, message_id: str, read: bool = True) -> dict[st
 
 
 @mcp.tool
+def create_mail_folder(mailbox: str, name: str) -> dict[str, Any]:
+    """Crée un dossier à la racine de la boîte (idempotent : renvoie l'existant si déjà là).
+    Sert au dispatcher pour créer les dossiers de routage AI-<métier>. Action mutative."""
+    mb = _check_mailbox(mailbox)
+    # idempotent : cherche d'abord un dossier de même nom
+    data = _req("GET", f"/users/{mb}/mailFolders", {"$top": 100, "$select": "id,displayName"})
+    for f in data.get("value", []):
+        if (f.get("displayName") or "").lower() == name.strip().lower():
+            return {"created": False, "exists": True, "id": f.get("id"), "name": f.get("displayName")}
+    res = _req("POST", f"/users/{mb}/mailFolders", json_body={"displayName": name})
+    return {"created": True, "id": res.get("id"), "name": res.get("displayName")}
+
+
+@mcp.tool
 def move_email(mailbox: str, message_id: str, target_folder: str) -> dict[str, Any]:
     """Déplace un email vers un dossier (tri automatique). Réversible.
 
