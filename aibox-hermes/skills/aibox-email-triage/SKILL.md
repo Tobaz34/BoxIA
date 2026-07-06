@@ -158,6 +158,39 @@ Règles : crée UNIQUEMENT pour un incident clair d'un client **identifié**. Si
 client est inconnu ou le cas ambigu → **ne crée pas**, prépare une alerte/brouillon
 et signale-le. Ne **clôture** jamais un ticket. Ne touche jamais aux tickets via support@.
 
+## Demandes commerciales → Odoo (contexte + pipeline + devis)
+
+Pour un email à caractère **commercial** (demande de devis, de prix, de
+renseignement produit/service, intérêt, projet) d'un client/prospect :
+
+1. **Client** : `find_partner(<email>)` → `partner_id` (si introuvable = prospect
+   nouveau, à qualifier).
+2. **Contexte Odoo** (lecture — pour répondre juste) :
+   - devis/commandes : `odoo_search_read("sale.order", [["partner_id","=",<id>]], ["name","state","amount_total","date_order"], 10, "date_order desc")`
+   - projets : `odoo_search_read("project.project", [["partner_id","=",<id>]], ["name"], 10)`
+   - pipeline : `odoo_search_read("crm.lead", [["partner_id","=",<id>]], ["name","stage_id","expected_revenue"], 10)`
+   - impayés éventuels : `list_open_invoices` (ne pas relancer commercialement un client en litige sans le savoir).
+3. **Pipeline CRM** : si aucune opportunité ouverte ne correspond, crée-la —
+   `odoo_create("crm.lead", {"name": <objet de la demande>, "type": "opportunity", "partner_id": <id>, "email_from": <email>, "description": <résumé>})`.
+   Sinon ajoute une note (`log_note("crm.lead", <id>, <résumé de la demande>)`).
+4. **Projet** : si la demande concerne un projet existant, ajoute une note
+   (`log_note("project.project", <id>, …)`).
+5. **Devis (au besoin, PRUDENT)** : si le client demande explicitement un devis :
+   - Crée-le en **brouillon** : `odoo_create("sale.order", {"partner_id": <id>})`
+     (Odoo remplit les défauts ; en cas d'erreur sur un champ requis, lis
+     `odoo_fields("sale.order")` et complète). **Ne le confirme/n'envoie JAMAIS.**
+   - Ajoute des lignes UNIQUEMENT si les produits demandés correspondent
+     clairement au catalogue (`odoo_search_read("product.product", [["sale_ok","=",true],"|",["name","ilike",<terme>],["default_code","ilike",<terme>]], ["name","list_price","default_code"], 10)`).
+     **N'invente jamais un produit ni un prix.** Si le produit/tarif n'est pas sûr,
+     laisse le devis vide + note les éléments à chiffrer, et signale « devis à
+     finaliser (chiffrage humain) » au bilan.
+6. **Réponse** : prépare un **brouillon** de réponse informé (jamais d'auto-envoi —
+   une réponse commerciale n'est JAMAIS « triviale »). Cite le bon contexte
+   (projet en cours, dernier devis, etc.).
+
+Garde-fous : jamais d'envoi auto d'une réponse commerciale ; devis toujours en
+brouillon (jamais confirmé/envoyé) ; produits/prix **du catalogue uniquement**.
+
 ## Format du bilan (livré sur Telegram)
 
 Court, lisible sur mobile. Exemple :
