@@ -1,0 +1,46 @@
+# Manifest interne AI Box — Odoo exposé en MCP (API externe XML-RPC).
+manifest_version: 1
+name: odoo
+description: "Odoo (XML-RPC) — contacts, factures clients, pistes CRM ; lecture + création de piste/note sous approval."
+
+transport:
+  type: stdio
+  command: "${INSTALL_DIR}/.venv/bin/python"
+  args:
+    - "${INSTALL_DIR}/server.py"
+
+install:
+  type: local
+  bootstrap:
+    - "python3 -m venv .venv"
+    - ".venv/bin/pip install -r requirements.txt"
+
+auth:
+  type: api_key
+  env:
+    - name: ODOO_URL
+      prompt: "URL Odoo (ex: https://odoo.example.com)"
+      required: true
+      secret: false
+    - name: ODOO_DB
+      prompt: "Nom de la base Odoo"
+      required: true
+      secret: false
+    - name: ODOO_USERNAME
+      prompt: "Login du compte technique Odoo"
+      required: true
+      secret: false
+    - name: ODOO_API_KEY
+      prompt: "Clé API Odoo (Préférences → Sécurité du compte)"
+      required: true
+      secret: true
+
+tools:
+  default_enabled:
+    - odoo_health
+    - odoo_search_read
+    - find_partner
+    - list_open_invoices
+    - list_leads
+    - create_lead   # mutatif — gated
+    - log_note      # mutatif — gated

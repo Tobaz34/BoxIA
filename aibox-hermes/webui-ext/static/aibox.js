@@ -84,3 +84,131 @@
   if (document.body) start();
   else document.addEventListener("DOMContentLoaded", start);
 })();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI Box — panneau « Connexions » (visible DANS le chat, pas dans le dashboard).
+// Additif & update-safe : bouton flottant + fenêtre, lit l'API native
+// /api/mcp/servers de hermes-webui (même origine → cookie de session porté).
+// Réservé à l'admin (?role=admin). N'écrit rien, ne touche pas au reste de l'UI.
+// ─────────────────────────────────────────────────────────────────────────────
+(function () {
+  "use strict";
+  if (window.__aiboxConnexions) return;
+  window.__aiboxConnexions = true;
+
+  var me = document.currentScript;
+  var role = "client";
+  try { role = new URL(me.src).searchParams.get("role") === "admin" ? "admin" : "client"; } catch (e) {}
+  if (role !== "admin") return;   // vue technique réservée à l'admin
+
+  // Libellés lisibles par connecteur MCP (fallback = nom brut).
+  var META = {
+    "email-msgraph": { label: "Emails Microsoft 365", icon: "✉️", cat: "Email" },
+    "email-ews": { label: "Email Exchange", icon: "✉️", cat: "Email" },
+    "odoo": { label: "Odoo", icon: "🏢", cat: "ERP / CRM" },
+    "pennylane": { label: "Pennylane", icon: "🧾", cat: "Comptabilité" },
+    "glpi": { label: "GLPI", icon: "🛠️", cat: "Support IT" },
+  };
+
+  var CSS = ""
+    + "#aibox-cx-btn{position:fixed;left:14px;bottom:14px;z-index:99998;display:flex;align-items:center;gap:.5rem;"
+    + "padding:.5rem .8rem;border-radius:10px;border:1px solid rgba(255,255,255,.15);cursor:pointer;"
+    + "background:linear-gradient(180deg,#2563eb,#4f86ff);color:#fff;font:600 13px Inter,Segoe UI,system-ui,sans-serif;"
+    + "box-shadow:0 4px 14px rgba(37,99,235,.35);}"
+    + "#aibox-cx-ov{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;}"
+    + "#aibox-cx-modal{width:min(560px,92vw);max-height:82vh;overflow:auto;background:var(--color-card,#111827);color:var(--color-foreground,#e5e7eb);"
+    + "border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:1.1rem 1.2rem;font:14px Inter,Segoe UI,system-ui,sans-serif;}"
+    + "#aibox-cx-modal h2{margin:0 0 .2rem;font-size:1.05rem;}"
+    + ".aibox-cx-sub{color:#9ca3af;font-size:.82rem;margin-bottom:.9rem;}"
+    + ".aibox-cx-row{display:flex;align-items:center;gap:.6rem;padding:.6rem .2rem;border-bottom:1px solid rgba(255,255,255,.08);}"
+    + ".aibox-cx-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;}"
+    + ".aibox-cx-name{font-weight:600;}"
+    + ".aibox-cx-meta{font-size:.78rem;color:#9ca3af;}"
+    + ".aibox-cx-st{margin-left:auto;font-size:.8rem;}"
+    + "#aibox-cx-close{float:right;cursor:pointer;border:none;background:transparent;color:#9ca3af;font-size:1.2rem;line-height:1;}"
+    + ".aibox-cx-foot{margin-top:.9rem;font-size:.76rem;color:#9ca3af;}";
+
+  function injectCSS() {
+    if (document.getElementById("aibox-cx-css")) return;
+    var s = document.createElement("style"); s.id = "aibox-cx-css"; s.textContent = CSS;
+    document.head.appendChild(s);
+  }
+
+  function close() { var o = document.getElementById("aibox-cx-ov"); if (o) o.remove(); }
+
+  function render(servers, err) {
+    close();
+    var ov = document.createElement("div"); ov.id = "aibox-cx-ov";
+    ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
+    var m = document.createElement("div"); m.id = "aibox-cx-modal";
+
+    var closeBtn = document.createElement("button"); closeBtn.id = "aibox-cx-close";
+    closeBtn.textContent = "×"; closeBtn.addEventListener("click", close); m.appendChild(closeBtn);
+
+    var h = document.createElement("h2"); h.textContent = "Connexions"; m.appendChild(h);
+    var sub = document.createElement("div"); sub.className = "aibox-cx-sub";
+    m.appendChild(sub);
+
+    if (err) {
+      var e = document.createElement("div"); e.style.color = "#f87171";
+      e.textContent = "Impossible de lire l'état des connexions (" + err + ").";
+      m.appendChild(e);
+    } else {
+      var nOk = 0;
+      servers.forEach(function (s) {
+        var meta = META[s.name] || { label: s.name, icon: "🔌", cat: "Connecteurs" };
+        var enabled = s.enabled !== false;
+        var active = !!s.active;
+        if (enabled) nOk++;
+        var color = active ? "#16a34a" : (enabled ? "#3b82f6" : "#6b7280");
+        var stTxt = active ? ("Actif · " + (s.tool_count || 0) + " outils")
+                           : (enabled ? "Prêt" : "Désactivé");
+
+        var row = document.createElement("div"); row.className = "aibox-cx-row";
+        var dot = document.createElement("span"); dot.className = "aibox-cx-dot"; dot.style.background = color;
+        var mid = document.createElement("div"); mid.style.flex = "1 1 auto"; mid.style.minWidth = "0";
+        var nm = document.createElement("div"); nm.className = "aibox-cx-name";
+        nm.textContent = meta.icon + "  " + meta.label;
+        var mt = document.createElement("div"); mt.className = "aibox-cx-meta"; mt.textContent = meta.cat;
+        mid.appendChild(nm); mid.appendChild(mt);
+        var st = document.createElement("span"); st.className = "aibox-cx-st"; st.style.color = color; st.textContent = stTxt;
+        row.appendChild(dot); row.appendChild(mid); row.appendChild(st);
+        m.appendChild(row);
+      });
+      sub.textContent = servers.length + " connecteur(s) · " + nOk + " prêt(s)";
+      var foot = document.createElement("div"); foot.className = "aibox-cx-foot";
+      foot.textContent = "« Prêt » = configuré et activé. « Actif » = connecté avec ses outils chargés (au 1er usage dans une conversation).";
+      m.appendChild(foot);
+    }
+
+    ov.appendChild(m); document.body.appendChild(ov);
+  }
+
+  function open() {
+    injectCSS();
+    render([], null);
+    var sub = document.querySelector("#aibox-cx-modal .aibox-cx-sub");
+    if (sub) sub.textContent = "Chargement…";
+    fetch("/api/mcp/servers", { credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (d) { render((d && d.servers) || [], null); })
+      .catch(function (e) { render([], String(e.message || e)); });
+  }
+
+  function addButton() {
+    if (document.getElementById("aibox-cx-btn") || !document.body) return;
+    injectCSS();
+    var b = document.createElement("button"); b.id = "aibox-cx-btn"; b.type = "button";
+    b.innerHTML = "🔌 Connexions";
+    b.addEventListener("click", open);
+    document.body.appendChild(b);
+  }
+
+  function boot() {
+    addButton();
+    // le chat est une SPA : on ré-injecte le bouton s'il disparaît après un re-render
+    setInterval(addButton, 2500);
+  }
+  if (document.body) boot();
+  else document.addEventListener("DOMContentLoaded", boot);
+})();

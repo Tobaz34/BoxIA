@@ -54,12 +54,29 @@ def _email_ews_block(tenant_dir: str, pennylane_base_url: str) -> str:
     )
 
 
+def _odoo_block(tenant_dir: str, pennylane_base_url: str) -> str:
+    # Odoo via XML-RPC. Secrets depuis ${HERMES_HOME}/.env.
+    return (
+        '  odoo:\n'
+        f'    command: "{tenant_dir}/mcp-connectors/odoo/.venv/bin/python"\n'
+        f'    args: ["{tenant_dir}/mcp-connectors/odoo/server.py"]\n'
+        '    env:\n'
+        '      ODOO_URL: "${env:ODOO_URL}"\n'
+        '      ODOO_DB: "${env:ODOO_DB}"\n'
+        '      ODOO_USERNAME: "${env:ODOO_USERNAME}"\n'
+        '      ODOO_API_KEY: "${env:ODOO_API_KEY}"\n'
+        '    timeout: 60\n'
+        '    tools: { resources: false, prompts: false }'
+    )
+
+
 # Registre des connecteurs MCP connus → fonction qui rend leur bloc de config.
 CONNECTORS = {
     "pennylane": _pennylane_block,
     "email-msgraph": _email_msgraph_block,
     "email-ews": _email_ews_block,
-    # odoo / glpi / fec : à ajouter ici quand leurs shims MCP existent.
+    "odoo": _odoo_block,
+    # glpi / fec : à ajouter ici quand leurs shims MCP existent.
 }
 
 # Overlay de personnalité (agent.system_prompt) : produit français → réponses FR +

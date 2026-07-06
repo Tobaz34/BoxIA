@@ -96,6 +96,11 @@ else
     [ -n "${EWS_EMAIL:-}" ] && echo "EWS_EMAIL='$EWS_EMAIL'"
     [ -n "${EWS_USERNAME:-}" ] && echo "EWS_USERNAME='$EWS_USERNAME'"
     [ -n "${EWS_PASSWORD:-}" ] && echo "EWS_PASSWORD='$EWS_PASSWORD'"
+    # Connecteur Odoo (XML-RPC) — cf. mcp-connectors/odoo
+    [ -n "${ODOO_URL:-}" ] && echo "ODOO_URL='$ODOO_URL'"
+    [ -n "${ODOO_DB:-}" ] && echo "ODOO_DB='$ODOO_DB'"
+    [ -n "${ODOO_USERNAME:-}" ] && echo "ODOO_USERNAME='$ODOO_USERNAME'"
+    [ -n "${ODOO_API_KEY:-}" ] && echo "ODOO_API_KEY='$ODOO_API_KEY'"
     echo "AIBOX_RGPD_SCRUB='$RGPD'"
     echo "AIBOX_MUTATING_TOOLS_REGEX='$MUT_REGEX'"
   } > "$COMP_DIR/company.env"

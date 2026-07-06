@@ -146,6 +146,10 @@ else
     for v in EWS_ENDPOINT EWS_EMAIL EWS_USERNAME EWS_PASSWORD; do
       _sync_env_var "$v"; done ;;
   esac
+  case ",$ALLOWED_CSV," in *",odoo,"*)
+    for v in ODOO_URL ODOO_DB ODOO_USERNAME ODOO_API_KEY; do
+      _sync_env_var "$v"; done ;;
+  esac
   say "(.env déjà présent — préservé, clé cloud/scrub/email assurés)"
 fi
 say ".env -> $ENV_FILE"
