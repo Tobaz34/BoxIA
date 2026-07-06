@@ -64,8 +64,11 @@ def _run(args: list[str], stdin: bytes | None = None, timeout: int = 90) -> subp
 
 
 def _json(args: list[str], timeout: int = 90) -> Any:
-    """Lance une commande himalaya en sortie JSON (stdout only ; les WARN vont en stderr)."""
-    p = _run(args + ["-o", "json"], timeout=timeout)
+    """Lance une commande himalaya en sortie JSON (stdout only ; les WARN vont en stderr).
+
+    IMPORTANT : `args` DOIT déjà contenir `-o json` AVANT toute requête (la query
+    de `envelope list` est variadique et absorberait un `-o json` placé après)."""
+    p = _run(args, timeout=timeout)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or p.stdout).decode("utf-8", "replace").strip()[:400] or "himalaya a échoué")
     out = p.stdout.decode("utf-8", "replace").strip()
@@ -98,14 +101,15 @@ def _envelope(e: dict[str, Any], account: str) -> dict[str, Any]:
 @mcp.tool
 def himalaya_email_health() -> dict[str, Any]:
     """Vérifie que himalaya répond et liste les comptes IMAP/SMTP configurés (Gmail, RideQuest)."""
-    accts = _json(["account", "list"])
+    accts = _json(["account", "list", "-o", "json"])
     names = [a.get("name") for a in accts] if isinstance(accts, list) else ACCOUNTS
     return {"ok": True, "bin": HIMALAYA, "accounts": names}
 
 
 def _list_one(account: str, limit: int, unread_only: bool, folder: str) -> list[dict[str, Any]]:
     n = max(1, min(int(limit), 50))
-    args = ["envelope", "list", "-a", account, "-f", folder or "inbox", "-s", str(n)]
+    # -o json AVANT la query (variadique) sinon himalaya l'absorbe dans le filtre.
+    args = ["envelope", "list", "-a", account, "-f", folder or "inbox", "-s", str(n), "-o", "json"]
     if unread_only:
         args += ["not", "flag", "seen"]   # requête himalaya : non-lus
     try:
@@ -146,7 +150,7 @@ def read_email(account: str, message_id: str, folder: str = "inbox") -> dict[str
 def list_mail_folders(account: str) -> list[dict[str, Any]]:
     """Liste les dossiers d'un compte (nom). account = gmail|ridequest. Lecture seule."""
     _accounts_arg(account)
-    folders = _json(["folder", "list", "-a", account])
+    folders = _json(["folder", "list", "-a", account, "-o", "json"])
     out = []
     for f in (folders or []):
         if isinstance(f, dict):
@@ -204,7 +208,7 @@ def create_draft_email(account: str, to: str, subject: str, body: str,
     # Récupère l'id du brouillon fraîchement créé (le plus récent au sujet identique).
     draft_id = ""
     try:
-        env = _json(["envelope", "list", "-a", account, "-f", DRAFTS, "-s", "10"])
+        env = _json(["envelope", "list", "-a", account, "-f", DRAFTS, "-s", "10", "-o", "json"])
         for e in (env or []):
             if (e.get("subject") or "") == subj:
                 draft_id = str(e.get("id")); break
