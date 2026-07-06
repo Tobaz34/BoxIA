@@ -107,7 +107,8 @@ fi
 say "config -> $COMP_DIR/company.env (+ company.yaml)"
 
 # venvs MCP partagés (créés une fois pour toute l'entreprise)
-for conn in $ENABLED_CONNECTORS; do
+# NB : ENABLED_CONNECTORS est un csv → convertir les virgules en espaces.
+for conn in ${ENABLED_CONNECTORS//,/ }; do
   d="$AIBOX_HERMES_DIR/mcp-connectors/$conn"
   if [ ! -f "$d/requirements.txt" ]; then say "(connecteur inconnu, ignoré: $conn)"; continue; fi
   run "python3 -m venv '$d/.venv'"
