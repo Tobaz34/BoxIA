@@ -109,10 +109,24 @@ def _himalaya_accounts() -> list:
 
 
 def _connector_python(name: str) -> str | None:
-    """Chemin du python du venv d'un connecteur MCP, extrait de config.yaml."""
-    txt = _config_text()
-    m = re.search(rf'^  {re.escape(name)}:\s*\n\s+command:\s*"([^"]+)"', txt, re.M)
-    return m.group(1) if m else None
+    """Chemin du python du venv d'un connecteur MCP, extrait de config.yaml.
+
+    Parsing ligne par ligne (robuste) : on repère la ligne `  <name>:` puis on
+    lit la 1re ligne `command: "..."` du bloc indenté qui suit.
+    """
+    lines = _config_text().splitlines()
+    in_srv = False
+    for line in lines:
+        if re.match(rf"^  {re.escape(name)}:\s*$", line):
+            in_srv = True
+            continue
+        if in_srv:
+            if re.match(r"^  \S", line):    # début d'un autre serveur (2 espaces)
+                break
+            m = re.search(r'command:\s*"([^"]+)"', line)
+            if m:
+                return m.group(1)
+    return None
 
 
 # ── Inventaire (instantané) ──────────────────────────────────────────────────
