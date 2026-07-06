@@ -217,7 +217,9 @@ Ingram, TD Synnex, Sewan, Elis, Germond, XEFI…) :
      s'il existe (ex. EDF, INGRAM, TD SYNNEX) ; sinon crée-le. Si le fournisseur est
      incertain → dossier `DIVERS`.
    - `ensure_folder(drive_id, "7 - FACTURES FOURNISSEURS/{année}/{FOURNISSEUR}")`
-     puis `upload_local_file(drive_id, ce_chemin, path)` (path = de save_attachment).
+     puis `upload_local_file(drive_id, ce_chemin, path, filename="{AAAA-MM-JJ} {FOURNISSEUR} {n° facture}.pdf")`
+     (path = de save_attachment ; **filename = nom PROPRE** — jamais le nom temporaire,
+     ex. `2026-07-06 SYNOLOGY GBPX1ZFK-0004.pdf`).
 5. **Facture fournisseur Odoo** : `find_partner(<fournisseur>)` → partner_id (si absent,
    signale-le, ne crée pas de fournisseur au hasard). Puis crée un **brouillon** de
    facture fournisseur : `odoo_create("account.move", {"move_type":"in_invoice",
