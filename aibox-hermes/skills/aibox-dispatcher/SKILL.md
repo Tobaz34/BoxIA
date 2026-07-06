@@ -14,6 +14,10 @@ agent métier surveille ensuite SON dossier.
 ## Dossiers de routage (par boîte)
 `AI-Technique`, `AI-Comptabilite`, `AI-Commercial`, `AI-Assistante`, `AI-Direction`.
 Assure-les au début via `create_mail_folder(mailbox, "AI-…")` (idempotent).
+⚠️ **`create_mail_folder` / le routage par dossiers ne marchent que sur les boîtes
+M365** (a.ladurelle@clikinfo.fr, contact@clikinfo.fr). Pour la boîte **EWS
+(a.ladurelle@xefi.fr)** : classe (catégorise) et **signale dans le bilan**, mais
+**ne déplace pas** (les dossiers EWS ne sont pas encore gérés — outil à venir).
 
 ## Règles de classement (une seule cible par email)
 - **AI-Technique** : panne, incident, erreur, accès perdu, serveur/imprimante/mail/
