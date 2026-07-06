@@ -208,9 +208,11 @@ def _build_inventory() -> list:
 
 
 # ── Tests de connexion (à la demande, bornés) ────────────────────────────────
-def _run(cmd: list, timeout: int = 20) -> subprocess.CompletedProcess:
+def _run(cmd: list, timeout: int = 20, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PATH"] = _ENV_PATH
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
 
 
@@ -234,8 +236,11 @@ def _check_connector(name: str, snippet: str) -> dict:
     # .../<name>/.venv/bin/python → parents: [0]=bin [1]=.venv [2]=<name> (server.py)
     conn_dir = str(Path(py).parents[2])
     code = f"import sys; sys.path.insert(0, {conn_dir!r})\n" + snippet
+    # Le connecteur lit ses secrets dans l'environnement : Hermes les injecte via
+    # le bloc `env:` de config.yaml (${env:X} résolu depuis .env). Notre test doit
+    # faire pareil — on charge le .env de HERMES_HOME et on le passe au sous-process.
     try:
-        r = _run([py, "-c", code], timeout=25)
+        r = _run([py, "-c", code], timeout=25, extra_env=_read_env())
     except subprocess.TimeoutExpired:
         return {"ok": False, "message": "timeout (serveur injoignable ?)"}
     out = (r.stdout or "").strip()
