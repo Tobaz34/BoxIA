@@ -53,6 +53,7 @@ def render(
     vision_model: str = "qwen2.5vl:7b",
     search_backend: str = "ddgs",
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    cloud_fallback_model: str = "",
 ) -> str:
     allowed = [c for c in connectors if c in CONNECTORS]
     blocks = "\n".join(CONNECTORS[c](tenant_dir, pennylane_base_url) for c in allowed)
@@ -77,6 +78,16 @@ def render(
         "web:\n"
         f'  backend: "{search_backend}"\n\n'
     ) if search_backend else ""
+    # Fallback cloud (Claude). `hermes fallback add` est un picker interactif SANS
+    # arguments (vérifié v0.16.0) — impossible à scripter. On écrit donc directement
+    # `fallback_providers` (lu par hermes_cli/fallback_config.get_fallback_chain).
+    # Déclenché quand le local échoue après retries (Ollama 500/EOF, surcharge…).
+    # La clé vient de ANTHROPIC_API_KEY dans ${HERMES_HOME}/.env (jamais ici).
+    fallback = (
+        "fallback_providers:\n"
+        '- provider: "anthropic"\n'
+        f'  model: "{cloud_fallback_model}"\n\n'
+    ) if cloud_fallback_model else ""
     return (
         "# Généré par render_config.py — ne pas éditer à la main.\n"
         "model:\n"
@@ -84,6 +95,7 @@ def render(
         f'  base_url: "{base_url}"\n'
         f'  default: "{model}"\n'
         "  context_length: 65536   # Hermes exige >=64K ; qwen3 natif=40K → override obligatoire\n\n"
+        f"{fallback}"
         f"{vision}"
         f"{web}"
         "mcp_servers:\n"
@@ -115,7 +127,10 @@ if __name__ == "__main__":
                     help="modèle vision pour les pièces jointes image (vide = désactivé)")
     ap.add_argument("--search-backend", default="ddgs",
                     help="backend recherche web (ddgs=DuckDuckGo sans clé ; vide = désactivé)")
+    ap.add_argument("--cloud-fallback-model", default="",
+                    help="modèle Claude en fallback du local, ex: claude-haiku-4-5 (vide = désactivé)")
     a = ap.parse_args()
     conns = [c.strip() for c in a.connectors.split(",") if c.strip()]
     print(render(a.model, a.base_url, conns, a.tenant_dir, a.pennylane_base_url,
-                 a.vision_model, a.search_backend))
+                 a.vision_model, a.search_backend,
+                 cloud_fallback_model=a.cloud_fallback_model))

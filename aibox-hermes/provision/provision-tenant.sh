@@ -102,10 +102,21 @@ else
 fi
 say ".env -> $ENV_FILE"
 
-# 6. Fallback cloud (si clé + binaire hermes présents)
-if [ -n "${ANTHROPIC_API_KEY:-}" ] && command -v hermes >/dev/null 2>&1; then
-  run "HERMES_HOME='$HERMES_HOME' hermes fallback add anthropic claude-haiku-4-5 --priority 1 || true"
-  say "fallback cloud -> Claude Haiku (priority 1), local en repli"
+# 6. Fallback cloud (si clé présente) — écrit fallback_providers dans config.yaml.
+# NB : `hermes fallback add` (v0.16.0) est un picker interactif sans arguments,
+# non scriptable ; on écrit la clé de config lue par get_fallback_chain().
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  if [ "$CHECK" = 1 ]; then
+    echo "    [check] append fallback_providers (anthropic/claude-haiku-4-5) -> $OUT"
+  elif ! grep -q '^fallback_providers:' "$OUT"; then
+    {
+      echo ""
+      echo "fallback_providers:"
+      echo '- provider: "anthropic"'
+      echo '  model: "claude-haiku-4-5"'
+    } >> "$OUT"
+  fi
+  say "fallback cloud -> Claude Haiku, local en primary"
 fi
 
 echo "== OK. Lancer :  HERMES_HOME='$HERMES_HOME' hermes =="

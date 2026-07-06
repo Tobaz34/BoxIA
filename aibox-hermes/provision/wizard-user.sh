@@ -78,14 +78,18 @@ ALLOWED_CSV="$(echo "$ALLOWED_LIST" | tr -s ' ' | sed 's/^ //; s/ $//; s/ /,/g')
 say "RBAC -> connecteurs actifs : ${ALLOWED_CSV:-aucun}"
 
 # config.yaml : généré avec RBAC (SEULS les connecteurs autorisés y figurent)
+# + fallback cloud Claude si la clé entreprise est présente (local reste primary).
+CLOUD_FALLBACK_MODEL=""
+[ -n "${ANTHROPIC_API_KEY:-}" ] && CLOUD_FALLBACK_MODEL="${CLOUD_FALLBACK_MODEL_OVERRIDE:-claude-haiku-4-5}"
 OUT="$HERMES_HOME/config.yaml"
 run "python3 '$AIBOX_HERMES_DIR/provision/render_config.py' \
   --model '${OLLAMA_MODEL:-qwen3:8b}' \
   --base-url '${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}' \
   --connectors '$ALLOWED_CSV' \
   --tenant-dir '$AIBOX_HERMES_DIR' \
-  --pennylane-base-url '${PENNYLANE_TOOL_BASE_URL:-http://127.0.0.1:8081}' > '$OUT'"
-say "config -> $OUT"
+  --pennylane-base-url '${PENNYLANE_TOOL_BASE_URL:-http://127.0.0.1:8081}' \
+  --cloud-fallback-model '$CLOUD_FALLBACK_MODEL' > '$OUT'"
+say "config -> $OUT $([ -n "$CLOUD_FALLBACK_MODEL" ] && echo "(fallback cloud: $CLOUD_FALLBACK_MODEL)")"
 
 # .env user : secrets entreprise hérités + spécifiques user
 ENV_FILE="$HERMES_HOME/.env"
@@ -104,7 +108,20 @@ elif [ ! -f "$ENV_FILE" ]; then
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 else
-  say "(.env déjà présent — préservé)"
+  # .env préservé, MAIS le cloud doit pouvoir être activé sur un user existant :
+  # - ajoute ANTHROPIC_API_KEY si absente (jamais écrasée si déjà là)
+  # - force AIBOX_RGPD_SCRUB=1 dès que le cloud est actif (PII caviardée avant envoi)
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    if ! grep -q '^ANTHROPIC_API_KEY=' "$ENV_FILE"; then
+      printf "ANTHROPIC_API_KEY='%s'\n" "$ANTHROPIC_API_KEY" >> "$ENV_FILE"
+      say ".env : ANTHROPIC_API_KEY ajoutée"
+    fi
+    if grep -q "^AIBOX_RGPD_SCRUB='0'" "$ENV_FILE"; then
+      sed -i "s/^AIBOX_RGPD_SCRUB='0'/AIBOX_RGPD_SCRUB='1'/" "$ENV_FILE"
+      say ".env : AIBOX_RGPD_SCRUB=1 (cloud actif → scrub obligatoire)"
+    fi
+  fi
+  say "(.env déjà présent — préservé, clé cloud/scrub assurés)"
 fi
 say ".env -> $ENV_FILE"
 
@@ -138,10 +155,8 @@ if [ -f "$THEME_SRC" ]; then
   say "thème dashboard AI Box appliqué"
 fi
 
-# Fallback cloud (si clé héritée + binaire hermes présents)
-if [ -n "${ANTHROPIC_API_KEY:-}" ] && command -v hermes >/dev/null 2>&1; then
-  run "HERMES_HOME='$HERMES_HOME' hermes fallback add anthropic claude-haiku-4-5 --priority 1 || true"
-  say "fallback cloud Haiku (priority 1), local en repli"
-fi
+# Fallback cloud : écrit dans config.yaml par render_config.py (voir plus haut).
+# NB : `hermes fallback add` (v0.16.0) est un picker interactif sans arguments —
+# l'ancien appel scripté échouait en silence, le fallback n'était jamais câblé.
 
 echo "== OK. Lancer le Hermes de $USER_SLUG :  HERMES_HOME='$HERMES_HOME' hermes =="
