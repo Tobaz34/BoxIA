@@ -172,3 +172,7 @@ def send_draft_email(mailbox: str, draft_id: str) -> dict[str, Any]:
     mb = _check_mailbox(mailbox)
     _req("POST", f"/users/{mb}/messages/{draft_id}/send")
     return {"sent": True, "draft_id": draft_id}
+
+
+if __name__ == "__main__":
+    mcp.run()

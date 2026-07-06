@@ -155,3 +155,7 @@ def send_draft_email(draft_id: str) -> dict[str, Any]:
     m = a.drafts.get(id=draft_id)
     m.send()
     return {"sent": True, "draft_id": draft_id}
+
+
+if __name__ == "__main__":
+    mcp.run()
