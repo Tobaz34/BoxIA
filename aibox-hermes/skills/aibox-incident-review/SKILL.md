@@ -25,12 +25,13 @@ concis, orienté action.
 ## Étape 1 — Périmètre : incidents OUVERTS
 1. Récupère les stages : `odoo_search_read("helpdesk.stage", [], ["name","fold"])`.
    Les stages **fermés** ont `fold=true` (typiquement : Solved, Cancelled,
-   « Clôturé => … »). Les **ouverts** = les autres (New, In Progress, On Hold, Planifié).
-2. Liste les tickets ouverts :
-   `odoo_search_read("helpdesk.ticket", [["stage_id.fold","=",false]],
+   « Clôturé => … »). Note les **IDs des stages OUVERTS** (fold=false : New,
+   In Progress, On Hold, Planifié).
+2. Liste les tickets ouverts **avec un domaine par IDs de stage** (⚠️ NE PAS
+   utiliser `stage_id.fold` : le domaine à champ pointé fait échouer l'XML-RPC).
+   `odoo_search_read("helpdesk.ticket", [["stage_id","in",[<ids stages ouverts>]]],
    ["name","stage_id","user_id","team_id","priority","create_date","write_date","partner_id","ticket_ref"], 200, "priority desc, write_date asc")`.
-   (Si le domaine `stage_id.fold` échoue, filtre côté analyse en excluant les
-   stages fermés repérés à l'étape 1.)
+   (limite : garde ≤ 200 ; si beaucoup de tickets, traite d'abord les prioritaires.)
 
 ## Étape 2 — Analyse par incident (posture responsable)
 Pour chaque incident ouvert, évalue :

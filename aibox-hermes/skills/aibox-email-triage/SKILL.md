@@ -142,20 +142,21 @@ Pour un email d'**incident technique arrivant dans une boîte DIRECTE**
 perdu, « ne fonctionne plus », erreur, serveur/imprimante/mail HS, demande d'un
 client — applique ce flux **avant** de rédiger une réponse :
 
+⚠️ **Ne JAMAIS utiliser `stage_id.fold` dans un domaine** (champ pointé → échec
+XML-RPC). Repère l'état ouvert/fermé via le **nom** du `stage_id` renvoyé
+(fermés = Solved, Cancelled, « Clôturé … »).
+
 1. **Identifier le client** : `find_partner(<email expéditeur>)` → `partner_id`.
-2. **Dédup (ticket déjà ouvert ?)** :
-   `odoo_search_read("helpdesk.ticket", [["partner_id","=",<id>],["stage_id.fold","=",false]], ["name","stage_id","create_date"], 20, "create_date desc")`.
-   Si un ticket ouvert correspond au même sujet → **NE crée PAS**. Ajoute une note
-   (`log_note("helpdesk.ticket", <ticket_id>, "Relance client par email le … : …")`)
-   et signale « rattaché à #… » dans le bilan.
-3. **Rebond (clôturé trop vite ?)** : cherche les tickets **fermés récemment**
-   (stage `fold=true`, `write_date` < 14 j) du même partenaire, sujet proche :
-   `odoo_search_read("helpdesk.ticket", [["partner_id","=",<id>],["stage_id.fold","=",true],["write_date",">",<date-14j>]], ["name","stage_id","write_date"], 10, "write_date desc")`.
-   Si ça correspond → **REBOND** : ne crée pas un doublon. **Rouvre** le ticket
+2. **Dédup + rebond en UN appel** : récupère les tickets récents du partenaire :
+   `odoo_search_read("helpdesk.ticket", [["partner_id","=",<id>]], ["name","stage_id","create_date","write_date"], 20, "write_date desc")`.
+   - Un ticket au **sujet proche** dont le stage est **ouvert** (New/In Progress/
+     On Hold/Planifié) → **NE crée PAS**. `log_note("helpdesk.ticket", <id>, "Relance client par email le … : …")` + « rattaché à #… » au bilan.
+   - Un ticket au sujet proche dont le stage est **fermé** (Solved/Cancelled/Clôturé)
+     et `write_date` < 14 j → **REBOND** : ne duplique pas. **Rouvre** le ticket
    (`odoo_update("helpdesk.ticket", <id>, {"stage_id": <id stage "In Progress">})`)
    + `log_note` (« Rebond : le client resignale le … ; clôture probablement
    prématurée ») et marque « 🔁 rebond » dans le bilan.
-4. **Sinon (vraiment nouveau)** : **crée** le ticket —
+3. **Sinon (vraiment nouveau)** : **crée** le ticket —
    `odoo_create("helpdesk.ticket", {"name": <sujet>, "partner_id": <id>, "team_id": 1, "description": <résumé du mail>, "priority": <"2"|"3" si urgent>})`.
    (team_id 1 = « Technique ». Utilise `odoo_fields("helpdesk.ticket")` en cas de doute.)
    Signale « ✅ ticket #… créé » dans le bilan.

@@ -28,6 +28,11 @@ User=clikinfo
 EnvironmentFile=/home/clikinfo/aibox/gateway/%i.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=/home/clikinfo/hermes-agent/venv/bin:/home/clikinfo/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Contexte AUTOMATISÉ : le plugin aibox-approval auto-approuve les tools mutatifs
+# (aucun approbateur humain en cron → sinon la routine ne fait RIEN). Le garde-fou
+# devient le SKILL. NE PAS mettre cette variable sur aibox-webui@ : le chat garde
+# la validation manuelle /aibox-approve (protection anti-injection).
+Environment=AIBOX_APPROVAL_AUTO=1
 WorkingDirectory=/home/clikinfo/hermes-agent
 ExecStart=/home/clikinfo/hermes-agent/venv/bin/hermes gateway run
 Restart=on-failure

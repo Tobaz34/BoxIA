@@ -43,6 +43,17 @@ def _is_mutating(tool_name: str) -> bool:
     return bool(tool_name) and _pattern().fullmatch(tool_name) is not None
 
 
+def _auto_approve() -> bool:
+    """Auto-approbation des tools mutatifs en contexte AUTOMATISÉ (routines cron /
+    gateway), activée par AIBOX_APPROVAL_AUTO=1. Cette variable n'est posée QUE sur
+    le service `aibox-gateway@` (exécution non-interactive) — le chat `aibox-webui@`
+    ne l'a PAS, donc la validation manuelle anti-injection y reste obligatoire.
+
+    Le vrai garde-fou en mode auto, c'est le SKILL (ce que la routine a le droit de
+    faire) : sans approbateur humain en cron, bloquer reviendrait à ne RIEN faire."""
+    return os.environ.get("AIBOX_APPROVAL_AUTO", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _normalize_args(args: Any) -> Any:
     """Normalise les args pour le hash/résumé sans jamais les écraser en {}.
 
@@ -112,6 +123,9 @@ def _on_pre_tool_call(
     **_: Any,
 ) -> Optional[dict]:
     if not _is_mutating(tool_name):
+        return None
+    if _auto_approve():
+        logger.info("aibox-approval: auto-approuvé (contexte automatisé) → %s", tool_name)
         return None
     sid = session_id or task_id or ""
     safe_args = _normalize_args(args)
