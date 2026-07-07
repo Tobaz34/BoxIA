@@ -28,10 +28,17 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import msal
 from fastmcp import FastMCP
+
+
+def _q(v: Any) -> str:
+    """Encode un id (message/pièce jointe/dossier) pour un segment d'URL Graph.
+    Les id Graph contiennent souvent /, + ou = → sinon 400 Bad Request."""
+    return quote(str(v), safe="")
 
 mcp = FastMCP("email-msgraph")
 
@@ -148,7 +155,7 @@ def list_recent_emails(mailbox: str = "", limit: int = 10, unread_only: bool = F
 def read_email(mailbox: str, message_id: str) -> dict[str, Any]:
     """Lit un email complet (corps en texte). Lecture seule."""
     mb = _check_mailbox(mailbox)
-    m = _req("GET", f"/users/{mb}/messages/{message_id}",
+    m = _req("GET", f"/users/{mb}/messages/{_q(message_id)}",
              {"$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments"})
     body = (m.get("body") or {})
     out = _envelope(m)
@@ -177,8 +184,8 @@ def create_draft_email(mailbox: str, to: str, subject: str, body: str,
     """
     mb = _check_mailbox(mailbox)
     if reply_to_message_id:
-        draft = _req("POST", f"/users/{mb}/messages/{reply_to_message_id}/createReply", json_body={})
-        _req("PATCH", f"/users/{mb}/messages/{draft['id']}",
+        draft = _req("POST", f"/users/{mb}/messages/{_q(reply_to_message_id)}/createReply", json_body={})
+        _req("PATCH", f"/users/{mb}/messages/{_q(draft['id'])}",
              json_body={"body": {"contentType": "Text", "content": body}})
         return {"draft_id": draft["id"], "type": "reply", "subject": draft.get("subject")}
     draft = _req("POST", f"/users/{mb}/messages", json_body={
@@ -193,7 +200,7 @@ def create_draft_email(mailbox: str, to: str, subject: str, body: str,
 def send_draft_email(mailbox: str, draft_id: str) -> dict[str, Any]:
     """ENVOIE un brouillon existant. Action mutative sensible → approval-gate obligatoire."""
     mb = _check_mailbox(mailbox)
-    _req("POST", f"/users/{mb}/messages/{draft_id}/send")
+    _req("POST", f"/users/{mb}/messages/{_q(draft_id)}/send")
     return {"sent": True, "draft_id": draft_id}
 
 
@@ -219,7 +226,7 @@ def _resolve_folder_id(mb: str, name: str) -> str:
 def mark_email_read(mailbox: str, message_id: str, read: bool = True) -> dict[str, Any]:
     """Marque un email lu (read=True) ou non-lu (read=False). Tri léger, réversible."""
     mb = _check_mailbox(mailbox)
-    _req("PATCH", f"/users/{mb}/messages/{message_id}", json_body={"isRead": bool(read)})
+    _req("PATCH", f"/users/{mb}/messages/{_q(message_id)}", json_body={"isRead": bool(read)})
     return {"ok": True, "mailbox": mb, "id": message_id, "read": bool(read)}
 
 
@@ -246,7 +253,7 @@ def move_email(mailbox: str, message_id: str, target_folder: str) -> dict[str, A
     """
     mb = _check_mailbox(mailbox)
     dest = _resolve_folder_id(mb, target_folder)
-    res = _req("POST", f"/users/{mb}/messages/{message_id}/move", json_body={"destinationId": dest})
+    res = _req("POST", f"/users/{mb}/messages/{_q(message_id)}/move", json_body={"destinationId": dest})
     return {"ok": True, "mailbox": mb, "id": res.get("id", message_id), "moved_to": target_folder}
 
 
@@ -273,7 +280,7 @@ def _pdf_text(path: str, max_chars: int = 12000) -> str:
 def list_attachments(mailbox: str, message_id: str) -> list[dict[str, Any]]:
     """Liste les pièces jointes d'un email (id, nom, type, taille). Lecture seule."""
     mb = _check_mailbox(mailbox)
-    data = _req("GET", f"/users/{mb}/messages/{message_id}/attachments",
+    data = _req("GET", f"/users/{mb}/messages/{_q(message_id)}/attachments",
                 {"$select": "id,name,contentType,size"})
     return [{"id": a.get("id"), "name": a.get("name"),
              "content_type": a.get("contentType"), "size": a.get("size")}
@@ -288,7 +295,7 @@ def save_attachment(mailbox: str, message_id: str, attachment_id: str) -> dict[s
     """
     import base64
     mb = _check_mailbox(mailbox)
-    a = _req("GET", f"/users/{mb}/messages/{message_id}/attachments/{attachment_id}")
+    a = _req("GET", f"/users/{mb}/messages/{_q(message_id)}/attachments/{_q(attachment_id)}")
     b64 = a.get("contentBytes")
     if not b64:
         raise RuntimeError("Pièce jointe sans contenu (type non-fichier ?)")
