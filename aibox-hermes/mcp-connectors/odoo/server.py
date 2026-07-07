@@ -88,7 +88,7 @@ def _tag_aibox(model: str, rec_id: int, action: str = "Créé") -> bool:
     l'échec du marquage ne doit jamais faire échouer la création."""
     try:
         _kw(model, "message_post", [[int(rec_id)]], {
-            "body": f"🤖 <b>{action} automatiquement par l'AI Box</b> — {ACTOR}.",
+            "body": f"🤖 {action} automatiquement par l'AI Box — {ACTOR}.",
             "message_type": "comment", "subtype_xmlid": "mail.mt_note"})
         return True
     except Exception:
