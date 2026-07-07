@@ -25,7 +25,7 @@ User=clikinfo
 EnvironmentFile=/home/clikinfo/aibox/dash/%i.env
 Environment=PATH=/home/clikinfo/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/home/clikinfo
-ExecStart=/home/clikinfo/.local/bin/hermes dashboard --host 0.0.0.0 --port ${DASH_PORT} --insecure --no-open --skip-build
+ExecStart=/home/clikinfo/.local/bin/hermes dashboard --host 127.0.0.1 --port ${DASH_PORT} --insecure --no-open --skip-build
 Restart=on-failure
 RestartSec=5
 
