@@ -20,6 +20,25 @@ ouvrées (8h-19h), la vérification des passages **planifiés** se fera le matin
 2. **Curator Hermes** réécrivait les skills partagés en douce (dérive git) → **désactivé sur les 8 instances** (les skills doivent rester gérés par git).
 3. **Trou EWS** : `create_mail_folder` n'existe que sur M365 → dispatcher restreint au routage M365 (skill ajusté). **À faire : ajouter `create_mail_folder`/`move` EWS** pour router aussi la boîte xefi.
 
+## Vérification des passages RÉELS du matin (07/07, ~07h UTC)
+
+Après le 1er cycle planifié (agents 6h-17h UTC) :
+- **Dispatcher** ✅ actif, ~20 actions de routage (déplace en masse vers AI-*).
+- **Technique** ✅ **fix dédup confirmé** : 0 ticket créé ce matin. Les 3 nouveaux
+  tickets `FRANLEAPPIND002` (01h08/03h08/05h08) sont créés **hors heures agents** →
+  c'est un **monitoring/alias Odoo externe** qui crée un ticket ~toutes les 2h pour
+  ce serveur chroniquement HS. **À corriger en amont** (supervision/alias), pas l'IA.
+- **Commercial** ✅ status ok (traite AI-Commercial ; backlog qui se résorbe par passage).
+- **Assistante** ⚠️→✅ : plantait sur `mark_email_read` (**400** — id Graph avec `/`,`+`
+  non encodés → connecteur disjoncté). **Corrigé** : URL-encodage des id (msgraph). Re-testé.
+- **Email andre / Direction** : ok (Direction tourne le soir).
+
+## Incidents d'exploitation traités cette nuit/ce matin
+- **Agents modifiaient les skills** (outil `skill_manage`) → dérive git à chaque
+  passage. **Toolset `skills` désactivé sur les 8 instances** + curator désactivé
+  durablement (`curator.enabled=false`). Les skills restent gérés par git.
+- **Bug id Graph** (400 sur mark/move) → URL-encodage. Déployé.
+
 ## Reste à faire (matin)
 - Vérifier les **passages planifiés réels** (6h-17h UTC) de chaque agent contre sa fiche.
 - **Nettoyer les tickets FRANLEAPPIND002 en double** (garder 1 ouvert, annuler les autres) — à valider avec André car certains peuvent être d'anciens tickets légitimes.
