@@ -39,6 +39,13 @@ Après le 1er cycle planifié (agents 6h-17h UTC) :
   durablement (`curator.enabled=false`). Les skills restent gérés par git.
 - **Bug id Graph** (400 sur mark/move) → URL-encodage. Déployé.
 
+## Contrôle santé complet (07/07 ~09h30) — 2 corrections
+- ✅ 8/8 gateways actifs ; toutes les routines status=ok ; connecteurs odoo/msgraph/ews OK ; git propre (dérive stoppée).
+- ✅ Fix Assistante confirmé : plus AUCUNE erreur mark_email_read après le correctif.
+- ⚠️→✅ **Conflit routines** : l'ancienne routine andre `assistant-email` traitait les mêmes boîtes que dispatcher+agents → courses (mail déplacé → 404). **Mise en PAUSE** (superseded par le multi-agents). La revue-incidents-odoo d'andre reste active.
+- ⚠️→✅ **Agents sans creds Odoo** : agent-provision ne sourçait que le .env, or les creds Odoo d'andre étaient dans son config.yaml (saisis via formulaire). Résultat : technique/commercial/compta/assistante/direction avaient ODOO_* vides → ne pouvaient PAS agir sur Odoo. **Corrigé** : creds injectés dans les 5 configs + ajoutés au .env andre (repro). find_partner OK depuis technique. → à ajouter dans agent-provision : sourcer aussi les creds bakés du config de référence.
+- Recadrage : les « doublons » de la nuit venaient du monitoring amont, PAS de l'agent technique (qui ne pouvait pas créer, Odoo vide). Le dédup + Odoo fonctionnent maintenant.
+
 ## Reste à faire (matin)
 - Vérifier les **passages planifiés réels** (6h-17h UTC) de chaque agent contre sa fiche.
 - **Nettoyer les tickets FRANLEAPPIND002 en double** (garder 1 ouvert, annuler les autres) — à valider avec André car certains peuvent être d'anciens tickets légitimes.
