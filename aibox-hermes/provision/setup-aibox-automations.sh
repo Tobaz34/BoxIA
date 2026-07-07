@@ -22,7 +22,7 @@ say(){ echo "  $*"; }
 # 1) scripts + state (réinstalle = resync avec le repo)
 mkdir -p "$HERMES_HOME/scripts" "$HERMES_HOME/state"
 install -m 755 "$SRC"/rapport-equipe.py "$SRC"/rapport-equipe.sh \
-               "$SRC"/veilleur-urgence.py "$SRC"/veilleur-urgence.sh "$HERMES_HOME/scripts/"
+               "$SRC"/veilleur-urgence.py "$SRC"/veilleur-urgence.sh "$SRC"/detecteur-opportunites.py "$SRC"/detecteur-opportunites.sh "$HERMES_HOME/scripts/"
 say "scripts installés -> $HERMES_HOME/scripts/"
 
 # 2) allowlist Telegram (si chat fourni et absent)
@@ -44,6 +44,10 @@ if have_cron "veilleur-urgence"; then say "cron veilleur-urgence déjà présent
   HERMES_HOME="$HERMES_HOME" "$HB" cron create '*/2 7-22 * * *' \
     --no-agent --script veilleur-urgence.sh --deliver "$DELIV" --name veilleur-urgence >/dev/null
   say "cron veilleur-urgence créé ($DELIV)"
+fi
+if have_cron "opportunites-commercial"; then say "cron opportunites-commercial deja present"; else
+  HERMES_HOME="$HERMES_HOME" "$HB" cron create '0 9-18 * * 1-5' \n    --script detecteur-opportunites.sh --skill aibox-opportunite --deliver "$DELIV" --name opportunites-commercial >/dev/null
+  say "cron opportunites-commercial cree ($DELIV) - agent commercial autonome (prepare, tu valides)"
 fi
 # revue-incidents : basculer sur Telegram si présent
 if [ -n "$CHAT" ] && have_cron "revue-incidents"; then
