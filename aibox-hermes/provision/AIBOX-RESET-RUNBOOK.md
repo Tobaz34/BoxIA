@@ -5,7 +5,15 @@ Un (re-)provisioning régénère le `HERMES_HOME` d'un tenant et **efface** l'é
 sur `claude/gateway`) : le code des connecteurs (dont le fix email `09f8469`), les skills,
 l'unit dashboard corrigée (`--host 127.0.0.1`), et les scripts `tenant-scripts/`.
 
-## Rejouer les automatisations (idempotent)
+## Provisioning du patron (auto)
+Provisionner le user patron avec le flag **`AIBOX_PATRON=1`** : `wizard-user.sh`
+appelle alors automatiquement `setup-aibox-automations.sh` (chat Telegram dérivé
+de `TELEGRAM_ALLOWED_USERS`). Ex :
+```bash
+AIBOX_PATRON=1 TELEGRAM_BOT_TOKEN=… TELEGRAM_ALLOWED_USERS=8196716694 \n  bash provision/wizard-user.sh demo andre
+```
+
+## Rejouer les automatisations à la main (idempotent)
 ```bash
 HERMES_HOME=/home/clikinfo/aibox/companies/demo/users/andre/hermes \
 AIBOX_TELEGRAM_CHAT=8196716694 \
@@ -28,6 +36,5 @@ livraison Telegram, et pose `TELEGRAM_ALLOWED_USERS`. Re-lançable sans risque.
 3. **Restart** des services du user : `sudo systemctl restart aibox-gateway@<user> aibox-webui@<user> aibox-dash@<user>`.
 
 ## TODO durabilité (non fait)
-- Auto-appeler `setup-aibox-automations.sh` depuis `wizard-user.sh` pour le user "patron".
 - Rendre le choix Codex portable dans `render_config.py` (le config, pas l'auth).
 - Paramétrer les chemins codés en dur des `tenant-scripts` (owner/company) pour la franchise.

@@ -8,6 +8,8 @@
 # Env (sinon défauts) :
 #   USER_NAME, USER_ROLE
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS   # canal de CE user
+#   AIBOX_PATRON=1  [+AIBOX_TELEGRAM_CHAT]        # user "patron" : branche rapport
+#                                                 #   d'équipe + veilleur d'urgence (Telegram)
 #   USER_CONNECTORS (csv ou 'all')               # RBAC : connecteurs autorisés
 #   PENNYLANE_TOOL_API_KEY                        # clé perso si ≠ entreprise
 # =============================================================================
@@ -198,5 +200,15 @@ fi
 # Fallback cloud : écrit dans config.yaml par render_config.py (voir plus haut).
 # NB : `hermes fallback add` (v0.16.0) est un picker interactif sans arguments —
 # l'ancien appel scripté échouait en silence, le fallback n'était jamais câblé.
+
+# Automatisations "patron" (rapport d'équipe + veilleur d'urgence) — IDEMPOTENT.
+# Réservé au user patron (AIBOX_PATRON=1) qui supervise les agents : le rapport lit
+# l'activité de TOUS les agents, le veilleur scanne TOUTES les boîtes. Livraison
+# Telegram vers le chat du patron (dérivé de TELEGRAM_ALLOWED_USERS si non fourni).
+if [ "${AIBOX_PATRON:-0}" = "1" ] && command -v hermes >/dev/null 2>&1; then
+  PATRON_CHAT="${AIBOX_TELEGRAM_CHAT:-${TELEGRAM_ALLOWED_USERS%%,*}}"
+  run "HERMES_HOME='$HERMES_HOME' AIBOX_TELEGRAM_CHAT='$PATRON_CHAT' bash '$AIBOX_HERMES_DIR/provision/setup-aibox-automations.sh'"
+  say "automatisations patron branchées (rapport d'équipe + veilleur urgence)"
+fi
 
 echo "== OK. Lancer le Hermes de $USER_SLUG :  HERMES_HOME='$HERMES_HOME' hermes =="
