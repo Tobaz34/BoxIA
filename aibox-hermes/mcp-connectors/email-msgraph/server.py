@@ -152,8 +152,13 @@ def list_recent_emails(mailbox: str = "", limit: int = 10, unread_only: bool = F
 
 
 @mcp.tool
-def read_email(mailbox: str, message_id: str) -> dict[str, Any]:
-    """Lit un email complet (corps en texte). Lecture seule."""
+def read_email(mailbox: str, message_id: str, folder: str | None = None) -> dict[str, Any]:
+    """Lit un email complet (corps en texte). Lecture seule.
+
+    `folder` est accepte puis ignore : la lecture se fait par message_id
+    (global a la boite). Des agents le passent parfois par erreur ; l'accepter
+    evite une erreur de validation qui fait disjoncter le connecteur.
+    """
     mb = _check_mailbox(mailbox)
     m = _req("GET", f"/users/{mb}/messages/{_q(message_id)}",
              {"$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments"})
@@ -226,7 +231,14 @@ def _resolve_folder_id(mb: str, name: str) -> str:
 def mark_email_read(mailbox: str, message_id: str, read: bool = True) -> dict[str, Any]:
     """Marque un email lu (read=True) ou non-lu (read=False). Tri léger, réversible."""
     mb = _check_mailbox(mailbox)
-    _req("PATCH", f"/users/{mb}/messages/{_q(message_id)}", json_body={"isRead": bool(read)})
+    try:
+        _req("PATCH", f"/users/{mb}/messages/{_q(message_id)}", json_body={"isRead": bool(read)})
+    except httpx.HTTPStatusError as exc:
+        if getattr(exc, "response", None) is not None and exc.response.status_code == 404:
+            # Message deplace/supprime entre-temps (souvent par le dispatcher) :
+            # no-op reussi plutot qu'une erreur qui pollue l'audit.
+            return {"ok": True, "mailbox": mb, "id": message_id, "read": bool(read), "already_gone": True}
+        raise
     return {"ok": True, "mailbox": mb, "id": message_id, "read": bool(read)}
 
 
