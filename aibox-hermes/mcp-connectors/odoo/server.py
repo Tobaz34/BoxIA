@@ -75,6 +75,26 @@ def _kw(model: str, method: str, args: list, kwargs: dict | None = None) -> Any:
     return models.execute_kw(DB, uid, API_KEY, model, method, args, kwargs or {})
 
 
+# Signature identifiant l'AI Box dans le chatter. Chaque instance/agent peut la
+# personnaliser via l'env AIBOX_ODOO_ACTOR (ex: "AI Box — Agent Technique").
+ACTOR = os.getenv("AIBOX_ODOO_ACTOR", "AI Box (Hermes)")
+
+
+def _tag_aibox(model: str, rec_id: int, action: str = "Créé") -> bool:
+    """Poste une NOTE INTERNE au chatter marquant l'enregistrement comme traité par
+    l'AI Box, pour que toute action automatique soit identifiable. Note interne
+    (subtype mail.mt_note) → aucune notification aux abonnés. Silencieux (renvoie
+    False) si le modèle n'a pas de chatter (mail.thread) ou si le post échoue :
+    l'échec du marquage ne doit jamais faire échouer la création."""
+    try:
+        _kw(model, "message_post", [[int(rec_id)]], {
+            "body": f"🤖 <b>{action} automatiquement par l'AI Box</b> — {ACTOR}.",
+            "message_type": "comment", "subtype_xmlid": "mail.mt_note"})
+        return True
+    except Exception:
+        return False
+
+
 @mcp.tool
 def odoo_health() -> dict[str, Any]:
     """Vérifie la connexion à Odoo (auth + version). Renvoie l'utilisateur et la version serveur."""
@@ -148,7 +168,9 @@ def create_lead(name: str, contact_name: str = "", email: str = "",
     if expected_revenue:
         vals["expected_revenue"] = expected_revenue
     lead_id = _kw("crm.lead", "create", [vals])
-    return {"created": True, "model": "crm.lead", "id": lead_id, "name": name}
+    note = _tag_aibox("crm.lead", lead_id)
+    return {"created": True, "model": "crm.lead", "id": lead_id, "name": name,
+            "aibox_note_posted": note}
 
 
 @mcp.tool
@@ -181,7 +203,8 @@ def odoo_create(model: str, values: dict) -> dict[str, Any]:
     if not isinstance(values, dict) or not values:
         raise RuntimeError("values doit être un dict non vide")
     rec_id = _kw(model, "create", [values])
-    return {"created": True, "model": model, "id": rec_id}
+    note = _tag_aibox(model, rec_id)
+    return {"created": True, "model": model, "id": rec_id, "aibox_note_posted": note}
 
 
 @mcp.tool
