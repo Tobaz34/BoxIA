@@ -23,7 +23,7 @@ say(){ echo "  $*"; }
 # 1) scripts + state (réinstalle = resync avec le repo)
 mkdir -p "$HERMES_HOME/scripts" "$HERMES_HOME/state"
 install -m 755 "$SRC"/rapport-equipe.py "$SRC"/rapport-equipe.sh \
-               "$SRC"/veilleur-urgence.py "$SRC"/veilleur-urgence.sh "$SRC"/detecteur-opportunites.py "$SRC"/detecteur-opportunites.sh "$HERMES_HOME/scripts/"
+               "$SRC"/veilleur-urgence.py "$SRC"/veilleur-urgence.sh "$SRC"/detecteur-opportunites.py "$SRC"/detecteur-opportunites.sh "$SRC"/detecteur-technique.py "$SRC"/detecteur-technique.sh "$HERMES_HOME/scripts/"
 say "scripts installés -> $HERMES_HOME/scripts/"
 
 # 2) allowlist Telegram (si chat fourni et absent)
@@ -49,6 +49,10 @@ fi
 if have_cron "opportunites-commercial"; then say "cron opportunites-commercial deja present"; else
   HERMES_HOME="$HERMES_HOME" "$HB" cron create '0 9-18 * * 1-5' \n    --script detecteur-opportunites.sh --skill aibox-opportunite --deliver "$DELIV" --name opportunites-commercial >/dev/null
   say "cron opportunites-commercial cree ($DELIV) - agent commercial autonome (prepare, tu valides)"
+fi
+if have_cron "point-technique"; then say "cron point-technique deja present"; else
+  HERMES_HOME="$HERMES_HOME" "$HB" cron create '0 9,14,17 * * 1-5' \n    --script detecteur-technique.sh --skill aibox-responsable-technique --deliver "$DELIV" --name point-technique >/dev/null
+  say "cron point-technique cree ($DELIV) - responsable technique (supervision incidents)"
 fi
 # revue-incidents : basculer sur Telegram si présent
 if [ -n "$CHAT" ] && have_cron "revue-incidents"; then
