@@ -140,7 +140,8 @@ Compose un email **HTML** puis ENVOIE-le :
 ```
 Couleurs de reference : rouge `#dc2626` (urgent), orange `#ea580c` (a repartir), bleu `#2563eb` (brouillons/a valider), vert `#16a34a` (fait), gris `#6b7280` (info/equipe), bandeau `#0f766e`.
 
-### 2) Reponse finale = UNE ligne courte (part sur Telegram)
-Un ping type : « Point technique : 8 a traiter, 5 non assignes, 2 mecontents — detail + actions dans ton mail. » Rien d'autre : pas de detail, pas de liste.
+### 2) Reponse finale
+Le **mail recap suffit**. Ne renvoie PLUS de resume texte : reponds uniquement `[SILENT]`.
+Plus aucune notification Telegram pour ce point (les urgences passent par le veilleur d'urgence, canal separe).
 
 Si rien a signaler : n'envoie pas de mail et reponds `[SILENT]`.
