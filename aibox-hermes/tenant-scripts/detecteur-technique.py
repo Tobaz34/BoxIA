@@ -167,8 +167,59 @@ if msenv:
             ext.sort(key=lambda x: -x[2])
             commgaps.append((info["name"], len(ext), ext[:3]))
 
+# ---------- 2 PROJETS : taches en retard (production) ----------
+from datetime import timedelta
+from collections import defaultdict, Counter
+overdue_tasks = []
+try:
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    tsk = odoo_sr("project.task",
+                  [["project_id.production_workflow", "=", True], ["date_deadline", "!=", False], ["date_deadline", "<", now_s]],
+                  ["name", "stage_id", "user_ids", "date_deadline", "project_id"], 150, "date_deadline asc")
+    DONE = ("termin", "fait", "done", "annul", "clotur", "clôtur", "perdu", "livr")
+    for t in tsk:
+        st = (m2o(t.get("stage_id")) or "").lower()
+        if any(k in st for k in DONE):
+            continue
+        uid = (t.get("user_ids") or [None])[0]
+        who = roster.get(uid, {}).get("name") if uid else "non assigne"
+        overdue_tasks.append((t, days_since(t.get("date_deadline")), who or "?"))
+    overdue_tasks = overdue_tasks[:8]
+except Exception:
+    pass
+
+# ---------- 3 PLANNING : agendas techniciens (semaine) ----------
+planning = []
+try:
+    start_w = datetime.now().strftime("%Y-%m-%d 00:00:00")
+    end_w = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d 23:59:59")
+    ev = odoo_sr("calendar.event",
+                 [["start", ">=", start_w], ["start", "<=", end_w], ["user_id", "in", list(roster.keys())]],
+                 ["name", "start", "stop", "user_id", "duration"], 300, "start asc")
+    by = defaultdict(list)
+    for e in ev:
+        by[m2o_id(e.get("user_id"))].append(e)
+    for uid, evs in by.items():
+        name = roster.get(uid, {}).get("name", "?")
+        total = sum(e.get("duration") or 0 for e in evs)
+        issues = []
+        evs2 = sorted(evs, key=lambda e: e.get("start") or "")
+        for a, b in zip(evs2, evs2[1:]):
+            if (a.get("stop") or "") > (b.get("start") or ""):
+                issues.append("chevauchement")
+        perday = Counter()
+        for e in evs:
+            perday[str(e.get("start"))[:10]] += (e.get("duration") or 0)
+        over = [d for d, h in perday.items() if h > 8]
+        if over:
+            issues.append("journee(s) >8h: " + str(len(over)))
+        planning.append((name, round(total, 1), len(evs), sorted(set(issues))))
+    planning.sort(key=lambda x: -x[1])
+except Exception:
+    pass
+
 # ---------- SORTIE ----------
-if not (at_risk or low_ratings or commgaps):
+if not (at_risk or low_ratings or commgaps or overdue_tasks or planning):
     sys.exit(0)
 print("SUPERVISION TECHNIQUE - " + datetime.now().strftime("%d/%m %H:%M"))
 noms = ", ".join(i["name"] for i in roster.values()) or "(roster vide - peupler equipe Technique Odoo)"
@@ -196,4 +247,15 @@ if commgaps:
         print("  " + name + " : " + str(n) + " mail(s) externe(s) en attente")
         for frm, subj, age in ex:
             print("     - " + frm + " " + subj + " (" + str(age) + "j)")
+    print()
+if overdue_tasks:
+    print("### PROJETS - taches en retard (projets de production)")
+    for t, d, who in overdue_tasks:
+        print("  " + str(m2o(t.get("project_id")) or "?") + " / " + (t.get("name", "")[:50]) + " - echeance depassee de " + str(d) + "j (assigne: " + who + ")")
+    print()
+if planning:
+    print("### PLANNING (semaine a venir, agendas techniciens)")
+    for name, total, n, issues in planning:
+        extra = (" - " + ", ".join(issues)) if issues else ""
+        print("  " + name + " : " + str(total) + "h sur " + str(n) + " interventions" + extra)
     print()
