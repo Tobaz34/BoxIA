@@ -182,7 +182,7 @@ def list_mail_folders(mailbox: str) -> list[dict[str, Any]]:
 
 @mcp.tool
 def create_draft_email(mailbox: str, to: str, subject: str, body: str,
-                       reply_to_message_id: str = "") -> dict[str, Any]:
+                       reply_to_message_id: str = "", html: bool = False) -> dict[str, Any]:
     """Crée un BROUILLON dans la boîte (rien n'est envoyé). Action mutative → approval-gate.
 
     reply_to_message_id : si fourni, crée un brouillon de RÉPONSE à ce message.
@@ -191,11 +191,11 @@ def create_draft_email(mailbox: str, to: str, subject: str, body: str,
     if reply_to_message_id:
         draft = _req("POST", f"/users/{mb}/messages/{_q(reply_to_message_id)}/createReply", json_body={})
         _req("PATCH", f"/users/{mb}/messages/{_q(draft['id'])}",
-             json_body={"body": {"contentType": "Text", "content": body}})
+             json_body={"body": {"contentType": ("HTML" if html else "Text"), "content": body}})
         return {"draft_id": draft["id"], "type": "reply", "subject": draft.get("subject")}
     draft = _req("POST", f"/users/{mb}/messages", json_body={
         "subject": subject,
-        "body": {"contentType": "Text", "content": body},
+        "body": {"contentType": ("HTML" if html else "Text"), "content": body},
         "toRecipients": [{"emailAddress": {"address": a.strip()}} for a in to.split(",") if a.strip()],
     })
     return {"draft_id": draft["id"], "type": "new", "subject": subject}

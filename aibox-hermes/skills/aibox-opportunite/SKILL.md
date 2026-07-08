@@ -61,15 +61,56 @@ S'il n'y a **aucune opportunité** dans l'entrée → réponds seulement `[SILEN
 
 ## LIVRAISON (PRIORITAIRE - remplace tout format "Bilan Telegram" ci-dessus)
 
-Tu livres en DEUX temps :
+Tu livres en DEUX temps.
 
-1. **Mail recap au patron** (c'est lui qui porte le detail actionnable) : compose puis ENVOIE un email a Andre.
-   - `create_draft_email(mailbox="a.ladurelle@clikinfo.fr", to="a.ladurelle@clikinfo.fr", subject=<court + compteur, ex: "Point technique 14h - 3 a traiter">, body=<recap complet>)` -> recupere le `draft_id` renvoye, puis `send_draft_email(mailbox="a.ladurelle@clikinfo.fr", draft_id=<id>)`.
-   - Le **body** (francais, clair, structure) contient : ce que tu as fait ; la **liste des brouillons prepares** (objet + destinataire + "a valider/envoyer depuis Outlook") ; les **actions a faire** (assigner / relancer / replanifier / rappeler) ; les **references Odoo** (n. de ticket / opportunite / tache / devis). C'est un mail sur lequel le patron peut AGIR.
-   - Si l'envoi du mail echoue, garde le detail dans ta reponse finale (fallback).
+### 1) Mail recap HTML au patron (clair, colore, actionnable)
+Compose un email **HTML** puis ENVOIE-le :
+`create_draft_email(mailbox="a.ladurelle@clikinfo.fr", to="a.ladurelle@clikinfo.fr", subject=<court + compteur>, body=<HTML>, html=True)` -> recupere `draft_id`, puis `send_draft_email(mailbox="a.ladurelle@clikinfo.fr", draft_id=<id>)`.
 
-2. **Reponse finale = UNE seule ligne courte** (c'est elle, et elle seule, qui part sur Telegram) : un ping type
-   « Point technique : 3 a traiter, 5 non assignes, 2 mecontents - detail + actions dans ton mail. »
-   Rien d'autre : pas le detail, pas de liste. Juste de quoi savoir qu'il faut aller voir ses mails (ou pas).
+**Regles du mail :**
+- `html=True` obligatoire. Le body est du **HTML avec styles INLINE uniquement** (les clients mail ignorent le CSS externe).
+- **Scannable en 5 secondes** : des blocs colores, une ligne = un item = une action en gras. Pas de paragraphes longs.
+- **Omets les sections vides.** Mets le plus grave en haut.
+- Chaque item : **<b>reference</b>** (n. ticket/opportunite/tache) + le fait marquant + **l'action en gras**.
 
-S'il n'y a rien a signaler : n'envoie pas de mail et reponds `[SILENT]`.
+**Gabarit a suivre** (adapte les titres au poste, garde les couleurs et le style inline) :
+```html
+<div style="font-family:Segoe UI,Arial,sans-serif;max-width:640px;color:#1f2937;font-size:14px">
+  <div style="background:#0f766e;color:#ffffff;padding:14px 18px;border-radius:8px 8px 0 0">
+    <div style="font-size:18px;font-weight:700">TITRE DU POINT — HEURE</div>
+    <div style="font-size:13px;opacity:.92">Une phrase de synthese : ce qui compte aujourd'hui.</div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:0;border-radius:0 0 8px 8px;padding:6px 0 12px">
+
+    <div style="border-left:4px solid #dc2626;margin:12px;padding:8px 12px;background:#fef2f2;border-radius:4px">
+      <div style="font-weight:700;color:#991b1b;margin-bottom:6px">🔴 A TRAITER EN PRIORITE</div>
+      <div style="margin:5px 0"><b>#2756 FLASHBACK</b> (Guillaume) — SLA + client en attente 49j (rebond #2351) → <b>relancer aujourd'hui</b></div>
+    </div>
+
+    <div style="border-left:4px solid #ea580c;margin:12px;padding:8px 12px;background:#fff7ed;border-radius:4px">
+      <div style="font-weight:700;color:#9a3412;margin-bottom:6px">🟠 A REPARTIR / A PLANIFIER</div>
+      <div style="margin:5px 0"><b>#5266 MCC</b> — non assigne, SLA depasse → <b>affecter</b></div>
+    </div>
+
+    <div style="border-left:4px solid #2563eb;margin:12px;padding:8px 12px;background:#eff6ff;border-radius:4px">
+      <div style="font-weight:700;color:#1e40af;margin-bottom:6px">📝 BROUILLONS PRETS (a valider dans Outlook)</div>
+      <div style="margin:5px 0"><b>Devis / mail « objet »</b> → <b>relire et envoyer</b></div>
+    </div>
+
+    <div style="border-left:4px solid #16a34a;margin:12px;padding:8px 12px;background:#f0fdf4;border-radius:4px">
+      <div style="font-weight:700;color:#166534;margin-bottom:6px">✅ DEJA FAIT PAR L'ASSISTANT</div>
+      <div style="margin:5px 0">Contexte / rebond pose dans Odoo sur #.., #..</div>
+    </div>
+
+    <div style="margin:12px;padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;font-size:13px;color:#4b5563">
+      <b>👥 Lecture equipe :</b> qui accumule / qui surcharge / qui rebalancer (1-2 phrases).
+    </div>
+  </div>
+</div>
+```
+Couleurs de reference : rouge `#dc2626` (urgent), orange `#ea580c` (a repartir), bleu `#2563eb` (brouillons/a valider), vert `#16a34a` (fait), gris `#6b7280` (info/equipe), bandeau `#0f766e`.
+
+### 2) Reponse finale = UNE ligne courte (part sur Telegram)
+Un ping type : « Point technique : 8 a traiter, 5 non assignes, 2 mecontents — detail + actions dans ton mail. » Rien d'autre : pas de detail, pas de liste.
+
+Si rien a signaler : n'envoie pas de mail et reponds `[SILENT]`.
