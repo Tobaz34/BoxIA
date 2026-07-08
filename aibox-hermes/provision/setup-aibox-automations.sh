@@ -15,6 +15,7 @@ set -euo pipefail
 HERMES_HOME="${HERMES_HOME:?HERMES_HOME requis}"
 CHAT="${AIBOX_TELEGRAM_CHAT:-}"
 HB="${HERMES_BIN:-/home/clikinfo/.local/bin/hermes}"
+export TZ="${TZ:-Europe/Paris}"   # crons créés en heure de Paris (serveur UTC)
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 SRC="$HERE/../tenant-scripts"
 say(){ echo "  $*"; }

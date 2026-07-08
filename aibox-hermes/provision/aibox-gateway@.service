@@ -33,6 +33,7 @@ Environment=PATH=/home/clikinfo/hermes-agent/venv/bin:/home/clikinfo/.local/bin:
 # devient le SKILL. NE PAS mettre cette variable sur aibox-webui@ : le chat garde
 # la validation manuelle /aibox-approve (protection anti-injection).
 Environment=AIBOX_APPROVAL_AUTO=1
+Environment=TZ=Europe/Paris
 WorkingDirectory=/home/clikinfo/hermes-agent
 ExecStart=/home/clikinfo/hermes-agent/venv/bin/hermes gateway run
 Restart=on-failure
